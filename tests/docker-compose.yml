@@ -1,0 +1,23 @@
+version: '3.8'
+
+# Integration test environment — spins up a real n8n instance.
+# Usage: docker compose -f tests/docker-compose.yml up -d
+# n8n UI: http://localhost:5678
+# n8n API key is set via N8N_API_KEY env var in tests.
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - '5678:5678'
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - N8N_USER_MANAGEMENT_DISABLED=true
+      - N8N_PUBLIC_API_DISABLED=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+    volumes:
+      - n8n_test_data:/home/node/.n8n
+
+volumes:
+  n8n_test_data:
