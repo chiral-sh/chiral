@@ -3,3 +3,8 @@ dist/
 .env
 .env.*
 *.local
+
+# Internal docs — kept local, not published
+docs/
+CLAUDE.md
+.claude/
