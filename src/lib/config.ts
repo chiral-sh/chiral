@@ -3,6 +3,11 @@ import { join, dirname } from 'node:path';
 import { z } from 'zod';
 import { UserError } from './errors.js';
 
+export interface ConfigWithDir {
+  config: Config;
+  flightdeckDir: string;
+}
+
 const EnvironmentSchema = z.object({
   url: z.string().url(),
   apiKey: z.string().min(1),
@@ -34,7 +39,7 @@ function findConfigPath(startDir: string): string | null {
   }
 }
 
-export function loadConfig(startDir: string = process.cwd()): Config {
+export function loadConfigAndDir(startDir: string = process.cwd()): ConfigWithDir {
   const configPath = findConfigPath(startDir);
   if (!configPath) {
     throw new UserError("No .flightdeck/config.json found. Run 'flightdeck init' first.");
@@ -56,7 +61,11 @@ export function loadConfig(startDir: string = process.cwd()): Config {
     );
   }
 
-  return result.data;
+  return { config: result.data, flightdeckDir: dirname(configPath) };
+}
+
+export function loadConfig(startDir: string = process.cwd()): Config {
+  return loadConfigAndDir(startDir).config;
 }
 
 export function resolveEnv(config: Config, envName: string): Environment {

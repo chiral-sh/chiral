@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { UserError } from './lib/errors.js';
 import { initCommand } from './commands/init.js';
+import { adoptCommand } from './commands/adopt.js';
 
 const program = new Command();
 
@@ -11,7 +12,7 @@ program
   .version('0.1.0');
 
 program.addCommand(initCommand);
-// program.addCommand(adoptCommand);
+program.addCommand(adoptCommand);
 // program.addCommand(pullCommand);
 // program.addCommand(diffCommand);
 // program.addCommand(pushCommand);
