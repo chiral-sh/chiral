@@ -54,6 +54,7 @@ function makeClientMock(overrides?: Partial<{
   listTags: () => Promise<unknown>;
 }>) {
   return {
+    warnIfExpiringSoon: vi.fn(),
     listWorkflows: overrides?.listWorkflows ?? vi.fn().mockResolvedValue([WORKFLOW_SUMMARY]),
     getWorkflow: overrides?.getWorkflow ?? vi.fn().mockResolvedValue(WORKFLOW_FULL),
     listCredentials: overrides?.listCredentials ?? vi.fn().mockResolvedValue([]),

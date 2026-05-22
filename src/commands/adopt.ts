@@ -32,6 +32,7 @@ export async function runAdopt(
   const { config, flightdeckDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
+  client.warnIfExpiringSoon();
 
   const baseEntry = {
     event_id: crypto.randomUUID(),

@@ -73,6 +73,7 @@ function makeClientMock(overrides?: {
   getWorkflow?: (id: string) => Promise<unknown>;
 }) {
   return {
+    warnIfExpiringSoon: vi.fn(),
     listWorkflows: overrides?.listWorkflows ?? vi.fn().mockResolvedValue([WF1, WF2]),
     getWorkflow:
       overrides?.getWorkflow ??

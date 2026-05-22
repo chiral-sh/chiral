@@ -1,5 +1,8 @@
+import chalk from 'chalk';
 import { UserError } from './errors.js';
 import type { Environment } from './config.js';
+
+const EXPIRY_WARN_DAYS = 7;
 
 export interface WorkflowSummary {
   id: string;
@@ -45,12 +48,54 @@ export class N8nClient {
     this.envName = envName;
   }
 
-  private async request<T>(path: string, signal?: AbortSignal): Promise<T> {
+  // Returns the JWT exp claim as a Date, or null if the token is not a JWT or has no exp.
+  static parseJwtExpiry(token: string): Date | null {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+      if (typeof payload.exp === 'number') return new Date(payload.exp * 1000);
+    } catch {
+      // not a valid JWT
+    }
+    return null;
+  }
+
+  warnIfExpiringSoon(): void {
+    const expiry = N8nClient.parseJwtExpiry(this.apiKey);
+    if (!expiry) return;
+    const daysLeft = Math.ceil((expiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    if (daysLeft > 0 && daysLeft <= EXPIRY_WARN_DAYS) {
+      console.error(
+        chalk.yellow(`  ⚠ API key for ${this.envName} expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`) +
+        chalk.dim(` — run flightdeck configure --env ${this.envName} to rotate it`),
+      );
+    }
+  }
+
+  private scopeHint(): string {
+    return (
+      '  Recreate your key at n8n Settings → API with these scopes:\n' +
+      '    workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
+      '    credential:list  tag:list  tag:create\n' +
+      `  Then run: flightdeck configure --env ${this.envName}`
+    );
+  }
+
+  private async request<T>(path: string, options: { signal?: AbortSignal; scope?: string } = {}): Promise<T> {
+    const expiry = N8nClient.parseJwtExpiry(this.apiKey);
+    if (expiry && expiry <= new Date()) {
+      throw new UserError(
+        `API key for ${this.envName} expired on ${expiry.toLocaleDateString()}`,
+        `  Run: flightdeck configure --env ${this.envName} to save a new key`,
+      );
+    }
+
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         headers: { 'X-N8N-API-KEY': this.apiKey },
-        signal,
+        signal: options.signal,
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -62,11 +107,18 @@ export class N8nClient {
     }
 
     if (response.status === 401) {
-      throw new UserError(`API key for ${this.envName} is invalid or expired`);
+      throw new UserError(
+        `API key for ${this.envName} is invalid or expired`,
+        `  Run: flightdeck configure --env ${this.envName} to save a new key`,
+      );
     }
     if (response.status === 403) {
+      const scopePart = options.scope
+        ? ` — missing scope: ${options.scope}`
+        : ' — insufficient permissions';
       throw new UserError(
-        `API key for ${this.envName} does not have permission to list workflows`,
+        `API key for ${this.envName}${scopePart}`,
+        this.scopeHint(),
       );
     }
     if (!response.ok) {
@@ -78,13 +130,13 @@ export class N8nClient {
     return response.json() as Promise<T>;
   }
 
-  private async listAll<T>(path: string): Promise<T[]> {
+  private async listAll<T>(path: string, scope: string): Promise<T[]> {
     const results: T[] = [];
     let cursor: string | undefined;
 
     do {
       const url = cursor ? `${path}?limit=100&cursor=${encodeURIComponent(cursor)}` : `${path}?limit=100`;
-      const page = await this.request<PaginatedResponse<T>>(url);
+      const page = await this.request<PaginatedResponse<T>>(url, { scope });
       results.push(...page.data);
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
@@ -93,30 +145,33 @@ export class N8nClient {
   }
 
   async listWorkflows(): Promise<WorkflowSummary[]> {
-    return this.listAll<WorkflowSummary>('/workflows');
+    return this.listAll<WorkflowSummary>('/workflows', 'workflow:list');
   }
 
   async getWorkflow(id: string): Promise<WorkflowFull> {
-    return this.request<WorkflowFull>(`/workflows/${id}`);
+    return this.request<WorkflowFull>(`/workflows/${id}`, { scope: 'workflow:read' });
   }
 
   async listCredentials(): Promise<CredentialSummary[]> {
-    return this.listAll<CredentialSummary>('/credentials');
+    return this.listAll<CredentialSummary>('/credentials', 'credential:list');
   }
 
   async listTags(): Promise<TagSummary[]> {
-    return this.listAll<TagSummary>('/tags');
+    return this.listAll<TagSummary>('/tags', 'tag:list');
   }
 
   async testConnection(timeoutMs = 10_000): Promise<{ workflowCount: number }> {
+    this.warnIfExpiringSoon();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const data = await this.request<{ data: unknown[] }>(
+      const workflows = await this.request<{ data: unknown[] }>(
         '/workflows?limit=100&excludePinnedData=true',
-        controller.signal,
+        { signal: controller.signal, scope: 'workflow:list' },
       );
-      return { workflowCount: data.data.length };
+      await this.request('/credentials?limit=1', { signal: controller.signal, scope: 'credential:list' });
+      await this.request('/tags?limit=1', { signal: controller.signal, scope: 'tag:list' });
+      return { workflowCount: workflows.data.length };
     } finally {
       clearTimeout(timeoutId);
     }

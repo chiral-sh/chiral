@@ -1,6 +1,9 @@
 export class UserError extends Error {
-  constructor(message: string) {
+  hint?: string;
+
+  constructor(message: string, hint?: string) {
     super(message);
     this.name = 'UserError';
+    this.hint = hint;
   }
 }

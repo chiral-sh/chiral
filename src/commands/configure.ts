@@ -164,6 +164,12 @@ export async function runConfigure(
     });
 
     // ── API key ───────────────────────────────────────────────────────────
+    console.log(
+      chalk.dim(
+        '  Scopes needed: workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
+        '                 credential:list  tag:list  tag:create  (n8n Settings → API)',
+      ),
+    );
     const keyHint = existing
       ? chalk.dim(`  (${maskKey(existing.apiKey)} — Enter to keep)`)
       : '';
@@ -193,10 +199,13 @@ export async function runConfigure(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         spinner.fail(chalk.red(`  ${msg}`));
+        if (err instanceof UserError && err.hint) {
+          console.error('\n' + err.hint + '\n');
+        }
 
         const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
         if (!saveAnyway) {
-          results.push({ name: envName, url, status: 'skipped' });
+          results.push({ name: envName, url: url.replace(/\/+$/, ''), status: 'skipped' });
           if (!singleEnvMode) {
             const more = await confirm({ message: '\n  Add another environment?', default: false });
             if (!more) break;
@@ -210,8 +219,9 @@ export async function runConfigure(
     }
 
     // ── save env ──────────────────────────────────────────────────────────
-    environments[envName] = { url, apiKey };
-    results.push({ name: envName, url, workflowCount, status });
+    const normalizedUrl = url.replace(/\/+$/, '');
+    environments[envName] = { url: normalizedUrl, apiKey };
+    results.push({ name: envName, url: normalizedUrl, workflowCount, status });
 
     isFirst = false;
 

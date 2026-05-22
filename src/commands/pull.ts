@@ -103,6 +103,7 @@ export async function runPull(
   const { config, flightdeckDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
+  client.warnIfExpiringSoon();
 
   const filterLabel = [
     options.tag ? `tag: ${options.tag}` : '',
