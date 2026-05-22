@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { ExitPromptError } from '@inquirer/core';
 import { UserError } from './lib/errors.js';
 import { initCommand } from './commands/init.js';
 import { adoptCommand } from './commands/adopt.js';
@@ -24,6 +25,10 @@ program.addCommand(pullCommand);
 try {
   await program.parseAsync(process.argv);
 } catch (err) {
+  if (err instanceof ExitPromptError) {
+    console.error('\n  Cancelled.\n');
+    process.exit(130);
+  }
   if (err instanceof UserError) {
     console.error(`\n  ${chalk.red('✗')}  ${err.message}\n`);
     process.exit(1);
