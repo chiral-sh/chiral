@@ -1,0 +1,339 @@
+import { execSync } from 'node:child_process';
+import chalk from 'chalk';
+import ora from 'ora';
+import { Command } from 'commander';
+import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
+import { UserError, ControlledExit } from '../lib/errors.js';
+import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
+import { writeAuditEntry } from '../state/audit.js';
+
+function getGitActor(): string {
+  try {
+    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch {
+    throw new UserError(
+      'git config user.email is not set — configure it before running flightdeck',
+    );
+  }
+}
+
+function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
+  const msg = err instanceof Error ? err.message : String(err);
+  spinner.fail(chalk.red(`  ${msg}`));
+  throw err;
+}
+
+function matchesGlob(name: string, pattern: string): boolean {
+  const regexStr = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+  return new RegExp(`^${regexStr}$`).test(name);
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+interface AddedEntry {
+  name: string;
+  sourceName: string;
+  sourceId: string;
+  hint: string;
+}
+
+interface RemovedEntry {
+  name: string;
+  targetId: string;
+}
+
+interface ModifiedEntry {
+  name: string;
+  sourceId: string;
+  sourceVersionId: string;
+  targetVersionId: string;
+}
+
+interface UnchangedEntry {
+  name: string;
+}
+
+interface DiffResult {
+  added: AddedEntry[];
+  removed: RemovedEntry[];
+  modified: ModifiedEntry[];
+  unchanged: UnchangedEntry[];
+}
+
+function computeDiff(
+  sourceWorkflows: WorkflowSummary[],
+  targetWorkflows: WorkflowSummary[],
+  workflowMap: WorkflowMap,
+  sourceEnv: string,
+  targetEnv: string,
+): DiffResult {
+  const targetByName = new Map(targetWorkflows.map((w) => [w.name, w]));
+  const matchedTargetIds = new Set<string>();
+
+  const added: AddedEntry[] = [];
+  const modified: ModifiedEntry[] = [];
+  const unchanged: UnchangedEntry[] = [];
+
+  for (const src of sourceWorkflows) {
+    const resolvedName = resolveTargetName(workflowMap, sourceEnv, targetEnv, src.name);
+    const tgt = targetByName.get(resolvedName);
+
+    if (!tgt) {
+      added.push({ name: src.name, sourceName: src.name, sourceId: src.id, hint: 'wrong name?' });
+    } else {
+      matchedTargetIds.add(tgt.id);
+      if (src.versionId !== tgt.versionId) {
+        modified.push({
+          name: src.name,
+          sourceId: src.id,
+          sourceVersionId: src.versionId,
+          targetVersionId: tgt.versionId,
+        });
+      } else {
+        unchanged.push({ name: src.name });
+      }
+    }
+  }
+
+  const removed: RemovedEntry[] = targetWorkflows
+    .filter((w) => !matchedTargetIds.has(w.id))
+    .map((w) => ({ name: w.name, targetId: w.id }));
+
+  return { added, removed, modified, unchanged };
+}
+
+export interface DiffOptions {
+  source: string;
+  target: string;
+  tag?: string;
+  pattern?: string;
+  showUnchanged?: boolean;
+  nameOnly?: boolean;
+  json?: boolean;
+  exitCode?: boolean;
+}
+
+export async function runDiff(
+  options: DiffOptions,
+  cwd: string = process.cwd(),
+): Promise<void> {
+  const actor = getGitActor();
+  const { config, flightdeckDir } = loadConfigAndDir(cwd);
+  const sourceEnvObj = resolveEnv(config, options.source);
+  const targetEnvObj = resolveEnv(config, options.target);
+
+  const sourceClient = new N8nClient(sourceEnvObj, options.source);
+  const targetClient = new N8nClient(targetEnvObj, options.target);
+  sourceClient.warnIfExpiringSoon();
+  targetClient.warnIfExpiringSoon();
+
+  const baseEntry = {
+    event_id: crypto.randomUUID(),
+    event_schema_version: 1 as const,
+    timestamp: new Date().toISOString(),
+    actor,
+    action: 'diff' as const,
+    project: config.project,
+    source_env: options.source,
+    target_env: options.target,
+    workflow_ids: [] as string[],
+    flightdeck_version: '0.1.0',
+  };
+
+  const isSilent = options.json || options.nameOnly;
+  if (!isSilent) {
+    console.log();
+    console.log(`  Comparing ${chalk.cyan(options.source)} → ${chalk.cyan(options.target)}`);
+  }
+
+  try {
+    const filterLabel = [
+      options.tag ? `tag: ${options.tag}` : '',
+      options.pattern ? `pattern: ${options.pattern}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+
+    const spinnerText = filterLabel
+      ? `  Fetching workflows [${filterLabel}]…`
+      : '  Fetching workflows…';
+
+    const spinner = !isSilent ? ora({ text: spinnerText, color: 'cyan' }).start() : null;
+
+    let sourceSummaries: WorkflowSummary[];
+    let targetSummaries: WorkflowSummary[];
+
+    try {
+      [sourceSummaries, targetSummaries] = await Promise.all([
+        sourceClient.listWorkflows({ tags: options.tag }),
+        targetClient.listWorkflows({ tags: options.tag }),
+      ]);
+    } catch (err) {
+      if (spinner) failSpinner(spinner, err);
+      throw err;
+    }
+
+    // Client-side: double-check tag on both sides; pattern applied to source names only
+    const sourceFiltered = sourceSummaries.filter((wf) => {
+      if (options.tag && !wf.tags.some((t) => t.name === options.tag)) return false;
+      if (options.pattern && !matchesGlob(wf.name, options.pattern)) return false;
+      return true;
+    });
+    const targetFiltered = targetSummaries.filter((wf) => {
+      if (options.tag && !wf.tags.some((t) => t.name === options.tag)) return false;
+      return true;
+    });
+
+    if (spinner) {
+      spinner.succeed(
+        chalk.green(
+          `  Fetched ${plural(sourceFiltered.length, 'workflow')} from ${options.source}, ` +
+          `${plural(targetFiltered.length, 'workflow')} from ${options.target}`,
+        ),
+      );
+    }
+
+    const workflowMap = loadWorkflowMap(flightdeckDir);
+    const diff = computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target);
+    const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
+
+    if (options.nameOnly) {
+      for (const w of diff.added) console.log(w.name);
+      for (const w of diff.removed) console.log(w.name);
+      for (const w of diff.modified) console.log(w.name);
+    } else if (options.json) {
+      console.log(
+        JSON.stringify({
+          source: options.source,
+          target: options.target,
+          added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
+          removed: diff.removed.map(({ name }) => ({ name })),
+          modified: diff.modified.map(({ name, sourceVersionId, targetVersionId }) => ({
+            name,
+            sourceVersionId,
+            targetVersionId,
+          })),
+          unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
+        }),
+      );
+    } else {
+      console.log();
+      if (!hasDiff && diff.unchanged.length === 0) {
+        console.log(`  ${chalk.yellow('⚠')} No workflows found in scope — is this expected?`);
+        console.log(
+          chalk.dim(`\n  Check that both API keys have permission to list workflows.`),
+        );
+      } else if (!hasDiff) {
+        console.log(
+          `  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are identical — no differences found`,
+        );
+        if (options.showUnchanged) {
+          console.log();
+          for (const w of diff.unchanged) {
+            console.log(`      ${w.name}    ${chalk.dim('(identical)')}`);
+          }
+        }
+      } else {
+        for (const w of diff.added) {
+          console.log(
+            `  ${chalk.green('+')} ${w.name}    ${chalk.dim(`(in ${options.source}, not in ${options.target} — ${w.hint} run: flightdeck workflow map)`)}`,
+          );
+        }
+        for (const w of diff.removed) {
+          console.log(
+            `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.target}, not in ${options.source})`)}`,
+          );
+        }
+        for (const w of diff.modified) {
+          console.log(
+            `  ${chalk.yellow('~')} ${w.name}    ${chalk.dim('(modified — versionId differs)')}`,
+          );
+        }
+        if (options.showUnchanged) {
+          for (const w of diff.unchanged) {
+            console.log(`      ${w.name}    ${chalk.dim('(identical)')}`);
+          }
+        }
+
+        const parts: string[] = [];
+        if (diff.added.length > 0) parts.push(plural(diff.added.length, 'added'));
+        if (diff.modified.length > 0) parts.push(plural(diff.modified.length, 'modified'));
+        if (diff.removed.length > 0) parts.push(plural(diff.removed.length, 'removed'));
+
+        const pushParts = [
+          `--source ${options.source}`,
+          `--target ${options.target}`,
+          options.tag ? `--tag ${options.tag}` : '',
+          options.pattern ? `--pattern "${options.pattern}"` : '',
+          '--dry-run',
+        ].filter(Boolean);
+        const pushHint = `flightdeck push ${pushParts.join(' ')}`;
+
+        console.log();
+        console.log(`  ${parts.join(', ')}.`);
+        console.log(chalk.dim(`  Run '${pushHint}' to preview.`));
+        console.log(`\n  ${chalk.dim('Next:')} ${pushHint}`);
+      }
+      console.log();
+    }
+
+    baseEntry.workflow_ids = sourceFiltered.map((w) => w.id);
+    writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+    if (options.exitCode && hasDiff) throw new ControlledExit(1);
+  } catch (err) {
+    if (err instanceof ControlledExit) throw err;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    try {
+      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'failure', error: errorMsg });
+    } catch {
+      // best-effort — don't mask the original error
+    }
+    throw err;
+  }
+}
+
+export const diffCommand = new Command('diff')
+  .description('Compare workflows between two n8n environments')
+  .requiredOption('--source <env>', 'Source environment')
+  .requiredOption('--target <env>', 'Target environment')
+  .option('--tag <tag>', 'Filter to workflows with this tag (applied to both environments)')
+  .option('--pattern <glob>', 'Glob pattern matched against source workflow names (e.g. "Customer *")')
+  .option('--show-unchanged', 'Include identical workflows in output')
+  .option('--name-only', 'Print only differing workflow names, one per line — suitable for piping')
+  .option('--json', 'Output a machine-readable JSON summary instead of human output')
+  .option('--exit-code', 'Exit 1 if any differences found, 0 if environments are identical (CI use)')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  Compare dev and prod:
+    flightdeck diff --source dev --target prod
+
+  Compare only workflows tagged "production":
+    flightdeck diff --source dev --target prod --tag production
+
+  Compare workflows matching a name pattern:
+    flightdeck diff --source dev --target prod --pattern "Customer *"
+
+  Include identical workflows in output:
+    flightdeck diff --source dev --target prod --show-unchanged
+
+  Exit 1 if differences exist (for CI scripts):
+    flightdeck diff --source dev --target prod --exit-code
+
+  Print only differing workflow names for piping:
+    flightdeck diff --source dev --target prod --name-only
+
+  Machine-readable output for scripting:
+    flightdeck diff --source dev --target prod --json
+`,
+  )
+  .action(async (options) => {
+    await runDiff(options);
+  });
