@@ -1,7 +1,7 @@
 {
   "name": "n8n-env",
   "version": "0.1.0",
-  "description": "Safer production deployments for self-hosted n8n Community Edition",
+  "description": "CLI for promoting n8n workflows between dev, staging, and production environments",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
