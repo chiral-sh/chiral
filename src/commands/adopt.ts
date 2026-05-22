@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
-import { generateDeploymentId, writeSnapshot } from '../state/snapshots.js';
+import { generateDeploymentId, writeSnapshot, writeSnapshotMeta } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
 
 function getGitActor(): string {
@@ -78,6 +78,14 @@ export async function runAdopt(
     for (const workflow of workflows) {
       writeSnapshot(flightdeckDir, deploymentId, workflow);
     }
+    writeSnapshotMeta(flightdeckDir, deploymentId, {
+      deployment_id: deploymentId,
+      env: options.env,
+      command: 'adopt',
+      timestamp: new Date().toISOString(),
+      workflow_count: workflows.length,
+      filters: { tag: null, pattern: null, onlyActive: false },
+    });
     spinner3.succeed(
       chalk.green('  Snapshot saved') +
         chalk.dim(` → .flightdeck/snapshots/${deploymentId}/`),

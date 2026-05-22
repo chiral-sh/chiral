@@ -116,7 +116,7 @@ describe('runAdopt', () => {
     await runAdopt({ env: 'dev' }, '/project');
 
     const snapshots = Object.keys(vol.toJSON() ?? {}).filter((p) =>
-      p.includes('/snapshots/') && p.endsWith('.json'),
+      p.includes('/snapshots/') && p.endsWith('.json') && !p.endsWith('meta.json'),
     );
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]).toContain('wf-1.json');
