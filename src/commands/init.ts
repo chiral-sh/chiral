@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { execSync } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { input } from '@inquirer/prompts';
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
 import { createFlightdeckDirectory } from '../state/init.js';
@@ -13,16 +14,6 @@ function isGitRepo(cwd: string): boolean {
   } catch {
     return false;
   }
-}
-
-async function promptProjectName(): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question('Project name: ', (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
 }
 
 export async function runInit(
@@ -38,9 +29,14 @@ export async function runInit(
     throw new UserError('Already initialized. Delete .flightdeck/ to start over.');
   }
 
-  let projectName = options.project ?? '';
+  let projectName = options.project?.trim() ?? '';
   if (!projectName) {
-    projectName = await promptProjectName();
+    projectName = await input({
+      message: 'Project name:',
+      default: basename(cwd),
+      validate: (v) => (v.trim() ? true : 'Project name cannot be empty'),
+    });
+    projectName = projectName.trim();
   }
   if (!projectName) {
     throw new UserError('Project name is required');
@@ -48,12 +44,17 @@ export async function runInit(
 
   createFlightdeckDirectory(flightdeckDir, projectName);
 
-  console.log('✓ Created .flightdeck/');
-  console.log('✓ Created .flightdeck/config.example.json');
-  console.log('✓ Created .flightdeck/.gitignore');
-  console.log('');
-  console.log('Next: copy config.example.json to config.json and fill in your API keys.');
-  console.log('Then run: flightdeck adopt --env dev');
+  const file = (path: string, note?: string) =>
+    `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('— ' + note) : ''}`;
+
+  console.log(`\n  ${chalk.bold(projectName)}\n`);
+  console.log(file('.flightdeck/config.example.json', 'fill in your environments here'));
+  console.log(file('.flightdeck/.gitignore', 'keeps config.json out of git'));
+  console.log(file('.flightdeck/credentials.json'));
+  console.log(file('.flightdeck/audit.jsonl'));
+  console.log(file('.flightdeck/locks/'));
+  console.log(file('.flightdeck/snapshots/'));
+  console.log(`\n  ${chalk.dim('Next:')} flightdeck configure\n`);
 }
 
 export const initCommand = new Command('init')

@@ -11,17 +11,25 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
 }));
 
-vi.mock('node:readline', () => ({
-  createInterface: vi.fn().mockReturnValue({
-    question: (_q: string, cb: (a: string) => void) => cb('test-project'),
-    close: vi.fn(),
-  }),
+vi.mock('@inquirer/prompts', () => ({
+  input: vi.fn(),
+}));
+
+vi.mock('chalk', () => ({
+  default: {
+    bold: (s: string) => s,
+    green: (s: string) => s,
+    dim: (s: string) => s,
+    cyan: (s: string) => s,
+  },
 }));
 
 import { execSync } from 'node:child_process';
+import { input } from '@inquirer/prompts';
 import { runInit } from '../../../src/commands/init.js';
 
 const mockExecSync = vi.mocked(execSync);
+const mockInput = vi.mocked(input);
 
 beforeEach(() => {
   vol.reset();
@@ -49,13 +57,8 @@ describe('runInit', () => {
   });
 
   it('throws UserError when project name is empty and prompt returns empty string', async () => {
-    const { createInterface } = await import('node:readline');
-    vi.mocked(createInterface).mockReturnValue({
-      question: (_q: string, cb: (a: string) => void) => cb('   '),
-      close: vi.fn(),
-    } as never);
-
     mockExecSync.mockReturnValue(Buffer.from('.git'));
+    mockInput.mockResolvedValueOnce('   ');
 
     await expect(runInit({}, '/project')).rejects.toThrow(
       new UserError('Project name is required'),
@@ -77,29 +80,34 @@ describe('runInit', () => {
 
   it('uses project name from --project flag without prompting', async () => {
     mockExecSync.mockReturnValue(Buffer.from('.git'));
-    const { createInterface } = await import('node:readline');
-    const mockCreateInterface = vi.mocked(createInterface);
 
     await runInit({ project: 'flagged-project' }, '/project');
 
-    expect(mockCreateInterface).not.toHaveBeenCalled();
-
+    expect(mockInput).not.toHaveBeenCalled();
     const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
     expect(JSON.parse(raw).project).toBe('flagged-project');
   });
 
   it('prompts for project name when --project flag is not provided', async () => {
     mockExecSync.mockReturnValue(Buffer.from('.git'));
-    const { createInterface } = await import('node:readline');
-    vi.mocked(createInterface).mockReturnValue({
-      question: (_q: string, cb: (a: string) => void) => cb('prompted-name'),
-      close: vi.fn(),
-    } as never);
+    mockInput.mockResolvedValueOnce('prompted-name');
 
     await runInit({}, '/project');
 
+    expect(mockInput).toHaveBeenCalledOnce();
     const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
     expect(JSON.parse(raw).project).toBe('prompted-name');
+  });
+
+  it('uses cwd basename as default for the project name prompt', async () => {
+    mockExecSync.mockReturnValue(Buffer.from('.git'));
+    mockInput.mockResolvedValueOnce('my-repo');
+
+    await runInit({}, '/home/user/my-repo');
+
+    expect(mockInput).toHaveBeenCalledWith(
+      expect.objectContaining({ default: 'my-repo' }),
+    );
   });
 
   it('calls git rev-parse with the provided cwd', async () => {
@@ -111,5 +119,17 @@ describe('runInit', () => {
       cwd: '/my-repo',
       stdio: 'pipe',
     });
+  });
+
+  it('prints project name and next-step configure instruction', async () => {
+    mockExecSync.mockReturnValue(Buffer.from('.git'));
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
+    await runInit({ project: 'acme' }, '/project');
+    vi.mocked(console.log).mockRestore();
+
+    expect(output.some((l) => l.includes('acme'))).toBe(true);
+    expect(output.some((l) => l.includes('flightdeck configure'))).toBe(true);
   });
 });
