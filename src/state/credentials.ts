@@ -45,3 +45,112 @@ export function writeCredentials(flightdeckDir: string, data: Credentials): void
     throw new UserError(`Could not write to ${credPath}`);
   }
 }
+
+// ── Credential remapping ───────────────────────────────────────────────────────
+
+export interface CredentialMapEntry {
+  /** The credential name as it appears in the source workflow nodes */
+  sourceName: string;
+  /** The name to use when pushing to target — equals sourceName when status is 'passthrough' */
+  targetName: string;
+  /** Key in credentials.json, or null when no mapping exists */
+  logicalName: string | null;
+  /**
+   * 'mapped'      — credentials.json has an explicit source→target mapping
+   * 'passthrough' — no mapping found; name is passed through unchanged (warn, not abort)
+   */
+  status: 'mapped' | 'passthrough';
+}
+
+/**
+ * Extracts all credential names referenced across a set of workflow nodes and resolves
+ * each against credentials.json.  Returns one deduplicated entry per unique source name.
+ *
+ * Used by:
+ *   - push --dry-run  (display credential map + validate against target)
+ *   - push live       (substitute names in workflow body before PUT/POST)
+ */
+export function buildCredentialMap(
+  nodes: unknown[],
+  sourceEnv: string,
+  targetEnv: string,
+  credentials: Credentials,
+): CredentialMapEntry[] {
+  // Collect all credential names referenced in any node
+  const seen = new Map<string, CredentialMapEntry>();
+
+  for (const node of nodes) {
+    if (typeof node !== 'object' || node === null) continue;
+    const nodeObj = node as Record<string, unknown>;
+    const creds = nodeObj['credentials'];
+    if (typeof creds !== 'object' || creds === null) continue;
+
+    for (const [, credValue] of Object.entries(creds as Record<string, unknown>)) {
+      if (typeof credValue !== 'object' || credValue === null) continue;
+      const cv = credValue as Record<string, unknown>;
+      const name = cv['name'];
+      if (typeof name !== 'string' || seen.has(name)) continue;
+
+      // Look for a logical credential whose source-env value matches this name
+      let resolved: CredentialMapEntry | null = null;
+      for (const [logicalName, envMap] of Object.entries(credentials.credentials)) {
+        if (envMap[sourceEnv] === name) {
+          const targetName = envMap[targetEnv] ?? name; // fall back to source name if no target entry
+          resolved = { sourceName: name, targetName, logicalName, status: 'mapped' };
+          break;
+        }
+      }
+
+      if (!resolved) {
+        // No mapping found — pass the name through unchanged
+        resolved = { sourceName: name, targetName: name, logicalName: null, status: 'passthrough' };
+      }
+
+      seen.set(name, resolved);
+    }
+  }
+
+  return Array.from(seen.values());
+}
+
+/**
+ * Returns a deep copy of the workflow with all credential names substituted according to
+ * the provided map.  Never mutates the input object.
+ *
+ * Used by push live to produce the workflow body sent to the target instance.
+ */
+export function applyCredentialMap(
+  workflow: Record<string, unknown>,
+  map: CredentialMapEntry[],
+): Record<string, unknown> {
+  if (map.length === 0) return { ...workflow };
+
+  const remapBySource = new Map(map.map((e) => [e.sourceName, e.targetName]));
+
+  // Deep-copy nodes array with credential names substituted
+  const nodes = workflow['nodes'];
+  if (!Array.isArray(nodes)) return { ...workflow };
+
+  const remappedNodes = nodes.map((node) => {
+    if (typeof node !== 'object' || node === null) return node;
+    const nodeObj = node as Record<string, unknown>;
+    const creds = nodeObj['credentials'];
+    if (typeof creds !== 'object' || creds === null) return { ...nodeObj };
+
+    const remappedCreds: Record<string, unknown> = {};
+    for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
+      if (typeof credValue !== 'object' || credValue === null) {
+        remappedCreds[credType] = credValue;
+        continue;
+      }
+      const cv = credValue as Record<string, unknown>;
+      const name = cv['name'];
+      const newName = typeof name === 'string' ? (remapBySource.get(name) ?? name) : name;
+      remappedCreds[credType] = { ...cv, name: newName };
+    }
+    return { ...nodeObj, credentials: remappedCreds };
+  });
+
+  return { ...workflow, nodes: remappedNodes };
+}
+

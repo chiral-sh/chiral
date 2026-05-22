@@ -82,7 +82,15 @@ export class N8nClient {
     );
   }
 
-  private async request<T>(path: string, options: { signal?: AbortSignal; scope?: string } = {}): Promise<T> {
+  private async request<T>(
+    path: string,
+    options: {
+      signal?: AbortSignal;
+      scope?: string;
+      method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+      body?: string;
+    } = {},
+  ): Promise<T> {
     const expiry = N8nClient.parseJwtExpiry(this.apiKey);
     if (expiry && expiry <= new Date()) {
       throw new UserError(
@@ -91,10 +99,16 @@ export class N8nClient {
       );
     }
 
+    const method = options.method ?? 'GET';
+    const headers: Record<string, string> = { 'X-N8N-API-KEY': this.apiKey };
+    if (options.body) headers['Content-Type'] = 'application/json';
+
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
-        headers: { 'X-N8N-API-KEY': this.apiKey },
+        method,
+        headers,
+        body: options.body,
         signal: options.signal,
       });
     } catch (err) {
@@ -126,6 +140,9 @@ export class N8nClient {
         `n8n API error for ${this.envName}: ${response.status} ${response.statusText}`,
       );
     }
+
+    // 204 No Content — return empty object
+    if (response.status === 204) return {} as T;
 
     return response.json() as Promise<T>;
   }
