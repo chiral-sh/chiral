@@ -1,0 +1,40 @@
+n8n-env Enterprise Edition License (the "Enterprise License")
+Copyright (c) 2026-present Purvesh Gandhi
+
+With regard to the n8n-env Enterprise Edition Software:
+
+This software and associated documentation files (the "Software") may only be
+used in production if you (and any entity that you represent) have agreed to,
+and are in compliance with, the n8n-env Subscription Terms of Service, or other
+agreement governing the use of the Software as agreed by you and the Licensor,
+and otherwise hold a valid n8n-env Enterprise license. Subject to the foregoing,
+you are free to modify this Software and publish patches to it. You agree that
+the Licensor retains all right, title, and interest in and to all such
+modifications and patches, and all such modifications and patches may only be
+used, copied, modified, distributed, or otherwise exploited with a valid
+n8n-env Enterprise license. Notwithstanding the foregoing, you may copy and
+modify the Software for development and testing purposes without requiring a
+subscription.
+
+You are not granted any other rights beyond what is expressly stated herein.
+Subject to the foregoing, it is forbidden to copy, merge, publish, distribute,
+sublicense, and/or sell the Software, or to incorporate any portion of it into
+a project distributed under an open-source license.
+
+You may not move, alter, disable, or circumvent the license key functionality
+or any other entitlement enforcement mechanism in the Software.
+
+The MIT license at the root of this repository does not apply to files in this
+directory or its subdirectories. This license governs exclusively.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+For all third-party components incorporated into the n8n-env Software, those
+components are licensed under the original license provided by the owner of
+the applicable component.
