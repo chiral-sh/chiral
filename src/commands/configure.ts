@@ -74,7 +74,7 @@ function printSummary(
   console.log(bar('├', '┼', '┤'));
 
   for (const [name, env] of Object.entries(allEnvs)) {
-    const result = results.find((r) => r.name === name);
+    const result = results.findLast((r) => r.name === name);
     let statusStr: string;
     if (!result) {
       statusStr = chalk.dim('─ existing');

@@ -288,6 +288,32 @@ describe('runConfigure', () => {
     );
   });
 
+  it('shows connected status in summary when env is retried after a failed attempt', async () => {
+    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    // First attempt: dev fails, user declines save, tries dev again and succeeds
+    mockInput
+      .mockResolvedValueOnce('dev').mockResolvedValueOnce('https://bad.n8n.example.com')
+      .mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
+    mockPassword.mockResolvedValueOnce('bad-key').mockResolvedValueOnce('good-key');
+    MockN8nClient
+      .mockImplementationOnce(() => ({
+        testConnection: vi.fn().mockRejectedValue(new UserError('refused')),
+      }) as never)
+      .mockImplementationOnce(() => makeClientMock(5) as never);
+    mockConfirm
+      .mockResolvedValueOnce(false) // don't save failing attempt
+      .mockResolvedValueOnce(true)  // add another
+      .mockResolvedValueOnce(false); // done
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
+    await runConfigure({}, '/project');
+    vi.mocked(console.log).mockRestore();
+
+    // summary should show connected (5 workflows), not "not tested" from the skipped attempt
+    expect(output.some((l) => l.includes('5 workflow'))).toBe(true);
+  });
+
   it('does nothing and exits cleanly when all envs are skipped', async () => {
     vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
