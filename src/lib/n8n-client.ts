@@ -45,13 +45,17 @@ export class N8nClient {
     this.envName = envName;
   }
 
-  private async request<T>(path: string): Promise<T> {
+  private async request<T>(path: string, signal?: AbortSignal): Promise<T> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         headers: { 'X-N8N-API-KEY': this.apiKey },
+        signal,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new UserError(`Connection to ${this.envName} timed out after 10 seconds`);
+      }
       throw new UserError(
         `Cannot reach ${this.envName} at ${this.baseUrl.replace('/api/v1', '')} — connection refused`,
       );
@@ -102,5 +106,19 @@ export class N8nClient {
 
   async listTags(): Promise<TagSummary[]> {
     return this.listAll<TagSummary>('/tags');
+  }
+
+  async testConnection(timeoutMs = 10_000): Promise<{ workflowCount: number }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const data = await this.request<{ data: unknown[] }>(
+        '/workflows?limit=100&excludePinnedData=true',
+        controller.signal,
+      );
+      return { workflowCount: data.data.length };
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 }
