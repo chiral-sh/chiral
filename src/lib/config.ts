@@ -21,7 +21,6 @@ export const ConfigSchema = z.object({
     .refine((envs) => Object.keys(envs).length >= 1, {
       message: 'At least one environment is required',
     }),
-  credentialMap: z.record(z.string(), z.string()).default({}),
   licenseKey: z.string().optional(),
 });
 
