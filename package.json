@@ -7,8 +7,9 @@
   "bin": {
     "flightdeck": "dist/index.js"
   },
+  "packageManager": "pnpm@10.19.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsup",
