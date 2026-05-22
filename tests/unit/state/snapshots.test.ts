@@ -39,7 +39,7 @@ const BASE_META = {
   command: 'pull' as const,
   timestamp: '2024-01-01T10:00:00.000Z',
   workflow_count: 1,
-  filters: { tag: null, pattern: null, onlyActive: false },
+  filters: { tag: null, pattern: null, onlyActive: false, id: null },
 };
 
 beforeEach(() => vol.reset());

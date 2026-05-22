@@ -130,13 +130,14 @@ export class N8nClient {
     return response.json() as Promise<T>;
   }
 
-  private async listAll<T>(path: string, scope: string): Promise<T[]> {
+  private async listAll<T>(path: string, scope: string, extra?: Record<string, string>): Promise<T[]> {
     const results: T[] = [];
     let cursor: string | undefined;
 
     do {
-      const url = cursor ? `${path}?limit=100&cursor=${encodeURIComponent(cursor)}` : `${path}?limit=100`;
-      const page = await this.request<PaginatedResponse<T>>(url, { scope });
+      const params = new URLSearchParams({ limit: '100', ...extra });
+      if (cursor) params.set('cursor', cursor);
+      const page = await this.request<PaginatedResponse<T>>(`${path}?${params}`, { scope });
       results.push(...page.data);
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
@@ -144,8 +145,11 @@ export class N8nClient {
     return results;
   }
 
-  async listWorkflows(): Promise<WorkflowSummary[]> {
-    return this.listAll<WorkflowSummary>('/workflows', 'workflow:list');
+  async listWorkflows(filters?: { active?: boolean; tags?: string }): Promise<WorkflowSummary[]> {
+    const extra: Record<string, string> = {};
+    if (filters?.active !== undefined) extra.active = String(filters.active);
+    if (filters?.tags) extra.tags = filters.tags;
+    return this.listAll<WorkflowSummary>('/workflows', 'workflow:list', extra);
   }
 
   async getWorkflow(id: string): Promise<WorkflowFull> {

@@ -85,7 +85,7 @@ export async function runAdopt(
       command: 'adopt',
       timestamp: new Date().toISOString(),
       workflow_count: workflows.length,
-      filters: { tag: null, pattern: null, onlyActive: false },
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
     spinner3.succeed(
       chalk.green('  Snapshot saved') +

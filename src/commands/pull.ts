@@ -4,7 +4,7 @@ import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, ControlledExit } from '../lib/errors.js';
 import {
   generateDeploymentId,
   writeSnapshot,
@@ -13,7 +13,7 @@ import {
   readAllWorkflowsInDeployment,
   type SnapshotWorkflow,
 } from '../state/snapshots.js';
-import { writeAuditEntry } from '../state/audit.js';
+import { writeAuditEntry, readAuditLog } from '../state/audit.js';
 import type { Config } from '../lib/config.js';
 
 function getGitActor(): string {
@@ -70,10 +70,43 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
   return { added, updated, deleted, unchanged };
 }
 
-function buildNextHint(config: Config, env: string): string {
+function buildNextHint(
+  config: Config,
+  env: string,
+  hasChanges: boolean,
+  isFirstPull: boolean,
+  filters: { tag?: string; pattern?: string },
+): string {
   const others = Object.keys(config.environments).filter((e) => e !== env);
   if (others.length === 0) return '';
-  return `flightdeck diff --source ${env} --target ${others[0]}`;
+  const target = others[0];
+
+  if (hasChanges && !isFirstPull) {
+    const parts = [
+      `--source ${env}`,
+      `--target ${target}`,
+      filters.tag ? `--tag ${filters.tag}` : '',
+      filters.pattern ? `--pattern "${filters.pattern}"` : '',
+      '--dry-run',
+    ].filter(Boolean);
+    return `flightdeck push ${parts.join(' ')}`;
+  }
+  return `flightdeck diff --source ${env} --target ${target}`;
+}
+
+function checkStaleness(flightdeckDir: string, env: string): void {
+  const entries = readAuditLog(flightdeckDir);
+  const lastPull = [...entries]
+    .reverse()
+    .find((e) => e.action === 'pull' && e.target_env === env && e.result === 'success');
+
+  if (!lastPull) return;
+
+  const daysAgo = (Date.now() - new Date(lastPull.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysAgo > 7) {
+    const days = Math.floor(daysAgo);
+    console.log(chalk.dim(`  Note: last pull from ${env} was ${days} day${days === 1 ? '' : 's'} ago.`));
+  }
 }
 
 function plural(n: number, word: string): string {
@@ -88,30 +121,31 @@ function printWorkflowList(workflows: WorkflowFull[]): void {
   }
 }
 
+interface PullOptions {
+  env: string;
+  tag?: string;
+  pattern?: string;
+  id?: string;
+  onlyActive?: boolean;
+  json?: boolean;
+  verbose?: boolean;
+  nameOnly?: boolean;
+  exitCode?: boolean;
+}
+
 export async function runPull(
-  options: {
-    env: string;
-    tag?: string;
-    pattern?: string;
-    onlyActive?: boolean;
-    json?: boolean;
-    verbose?: boolean;
-  },
+  options: PullOptions,
   cwd: string = process.cwd(),
 ): Promise<void> {
+  if (options.id && (options.tag || options.pattern || options.onlyActive)) {
+    throw new UserError('--id cannot be combined with --tag, --pattern, or --only-active');
+  }
+
   const actor = getGitActor();
   const { config, flightdeckDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
   client.warnIfExpiringSoon();
-
-  const filterLabel = [
-    options.tag ? `tag: ${options.tag}` : '',
-    options.pattern ? `pattern: ${options.pattern}` : '',
-    options.onlyActive ? 'active only' : '',
-  ]
-    .filter(Boolean)
-    .join(', ');
 
   const baseEntry = {
     event_id: crypto.randomUUID(),
@@ -126,18 +160,101 @@ export async function runPull(
     flightdeck_version: '0.1.0',
   };
 
-  if (!options.json) console.log();
+  const isSilent = options.json || options.nameOnly;
+  if (!isSilent) {
+    console.log();
+    checkStaleness(flightdeckDir, options.env);
+  }
 
   try {
-    // ── fetch ─────────────────────────────────────────────────────────────────
+    // ── --id: single-workflow path ────────────────────────────────────────────
+    if (options.id) {
+      const spinner = ora({
+        text: `  Connecting to ${chalk.cyan(options.env)}…`,
+        color: 'cyan',
+      }).start();
+
+      const workflow = await client.getWorkflow(options.id).catch((err) => failSpinner(spinner, err));
+      spinner.succeed(chalk.green(`  Fetched "${workflow.name}"`));
+
+      const previousDeploymentId = findLatestDeploymentForEnv(flightdeckDir, options.env);
+      const previousWorkflows = previousDeploymentId
+        ? readAllWorkflowsInDeployment(flightdeckDir, previousDeploymentId)
+        : null;
+      const prevEntry = previousWorkflows?.find((w) => w.id === options.id);
+      const isNew = !prevEntry;
+      const isUpdated = !!prevEntry && (prevEntry as Record<string, unknown>).versionId !== workflow.versionId;
+      const hasChanges = isNew || isUpdated;
+
+      const deploymentId = generateDeploymentId();
+      writeSnapshot(flightdeckDir, deploymentId, workflow);
+      writeSnapshotMeta(flightdeckDir, deploymentId, {
+        deployment_id: deploymentId,
+        env: options.env,
+        command: 'pull',
+        timestamp: new Date().toISOString(),
+        workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
+      });
+
+      if (options.nameOnly) {
+        if (hasChanges) console.log(workflow.name);
+      } else if (options.json) {
+        console.log(
+          JSON.stringify({
+            env: options.env,
+            deployment_id: deploymentId,
+            pulled: 1,
+            active: workflow.active ? 1 : 0,
+            inactive: workflow.active ? 0 : 1,
+            new: isNew ? [workflow.name] : [],
+            updated: isUpdated ? [workflow.name] : [],
+            deleted: [],
+            unchanged: hasChanges ? 0 : 1,
+          }),
+        );
+      } else {
+        console.log();
+        if (isNew) {
+          console.log(`  ${chalk.green('+')} ${workflow.name}  ${chalk.dim('(new)')}`);
+        } else if (isUpdated) {
+          console.log(`  ${chalk.yellow('~')} ${workflow.name}  ${chalk.dim('(updated)')}`);
+        } else {
+          console.log(`  ${chalk.green('✓')} ${workflow.name} up to date`);
+        }
+        console.log(chalk.dim(`\n  Snapshot saved → .flightdeck/snapshots/${deploymentId}/`));
+        console.log();
+      }
+
+      baseEntry.workflow_ids = [options.id];
+      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+      if (options.exitCode && hasChanges) throw new ControlledExit(1);
+      return;
+    }
+
+    // ── normal path ───────────────────────────────────────────────────────────
+    const filterLabel = [
+      options.tag ? `tag: ${options.tag}` : '',
+      options.pattern ? `pattern: ${options.pattern}` : '',
+      options.onlyActive ? 'active only' : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+
     const connectText = filterLabel
       ? `  Connecting to ${chalk.cyan(options.env)} [${filterLabel}]…`
       : `  Connecting to ${chalk.cyan(options.env)}…`;
     const spinner1 = ora({ text: connectText, color: 'cyan' }).start();
 
-    const summaries = await client.listWorkflows().catch((err) => failSpinner(spinner1, err));
+    // Server-side filtering for active and tags; pattern stays client-side
+    const summaries = await client
+      .listWorkflows({
+        active: options.onlyActive ? true : undefined,
+        tags: options.tag,
+      })
+      .catch((err) => failSpinner(spinner1, err));
 
-    // apply filters client-side
+    // Client-side filters as belt-and-suspenders (and for pattern which has no server-side support)
     const filtered = summaries.filter((wf) => {
       if (options.tag && !wf.tags.some((t) => t.name === options.tag)) return false;
       if (options.pattern && !matchesGlob(wf.name, options.pattern)) return false;
@@ -145,55 +262,65 @@ export async function runPull(
       return true;
     });
 
-    // fetch full workflow data — spinner stays open through both API calls
     const workflows = await Promise.all(
       filtered.map((s) => client.getWorkflow(s.id)),
     ).catch((err) => failSpinner(spinner1, err));
 
+    const activeCount = filtered.filter((w) => w.active).length;
+    const inactiveCount = filtered.length - activeCount;
+    const activeLabel = `${activeCount} active, ${inactiveCount} inactive`;
     const filteredNote =
       filtered.length < summaries.length
-        ? chalk.dim(` (${filtered.length} of ${summaries.length} total)`)
+        ? chalk.dim(` (filtered from ${summaries.length} total)`)
         : '';
     spinner1.succeed(
-      chalk.green(`  Fetched ${plural(workflows.length, 'workflow')}`) + filteredNote,
+      chalk.green(`  Fetched ${plural(workflows.length, 'workflow')} — ${activeLabel}`) + filteredNote,
     );
 
-    // ── find previous snapshot for delta ──────────────────────────────────────
+    // ── delta ─────────────────────────────────────────────────────────────────
     const previousDeploymentId = findLatestDeploymentForEnv(flightdeckDir, options.env);
     const previousWorkflows = previousDeploymentId
       ? readAllWorkflowsInDeployment(flightdeckDir, previousDeploymentId)
       : null;
 
     const delta = previousWorkflows ? computeDelta(workflows, previousWorkflows) : null;
+    const isFirstPull = delta === null;
     const totalChanges = delta
       ? delta.added.length + delta.updated.length + delta.deleted.length
-      : workflows.length;
+      : 0;
+    const hasChanges = !isFirstPull && totalChanges > 0;
 
     // ── write snapshot ────────────────────────────────────────────────────────
     const deploymentId = generateDeploymentId();
+    const meta = {
+      deployment_id: deploymentId,
+      env: options.env,
+      command: 'pull' as const,
+      timestamp: new Date().toISOString(),
+      workflow_count: workflows.length,
+      filters: {
+        tag: options.tag ?? null,
+        pattern: options.pattern ?? null,
+        onlyActive: options.onlyActive ?? false,
+        id: null,
+      },
+    };
 
-    if (delta && totalChanges === 0) {
-      // nothing changed — write snapshot silently, report inline
+    if (!isFirstPull && totalChanges === 0) {
+      // nothing changed — write snapshot silently
       for (const wf of workflows) writeSnapshot(flightdeckDir, deploymentId, wf);
-      writeSnapshotMeta(flightdeckDir, deploymentId, {
-        deployment_id: deploymentId,
-        env: options.env,
-        command: 'pull',
-        timestamp: new Date().toISOString(),
-        workflow_count: workflows.length,
-        filters: {
-          tag: options.tag ?? null,
-          pattern: options.pattern ?? null,
-          onlyActive: options.onlyActive ?? false,
-        },
-      });
+      writeSnapshotMeta(flightdeckDir, deploymentId, meta);
 
-      if (options.json) {
+      if (options.nameOnly) {
+        // nothing changed — no output
+      } else if (options.json) {
         console.log(
           JSON.stringify({
             env: options.env,
             deployment_id: deploymentId,
             pulled: workflows.length,
+            active: activeCount,
+            inactive: inactiveCount,
             new: [],
             updated: [],
             deleted: [],
@@ -201,41 +328,46 @@ export async function runPull(
           }),
         );
       } else {
-        console.log(
-          `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date — no changes since last pull`,
-        );
-        if (options.verbose) printWorkflowList(workflows);
-        const hint = buildNextHint(config, options.env);
-        if (hint) console.log(`\n  ${chalk.dim('Next:')} ${hint}`);
+        if (workflows.length === 0) {
+          console.log(
+            `\n  ${chalk.yellow('⚠')} No workflows found in ${chalk.cyan(options.env)} — is this expected?`,
+          );
+          console.log(
+            chalk.dim(`\n  Check that your API key has permission to list workflows in this environment.`),
+          );
+        } else {
+          console.log(
+            `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date — no changes since last pull`,
+          );
+          if (options.verbose) printWorkflowList(workflows);
+          const hint = buildNextHint(config, options.env, false, false, {});
+          if (hint) console.log(`\n  ${chalk.dim('Next:')} ${hint}`);
+        }
         console.log();
       }
     } else {
-      // first pull or changes found
+      // first pull or changes found — show snapshot spinner
       const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
       for (const wf of workflows) writeSnapshot(flightdeckDir, deploymentId, wf);
-      writeSnapshotMeta(flightdeckDir, deploymentId, {
-        deployment_id: deploymentId,
-        env: options.env,
-        command: 'pull',
-        timestamp: new Date().toISOString(),
-        workflow_count: workflows.length,
-        filters: {
-          tag: options.tag ?? null,
-          pattern: options.pattern ?? null,
-          onlyActive: options.onlyActive ?? false,
-        },
-      });
+      writeSnapshotMeta(flightdeckDir, deploymentId, meta);
       spinner3.succeed(
         chalk.green('  Snapshot saved') +
           chalk.dim(` → .flightdeck/snapshots/${deploymentId}/`),
       );
 
-      if (options.json) {
+      if (options.nameOnly) {
+        // print only names of changed workflows — no other output
+        for (const wf of (delta?.added ?? [])) console.log(wf.name);
+        for (const wf of (delta?.updated ?? [])) console.log(wf.name);
+        for (const wf of (delta?.deleted ?? [])) console.log(wf.name);
+      } else if (options.json) {
         console.log(
           JSON.stringify({
             env: options.env,
             deployment_id: deploymentId,
             pulled: workflows.length,
+            active: activeCount,
+            inactive: inactiveCount,
             new: (delta?.added ?? workflows).map((w) => w.name),
             updated: delta?.updated.map((w) => w.name) ?? [],
             deleted: delta?.deleted.map((w) => w.name) ?? [],
@@ -243,36 +375,42 @@ export async function runPull(
           }),
         );
       } else {
-        if (!delta) {
-          // first pull — no delta to display
+        if (isFirstPull && workflows.length === 0) {
+          console.log(
+            `\n  ${chalk.yellow('⚠')} No workflows found in ${chalk.cyan(options.env)} — is this expected?`,
+          );
+          console.log(
+            chalk.dim(`\n  Check that your API key has permission to list workflows in this environment.`),
+          );
+        } else if (isFirstPull) {
           console.log(
             `\n  ${chalk.dim('First pull — baseline saved. Run again after making changes in n8n to see a delta.')}`,
           );
         } else {
-          // changes found
           console.log();
-          for (const wf of delta.added) {
+          for (const wf of delta!.added) {
             console.log(`  ${chalk.green('+')} ${wf.name}  ${chalk.dim('(new)')}`);
           }
-          for (const wf of delta.updated) {
+          for (const wf of delta!.updated) {
             console.log(`  ${chalk.yellow('~')} ${wf.name}  ${chalk.dim('(updated)')}`);
           }
-          for (const wf of delta.deleted) {
+          for (const wf of delta!.deleted) {
             console.log(`  ${chalk.yellow('⚠')} ${wf.name}  ${chalk.dim('(removed from n8n)')}`);
           }
-          if (delta.unchanged > 0) {
+          if (delta!.unchanged > 0) {
             console.log(
-              `  ${chalk.dim(`  ${plural(delta.unchanged, 'workflow')} unchanged`)}`,
+              `  ${chalk.dim(`  ${plural(delta!.unchanged, 'workflow')} unchanged`)}`,
             );
           }
           console.log();
-          console.log(
-            `  ${plural(totalChanges, 'change')}. Run ${chalk.dim(`'flightdeck push --source ${options.env} --target <target>'`)} to deploy.`,
-          );
+          console.log(`  ${plural(totalChanges, 'change')}.`);
         }
 
         if (options.verbose) printWorkflowList(workflows);
-        const hint = buildNextHint(config, options.env);
+        const hint = buildNextHint(config, options.env, hasChanges, isFirstPull, {
+          tag: options.tag,
+          pattern: options.pattern,
+        });
         if (hint) console.log(`\n  ${chalk.dim('Next:')} ${hint}`);
         console.log();
       }
@@ -280,7 +418,9 @@ export async function runPull(
 
     baseEntry.workflow_ids = workflows.map((w) => w.id);
     writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+    if (options.exitCode && hasChanges) throw new ControlledExit(1);
   } catch (err) {
+    if (err instanceof ControlledExit) throw err;
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
       writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'failure', error: errorMsg });
@@ -294,11 +434,14 @@ export async function runPull(
 export const pullCommand = new Command('pull')
   .description('Sync workflow snapshots from an n8n environment')
   .requiredOption('--env <env>', 'Environment to pull from')
-  .option('--tag <tag>', 'Only pull workflows with this tag')
+  .option('--tag <tag>', 'Only pull workflows with this tag name')
   .option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")')
+  .option('--id <workflow-id>', 'Pull a single workflow by its n8n ID (mutually exclusive with --tag, --pattern, --only-active)')
   .option('--only-active', 'Only pull currently active workflows')
   .option('--verbose', 'List every pulled workflow with its active/inactive status')
+  .option('--name-only', 'Print only changed workflow names, one per line — suitable for piping')
   .option('--json', 'Output a machine-readable JSON summary instead of human output')
+  .option('--exit-code', 'Exit 1 if changes were detected, 0 if everything was already up to date (CI use)')
   .addHelpText(
     'after',
     `
@@ -312,8 +455,17 @@ Examples:
   Pull workflows matching a name pattern:
     flightdeck pull --env dev --pattern "Customer *"
 
+  Pull a single workflow by ID:
+    flightdeck pull --env dev --id abc123
+
   Pull only active workflows (CI-friendly):
     flightdeck pull --env dev --only-active
+
+  Exit 1 if changes detected (for CI scripts):
+    flightdeck pull --env dev --exit-code
+
+  Print only changed workflow names for piping:
+    flightdeck pull --env dev --name-only
 
   Show every pulled workflow with its active/inactive status:
     flightdeck pull --env dev --verbose

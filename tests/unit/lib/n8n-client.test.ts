@@ -73,6 +73,30 @@ describe('N8nClient.listWorkflows', () => {
     expect(fetchMock.mock.calls[1][0]).toContain('cursor=next-cursor');
   });
 
+  it('passes active=true param when filters.active is true', async () => {
+    const fetchMock = makeFetch([{ data: [], nextCursor: null }]);
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new N8nClient(ENV, ENV_NAME);
+    await client.listWorkflows({ active: true });
+    expect(fetchMock.mock.calls[0][0]).toContain('active=true');
+  });
+
+  it('passes tags param when filters.tags is set', async () => {
+    const fetchMock = makeFetch([{ data: [], nextCursor: null }]);
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new N8nClient(ENV, ENV_NAME);
+    await client.listWorkflows({ tags: 'production' });
+    expect(fetchMock.mock.calls[0][0]).toContain('tags=production');
+  });
+
+  it('does not include active param when filters.active is undefined', async () => {
+    const fetchMock = makeFetch([{ data: [], nextCursor: null }]);
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new N8nClient(ENV, ENV_NAME);
+    await client.listWorkflows({});
+    expect(fetchMock.mock.calls[0][0]).not.toContain('active=');
+  });
+
   it('throws UserError on 401', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized', json: () => Promise.resolve({}) }));
     const client = new N8nClient(ENV, ENV_NAME);

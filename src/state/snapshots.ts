@@ -28,6 +28,7 @@ const SnapshotMetaSchema = z.object({
     tag: z.string().nullable(),
     pattern: z.string().nullable(),
     onlyActive: z.boolean(),
+    id: z.string().nullable().default(null),
   }),
 });
 

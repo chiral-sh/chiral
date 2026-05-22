@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { ExitPromptError } from '@inquirer/core';
-import { UserError } from './lib/errors.js';
+import { UserError, ControlledExit } from './lib/errors.js';
 import { initCommand } from './commands/init.js';
 import { adoptCommand } from './commands/adopt.js';
 import { configureCommand } from './commands/configure.js';
@@ -28,6 +28,9 @@ try {
   if (err instanceof ExitPromptError) {
     console.error('\n  Cancelled.\n');
     process.exit(130);
+  }
+  if (err instanceof ControlledExit) {
+    process.exit(err.code);
   }
   if (err instanceof UserError) {
     console.error(`\n  ${chalk.red('✗')}  ${err.message}\n`);
