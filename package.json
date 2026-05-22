@@ -27,7 +27,7 @@
     "flightdeck"
   ],
   "author": "Purvesh Gandhi",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@inquirer/core": "^11.1.10",
     "@inquirer/prompts": "^8.4.3",
