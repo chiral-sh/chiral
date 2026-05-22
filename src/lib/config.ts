@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { z } from 'zod';
 import { UserError } from './errors.js';
@@ -65,6 +65,39 @@ export function loadConfigAndDir(startDir: string = process.cwd()): ConfigWithDi
 
 export function loadConfig(startDir: string = process.cwd()): Config {
   return loadConfigAndDir(startDir).config;
+}
+
+export function findFlightdeckDir(startDir: string): string | null {
+  let current = startDir;
+  while (true) {
+    const candidate = join(current, '.flightdeck');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+export function writeConfig(flightdeckDir: string, config: Config): void {
+  const configPath = join(flightdeckDir, 'config.json');
+  try {
+    writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+  } catch {
+    throw new UserError('Could not write .flightdeck/config.json');
+  }
+}
+
+export function readProjectNameFromExample(flightdeckDir: string): string {
+  const examplePath = join(flightdeckDir, 'config.example.json');
+  try {
+    const raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as { project?: unknown };
+    return typeof raw.project === 'string' && raw.project ? raw.project : 'my-project';
+  } catch {
+    return 'my-project';
+  }
 }
 
 export function resolveEnv(config: Config, envName: string): Environment {
