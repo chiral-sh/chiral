@@ -6,6 +6,7 @@ import { UserError } from '../lib/errors.js';
 export const AuditActionSchema = z.enum([
   'push',
   'pull',
+  'diff',
   'rollback',
   'lock',
   'unlock',
