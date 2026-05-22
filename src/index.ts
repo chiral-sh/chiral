@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { UserError } from './lib/errors.js';
+import { initCommand } from './commands/init.js';
 
 const program = new Command();
 
@@ -9,8 +10,7 @@ program
   .description('Safer production deployments for self-hosted n8n Community Edition')
   .version('0.1.0');
 
-// Commands registered here as they are built:
-// program.addCommand(initCommand);
+program.addCommand(initCommand);
 // program.addCommand(adoptCommand);
 // program.addCommand(pullCommand);
 // program.addCommand(diffCommand);
