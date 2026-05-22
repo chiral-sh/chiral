@@ -1,4 +1,6 @@
 import { execSync } from 'node:child_process';
+import chalk from 'chalk';
+import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient } from '../lib/n8n-client.js';
@@ -14,6 +16,12 @@ function getGitActor(): string {
       'git config user.email is not set — configure it before running flightdeck',
     );
   }
+}
+
+function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
+  const msg = err instanceof Error ? err.message : String(err);
+  spinner.fail(chalk.red(`  ${msg}`));
+  throw err;
 }
 
 export async function runAdopt(
@@ -38,36 +46,51 @@ export async function runAdopt(
     flightdeck_version: '0.1.0',
   };
 
-  try {
-    console.log(`Connecting to ${options.env} (${env.url})...`);
+  console.log();
 
+  try {
+    // ── discover ──────────────────────────────────────────────────────────────
+    const spinner1 = ora({ text: `  Connecting to ${chalk.cyan(options.env)}…`, color: 'cyan' }).start();
     const [summaries, credentials, tags] = await Promise.all([
       client.listWorkflows(),
       client.listCredentials(),
       client.listTags(),
-    ]);
-
-    const workflows = await Promise.all(summaries.map((s) => client.getWorkflow(s.id)));
-
-    console.log(`✓ Discovered ${workflows.length} workflows`);
-    console.log(
-      `✓ Discovered ${credentials.length} credentials (names only — secrets are never read)`,
+    ]).catch((err) => failSpinner(spinner1, err));
+    spinner1.succeed(
+      chalk.green('  Connected') +
+        chalk.dim(
+          ` — ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
+        ),
     );
-    console.log(`✓ Discovered ${tags.length} tags`);
 
+    // ── fetch definitions ─────────────────────────────────────────────────────
+    const spinner2 = ora({ text: '  Fetching workflow definitions…', color: 'cyan' }).start();
+    const workflows = await Promise.all(summaries.map((s) => client.getWorkflow(s.id))).catch(
+      (err) => failSpinner(spinner2, err),
+    );
+    spinner2.succeed(
+      chalk.green(`  Fetched ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`),
+    );
+
+    // ── snapshot ──────────────────────────────────────────────────────────────
+    const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
     const deploymentId = generateDeploymentId();
     for (const workflow of workflows) {
       writeSnapshot(flightdeckDir, deploymentId, workflow);
     }
+    spinner3.succeed(
+      chalk.green('  Snapshot saved') +
+        chalk.dim(` → .flightdeck/snapshots/${deploymentId}/`),
+    );
 
-    console.log(`✓ Snapshot saved to .flightdeck/snapshots/${deploymentId}/`);
-    console.log('');
-    console.log('  Workflows:');
+    // ── workflow list ─────────────────────────────────────────────────────────
+    console.log(`\n  ${chalk.bold('Workflows')}`);
     for (const wf of workflows) {
-      console.log(`    - ${wf.name} (${wf.active ? 'active' : 'inactive'})`);
+      const badge = wf.active ? chalk.green('active') : chalk.dim('inactive');
+      console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
     }
-    console.log('');
-    console.log(`Run 'flightdeck pull --env ${options.env}' to keep snapshots up to date.`);
+
+    console.log(`\n  ${chalk.dim('Next:')} flightdeck pull --env ${options.env}\n`);
 
     writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
   } catch (err) {
@@ -84,6 +107,14 @@ export async function runAdopt(
 export const adoptCommand = new Command('adopt')
   .description('Import an existing n8n instance into flightdeck state')
   .requiredOption('--env <env>', 'Environment name from config.json')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  Adopt a configured environment:
+    flightdeck adopt --env dev
+`,
+  )
   .action(async (options) => {
     await runAdopt(options);
   });

@@ -251,6 +251,20 @@ export const configureCommand = new Command('configure')
   .description('Set up or update environment connections in .flightdeck/config.json')
   .option('--env <env>', 'Configure a specific environment (skips env name prompt)')
   .option('--skip-test', 'Skip the connection test')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  Configure all environments interactively:
+    flightdeck configure
+
+  Update a single environment:
+    flightdeck configure --env prod
+
+  Configure without testing the connection:
+    flightdeck configure --env dev --skip-test
+`,
+  )
   .action(async (options) => {
     await runConfigure(options);
   });

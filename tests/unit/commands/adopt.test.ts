@@ -176,8 +176,10 @@ describe('runAdopt', () => {
     await runAdopt({ env: 'dev' }, '/project');
     spy.mockRestore();
 
-    expect(output.join('\n')).toContain('My Workflow (active)');
-    expect(output.join('\n')).toContain('Inactive Workflow (inactive)');
+    expect(output.join('\n')).toContain('My Workflow');
+    expect(output.join('\n')).toContain('active');
+    expect(output.join('\n')).toContain('Inactive Workflow');
+    expect(output.join('\n')).toContain('inactive');
   });
 
   it('fetches full workflow JSON for each summary', async () => {

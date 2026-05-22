@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { UserError } from './lib/errors.js';
 import { initCommand } from './commands/init.js';
 import { adoptCommand } from './commands/adopt.js';
@@ -23,10 +24,10 @@ try {
   await program.parseAsync(process.argv);
 } catch (err) {
   if (err instanceof UserError) {
-    console.error(`Error: ${err.message}`);
+    console.error(`\n  ${chalk.red('✗')}  ${err.message}\n`);
     process.exit(1);
   }
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`Unexpected error: ${message}`);
+  console.error(`\n  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
   process.exit(2);
 }

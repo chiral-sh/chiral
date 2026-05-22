@@ -60,6 +60,17 @@ export async function runInit(
 export const initCommand = new Command('init')
   .description('Initialize .flightdeck/ in the current Git repository')
   .option('--project <name>', 'Project name (skips interactive prompt)')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  Initialize with an interactive project name prompt:
+    flightdeck init
+
+  Initialize with a specific project name:
+    flightdeck init --project my-n8n
+`,
+  )
   .action(async (options) => {
     await runInit(options);
   });
