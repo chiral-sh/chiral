@@ -14,9 +14,11 @@ const CONFIG_EXAMPLE_TEMPLATE = {
       apiKey: 'YOUR_PROD_API_KEY',
     },
   },
-  credentialMap: {
-    dev_database: 'prod_database',
-  },
+};
+
+const CREDENTIALS_TEMPLATE = {
+  version: 1 as const,
+  credentials: {} as Record<string, Record<string, string>>,
 };
 
 export function createFlightdeckDirectory(flightdeckDir: string, projectName: string): void {
@@ -32,4 +34,9 @@ export function createFlightdeckDirectory(flightdeckDir: string, projectName: st
   );
   writeFileSync(join(flightdeckDir, '.gitignore'), 'config.json\n', 'utf-8');
   writeFileSync(join(flightdeckDir, 'audit.jsonl'), '', 'utf-8');
+  writeFileSync(
+    join(flightdeckDir, 'credentials.json'),
+    JSON.stringify(CREDENTIALS_TEMPLATE, null, 2) + '\n',
+    'utf-8',
+  );
 }

@@ -15,7 +15,6 @@ const VALID_CONFIG = {
     dev: { url: 'https://dev.example.com', apiKey: 'dev-key' },
     prod: { url: 'https://prod.example.com', apiKey: 'prod-key' },
   },
-  credentialMap: {},
 };
 
 beforeEach(() => vol.reset());
@@ -71,20 +70,6 @@ describe('loadConfig', () => {
     expect(() => loadConfig('/project')).toThrow('Invalid config');
   });
 
-  it('defaults credentialMap to empty object when omitted', () => {
-    const { credentialMap: _omitted, ...withoutMap } = VALID_CONFIG;
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(withoutMap) });
-    const config = loadConfig('/project');
-    expect(config.credentialMap).toEqual({});
-  });
-
-  it('preserves credentialMap entries', () => {
-    const cfg = { ...VALID_CONFIG, credentialMap: { dev_db: 'prod_db' } };
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(cfg) });
-    const config = loadConfig('/project');
-    expect(config.credentialMap).toEqual({ dev_db: 'prod_db' });
-  });
-
   it('accepts optional licenseKey', () => {
     const cfg = { ...VALID_CONFIG, licenseKey: 'eyJhbGciOiJSUzI1NiJ9' };
     vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(cfg) });
@@ -94,10 +79,7 @@ describe('loadConfig', () => {
 });
 
 describe('resolveEnv', () => {
-  const config = {
-    ...VALID_CONFIG,
-    credentialMap: {},
-  };
+  const config = { ...VALID_CONFIG };
 
   it('returns the environment config for a known env', () => {
     const env = resolveEnv(config, 'dev');

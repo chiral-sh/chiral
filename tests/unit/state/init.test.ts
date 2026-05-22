@@ -53,6 +53,14 @@ describe('createFlightdeckDirectory', () => {
     expect(audit).toBe('');
   });
 
+  it('creates credentials.json with version 1 and empty credentials', () => {
+    createFlightdeckDirectory('/project/.flightdeck', 'test');
+    const raw = vol.readFileSync('/project/.flightdeck/credentials.json', 'utf-8') as string;
+    const parsed = JSON.parse(raw);
+    expect(parsed.version).toBe(1);
+    expect(parsed.credentials).toEqual({});
+  });
+
   it('does not mutate CONFIG_EXAMPLE_TEMPLATE across calls', () => {
     createFlightdeckDirectory('/project/.flightdeck', 'project-a');
     createFlightdeckDirectory('/project2/.flightdeck', 'project-b');
