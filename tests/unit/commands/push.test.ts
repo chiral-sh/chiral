@@ -23,6 +23,7 @@ vi.mock('../../../src/lib/n8n-client.js', () => ({
 import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
 import { runPush } from '../../../src/commands/push.js';
+import { computeContentHash } from '../../../src/state/fingerprints.js';
 import type { WorkflowSummary, CredentialSummary, TagSummary } from '../../../src/lib/n8n-client.js';
 import type { SnapshotWorkflow } from '../../../src/state/snapshots.js';
 
@@ -86,6 +87,28 @@ function makeTargetClientMock(overrides?: Partial<MockTargetClient>): MockTarget
   };
 }
 
+type FullMockTargetClient = MockTargetClient & {
+  getWorkflow: ReturnType<typeof vi.fn>;
+  createWorkflow: ReturnType<typeof vi.fn>;
+  updateWorkflow: ReturnType<typeof vi.fn>;
+  activateWorkflow: ReturnType<typeof vi.fn>;
+  deactivateWorkflow: ReturnType<typeof vi.fn>;
+};
+
+function makeFullTargetClientMock(overrides?: Partial<FullMockTargetClient>): FullMockTargetClient {
+  return {
+    warnIfExpiringSoon: vi.fn(),
+    listWorkflows: overrides?.listWorkflows ?? vi.fn().mockResolvedValue([]),
+    listCredentials: overrides?.listCredentials ?? vi.fn().mockResolvedValue([]),
+    listTags: overrides?.listTags ?? vi.fn().mockResolvedValue([]),
+    getWorkflow: overrides?.getWorkflow ?? vi.fn().mockResolvedValue({ id: 'tgt-1', name: 'WF', nodes: [], connections: {}, settings: {}, versionId: 'v1', active: false, tags: [], createdAt: '', updatedAt: '' }),
+    createWorkflow: overrides?.createWorkflow ?? vi.fn().mockResolvedValue({ id: 'new-id', versionId: 'created-v1' }),
+    updateWorkflow: overrides?.updateWorkflow ?? vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+    activateWorkflow: overrides?.activateWorkflow ?? vi.fn().mockResolvedValue(undefined),
+    deactivateWorkflow: overrides?.deactivateWorkflow ?? vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
@@ -139,12 +162,6 @@ function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflow
 // ── guards and options ────────────────────────────────────────────────────────
 
 describe('runPush (dry-run) — guards', () => {
-  it('throws when not in dry-run mode (placeholder)', async () => {
-    await expect(
-      runPush({ source: 'dev', target: 'prod', dryRun: false }, '/project'),
-    ).rejects.toThrow('Live push is not yet implemented');
-  });
-
   it('throws UserError when source equals target', async () => {
     await expect(
       runPush({ source: 'dev', target: 'dev', dryRun: true }, '/project'),
@@ -525,5 +542,203 @@ describe('runPush (dry-run) — summary', () => {
     await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
 
     expect(output.join('\n')).toContain('already in sync');
+  });
+});
+
+// ── fingerprint-based classification ─────────────────────────────────────────
+
+describe('runPush (dry-run) — fingerprint-based classification', () => {
+  it('classifies as skipped when target fingerprint contentHash matches source despite different versionId', async () => {
+    const wf = makeSnapshotWf('src-1', 'Same Content WF', 'v2');
+    // Target has versionId v1 (differs from snapshot v2), but same actual content
+    setupProject([wf], [makeSummary('tgt-1', 'Same Content WF', 'v1')]);
+
+    // Pre-populate target fingerprints with a hash matching the source snapshot
+    const hash = computeContentHash(wf as Record<string, unknown>);
+    vol.writeFileSync(
+      '/project/.flightdeck/fingerprints.json',
+      JSON.stringify({
+        version: 1,
+        envs: {
+          prod: {
+            'Same Content WF': {
+              versionId: 'v1',
+              contentHash: hash,
+              structureHash: 'sha256:' + 'a'.repeat(64),
+              updatedAt: '2024-01-01T00:00:00.000Z',
+            },
+          },
+        },
+      }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+
+    const joined = output.join('\n');
+    expect(joined).toContain('─');
+    expect(joined).toContain('Same Content WF');
+    expect(joined).toContain('skipped');
+    expect(joined).not.toContain('will be updated');
+  });
+
+  it('classifies as would-update when target fingerprint contentHash differs from source', async () => {
+    const wf = makeSnapshotWf('src-1', 'Changed WF', 'v2');
+    setupProject([wf], [makeSummary('tgt-1', 'Changed WF', 'v1')]);
+
+    // Different hash → content has genuinely changed
+    vol.writeFileSync(
+      '/project/.flightdeck/fingerprints.json',
+      JSON.stringify({
+        version: 1,
+        envs: {
+          prod: {
+            'Changed WF': {
+              versionId: 'v1',
+              contentHash: 'sha256:' + 'b'.repeat(64), // intentionally different
+              structureHash: 'sha256:' + 'b'.repeat(64),
+              updatedAt: '2024-01-01T00:00:00.000Z',
+            },
+          },
+        },
+      }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+
+    const joined = output.join('\n');
+    expect(joined).toContain('~');
+    expect(joined).toContain('Changed WF');
+    expect(joined).toContain('will be updated');
+  });
+});
+
+// ── live push fingerprint writes ──────────────────────────────────────────────
+
+describe('runPush (live) — fingerprint writes', () => {
+  it('writes fingerprint to target env after successful createWorkflow', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' }),
+      }) as never,
+    );
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(raw);
+    const entry = fp.envs?.prod?.['New WF'];
+    expect(entry).toBeDefined();
+    expect(entry.versionId).toBe('created-v1');
+    expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(entry.structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it('writes fingerprint to target env after successful updateWorkflow', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false); // inactive
+    setupProject([wf], [targetWf]);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+        updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+      }) as never,
+    );
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(raw);
+    const entry = fp.envs?.prod?.['Existing WF'];
+    expect(entry).toBeDefined();
+    expect(entry.versionId).toBe('updated-v1');
+    expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it('does a follow-up updateWorkflow when created workflow has a description', async () => {
+    const wf = { ...makeSnapshotWf('src-1', 'New WF', 'v1'), description: 'Handles orders' };
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'desc-v1' });
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+        updateWorkflow,
+      }) as never,
+    );
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    expect(createWorkflow).toHaveBeenCalledOnce();
+    // description must not be in the POST body
+    expect(createWorkflow.mock.calls[0][0]).not.toHaveProperty('description');
+    // follow-up PUT must include description
+    expect(updateWorkflow).toHaveBeenCalledOnce();
+    expect(updateWorkflow.mock.calls[0][1]).toHaveProperty('description', 'Handles orders');
+  });
+
+  it('does not call updateWorkflow after create when workflow has no description', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1'); // no description field
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'v1' });
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+        updateWorkflow,
+      }) as never,
+    );
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    expect(createWorkflow).toHaveBeenCalledOnce();
+    expect(updateWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('does not write fingerprint when createWorkflow fails', async () => {
+    const wf = makeSnapshotWf('src-1', 'Failing WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockRejectedValue(new Error('API error')),
+      }) as never,
+    );
+
+    // suppress console output — we're only checking the fingerprints file
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => {});
+
+    expect(vol.existsSync('/project/.flightdeck/fingerprints.json')).toBe(false);
   });
 });

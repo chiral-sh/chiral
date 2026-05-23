@@ -13,6 +13,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('@inquirer/prompts', () => ({
   input: vi.fn(),
+  confirm: vi.fn(),
 }));
 
 vi.mock('chalk', () => ({
@@ -25,15 +26,30 @@ vi.mock('chalk', () => ({
 }));
 
 import { execSync } from 'node:child_process';
-import { input } from '@inquirer/prompts';
+import { input, confirm } from '@inquirer/prompts';
 import { runInit } from '../../../src/commands/init.js';
 
 const mockExecSync = vi.mocked(execSync);
 const mockInput = vi.mocked(input);
+const mockConfirm = vi.mocked(confirm);
+
+function mockGitEnv(branch = 'main', remote = 'origin'): void {
+  mockExecSync.mockImplementation((cmd: unknown, opts?: unknown) => {
+    const c = String(cmd);
+    const encoding = (opts as Record<string, unknown> | undefined)?.encoding;
+    // Commands with encoding: 'utf-8' expect a string return; others get a Buffer
+    if (c.includes('rev-parse --git-dir')) return Buffer.from('.git');
+    if (c.includes('rev-parse --abbrev-ref HEAD')) return encoding ? `${branch}\n` : Buffer.from(`${branch}\n`);
+    if (c.includes('remote -v')) return encoding ? `${remote}\thttps://github.com/org/repo.git (fetch)\n` : Buffer.from('');
+    return encoding ? '' : Buffer.from('');
+  });
+}
 
 beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
+  mockGitEnv();
+  mockConfirm.mockResolvedValue(false); // opt out of git sync by default
 });
 
 describe('runInit', () => {
@@ -48,7 +64,6 @@ describe('runInit', () => {
   });
 
   it('throws UserError when .flightdeck/ already exists', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
     vol.fromJSON({ '/project/.flightdeck/.gitignore': 'config.json\n' });
 
     await expect(runInit({ project: 'my-project' }, '/project')).rejects.toThrow(
@@ -57,7 +72,6 @@ describe('runInit', () => {
   });
 
   it('throws UserError when project name is empty and prompt returns empty string', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
     mockInput.mockResolvedValueOnce('   ');
 
     await expect(runInit({}, '/project')).rejects.toThrow(
@@ -66,8 +80,6 @@ describe('runInit', () => {
   });
 
   it('creates .flightdeck/ directory structure on success', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
     await runInit({ project: 'my-project' }, '/project');
 
     expect(vol.existsSync('/project/.flightdeck')).toBe(true);
@@ -79,8 +91,6 @@ describe('runInit', () => {
   });
 
   it('uses project name from --project flag without prompting', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
     await runInit({ project: 'flagged-project' }, '/project');
 
     expect(mockInput).not.toHaveBeenCalled();
@@ -89,7 +99,6 @@ describe('runInit', () => {
   });
 
   it('prompts for project name when --project flag is not provided', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
     mockInput.mockResolvedValueOnce('prompted-name');
 
     await runInit({}, '/project');
@@ -100,7 +109,6 @@ describe('runInit', () => {
   });
 
   it('uses cwd basename as default for the project name prompt', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
     mockInput.mockResolvedValueOnce('my-repo');
 
     await runInit({}, '/home/user/my-repo');
@@ -111,19 +119,35 @@ describe('runInit', () => {
   });
 
   it('calls git rev-parse with the provided cwd', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
     await runInit({ project: 'my-project' }, '/my-repo');
 
-    expect(mockExecSync).toHaveBeenCalledWith('git rev-parse --git-dir', {
-      cwd: '/my-repo',
-      stdio: 'pipe',
-    });
+    expect(mockExecSync).toHaveBeenCalledWith(
+      'git rev-parse --git-dir',
+      expect.objectContaining({ cwd: '/my-repo' }),
+    );
+  });
+
+  it('uses the detected branch as gitSync.branch when git sync is enabled', async () => {
+    mockGitEnv('master');
+    mockConfirm.mockResolvedValue(true);
+    mockInput.mockResolvedValueOnce('origin'); // remote prompt
+
+    await runInit({ project: 'my-project' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    expect(JSON.parse(raw).gitSync?.branch).toBe('master');
+  });
+
+  it('uses detected branch with --remote flag (non-interactive)', async () => {
+    mockGitEnv('develop');
+
+    await runInit({ project: 'my-project', remote: 'origin' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    expect(JSON.parse(raw).gitSync?.branch).toBe('develop');
   });
 
   it('prints project name and next-step configure instruction', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
     await runInit({ project: 'acme' }, '/project');

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import {
@@ -14,6 +15,13 @@ import {
   type SnapshotWorkflow,
 } from '../state/snapshots.js';
 import { writeAuditEntry, readAuditLog } from '../state/audit.js';
+import {
+  computeContentHash,
+  computeStructureHash,
+  loadFingerprints,
+  writeFingerprints,
+  upsertFingerprintEntry,
+} from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
 
 function getGitActor(): string {
@@ -187,14 +195,21 @@ export async function runPull(
       const hasChanges = isNew || isUpdated;
 
       const deploymentId = generateDeploymentId();
+      const snapshotTimestamp = new Date().toISOString();
       writeSnapshot(flightdeckDir, deploymentId, workflow);
       writeSnapshotMeta(flightdeckDir, deploymentId, {
         deployment_id: deploymentId,
         env: options.env,
         command: 'pull',
-        timestamp: new Date().toISOString(),
+        timestamp: snapshotTimestamp,
         workflow_count: 1,
         filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
+      });
+      upsertFingerprintEntry(flightdeckDir, options.env, workflow.name, {
+        versionId: workflow.versionId,
+        contentHash: computeContentHash(workflow),
+        structureHash: computeStructureHash(workflow),
+        updatedAt: snapshotTimestamp,
       });
 
       if (options.nameOnly) {
@@ -228,6 +243,21 @@ export async function runPull(
 
       baseEntry.workflow_ids = [options.id];
       writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+
+      if (!isSilent) {
+        const syncResult = await syncToRemote(
+          flightdeckDir, config, `chore(flightdeck): pull ${options.env}`,
+        );
+        if (!syncResult.skipped && !syncResult.nothingToCommit) {
+          if (syncResult.success) {
+            console.log(formatSyncSuccess(syncResult));
+          } else {
+            for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+          }
+          console.log();
+        }
+      }
+
       if (options.exitCode && hasChanges) throw new ControlledExit(1);
       return;
     }
@@ -292,11 +322,12 @@ export async function runPull(
 
     // ── write snapshot ────────────────────────────────────────────────────────
     const deploymentId = generateDeploymentId();
+    const snapshotTimestamp = new Date().toISOString();
     const meta = {
       deployment_id: deploymentId,
       env: options.env,
       command: 'pull' as const,
-      timestamp: new Date().toISOString(),
+      timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
       filters: {
         tag: options.tag ?? null,
@@ -416,8 +447,40 @@ export async function runPull(
       }
     }
 
+    // Batch-update fingerprints for every pulled workflow — runs for both the
+    // "no changes" and "first pull / changes found" branches.
+    if (workflows.length > 0) {
+      const fp = loadFingerprints(flightdeckDir);
+      if (!fp.envs[options.env]) fp.envs[options.env] = {};
+      for (const wf of workflows) {
+        fp.envs[options.env]![wf.name] = {
+          versionId: wf.versionId,
+          contentHash: computeContentHash(wf),
+          structureHash: computeStructureHash(wf),
+          updatedAt: snapshotTimestamp,
+        };
+      }
+      writeFingerprints(flightdeckDir, fp);
+    }
+
     baseEntry.workflow_ids = workflows.map((w) => w.id);
     writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+
+    if (!isSilent) {
+      const syncResult = await syncToRemote(
+        flightdeckDir, config, `chore(flightdeck): pull ${options.env}`,
+      );
+      if (!syncResult.skipped && !syncResult.nothingToCommit) {
+        if (syncResult.success) {
+          console.log(formatSyncSuccess(syncResult));
+        } else {
+          for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+          if (syncResult.message) logSyncError(syncResult.message);
+        }
+        console.log();
+      }
+    }
+
     if (options.exitCode && hasChanges) throw new ControlledExit(1);
   } catch (err) {
     if (err instanceof ControlledExit) throw err;

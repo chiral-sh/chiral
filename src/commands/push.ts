@@ -2,19 +2,123 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
+import { execSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { loadWorkflowMap, resolveTargetName } from '../state/workflows.js';
-import { loadCredentials, buildCredentialMap, type CredentialMapEntry } from '../state/credentials.js';
+import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
 import {
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
   readSnapshotMeta,
+  generateDeploymentId,
+  writeSnapshot,
+  writeSnapshotMeta,
   type SnapshotWorkflow,
 } from '../state/snapshots.js';
+import { readAuditLog, writeAuditEntry, type AuditEntry } from '../state/audit.js';
+import {
+  computeContentHash,
+  computeStructureHash,
+  loadFingerprints,
+  writeFingerprints,
+} from '../state/fingerprints.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getGitActor(): string {
+  try {
+    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch {
+    throw new UserError(
+      'git config user.email is not set — configure it before running flightdeck',
+      '  Run: git config user.email "your.email@example.com"',
+    );
+  }
+}
+
+function sanitizeWorkflowForApi(
+  workflow: Record<string, unknown>,
+  mode: 'create' | 'update' = 'create',
+): Record<string, unknown> {
+  // POST /workflows (workflowCreate schema) does not accept description — additionalProperties: false
+  // PUT /workflows/:id (workflow schema) does accept description
+  const allowed = new Set([
+    'name',
+    'nodes',
+    'connections',
+    'settings',
+    'staticData',
+    'pinData',
+    ...(mode === 'update' ? ['description'] : []),
+  ]);
+
+  // Valid workflow settings fields per n8n API
+  // Reference: https://docs.n8n.io/api/api-reference/
+  const validSettings = new Set([
+    'saveExecutionProgress',
+    'saveManualExecutions',
+    'saveDataErrorExecution',
+    'saveDataSuccessExecution',
+    'executionTimeout',
+    'errorWorkflow',
+    'timezone',
+    'executionOrder',
+    'callerPolicy',
+    'callerIds',
+    'timeSavedPerExecution',
+    'availableInMCP',
+  ]);
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(workflow)) {
+    if (allowed.has(key)) {
+      if (key === 'nodes') {
+        // Transform credential references: n8n API expects just the ID, not { id, name }
+        sanitized[key] = transformCredentialReferences(value);
+      } else if (key === 'settings' && typeof value === 'object' && value !== null) {
+        // Filter settings to only include valid fields
+        const settingsObj = value as Record<string, unknown>;
+        const filteredSettings: Record<string, unknown> = {};
+        for (const [settingKey, settingValue] of Object.entries(settingsObj)) {
+          if (validSettings.has(settingKey)) {
+            filteredSettings[settingKey] = settingValue;
+          }
+        }
+        sanitized[key] = filteredSettings;
+      } else {
+        sanitized[key] = value;
+      }
+    }
+  }
+  return sanitized;
+}
+
+function transformCredentialReferences(nodes: unknown): unknown {
+  if (!Array.isArray(nodes)) return nodes;
+
+  return nodes.map((node) => {
+    if (typeof node !== 'object' || node === null) return node;
+    const nodeObj = node as Record<string, unknown>;
+
+    // If node has credentials, keep both id and name as in source
+    // n8n API accepts { id, name } format per official documentation
+    // If credential doesn't exist in target by ID, it may fail at runtime,
+    // which is the expected behavior for unmapped credentials
+    if (nodeObj['credentials']) {
+      const creds = nodeObj['credentials'];
+      if (typeof creds === 'object' && creds !== null) {
+        // Keep credentials as-is; the credential map validation already checked this
+        return nodeObj;
+      }
+    }
+
+    return node;
+  });
+}
 
 function matchesGlob(name: string, pattern: string): boolean {
   const regexStr = pattern
@@ -73,14 +177,6 @@ export async function runPush(
   options: PushOptions,
   cwd: string = process.cwd(),
 ): Promise<void> {
-
-  // ── Guard: live push placeholder ──────────────────────────────────────────
-  if (!options.dryRun) {
-    throw new UserError(
-      'Live push is not yet implemented.',
-      '  Use --dry-run to preview changes, or watch for the next release.',
-    );
-  }
 
   // ── Guard: source ≠ target ────────────────────────────────────────────────
   if (options.source === options.target) {
@@ -222,16 +318,30 @@ export async function runPush(
   const targetCredNames = new Set(targetCreds.map((c) => c.name));
   const targetTagMap = new Map<string, string>(targetTags.map((t) => [t.name, t.id]));
 
+  const fingerprints = loadFingerprints(flightdeckDir);
+  if (!fingerprints.envs[options.target]) fingerprints.envs[options.target] = {};
+
   const classified: WorkflowClassification[] = snapshotWorkflows.map((wf) => {
     const resolvedName = resolveTargetName(workflowMap, options.source, options.target, wf.name);
     const targetMatch = targetByName.get(resolvedName);
     if (!targetMatch) {
       return { workflow: wf, resolvedName, action: 'would-create', targetActive: false };
     }
-    if ((wf as Record<string, unknown>)['versionId'] !== targetMatch.versionId) {
-      return { workflow: wf, resolvedName, action: 'would-update', targetActive: targetMatch.active };
+
+    // Fast path: versionId match means definitely unchanged
+    if ((wf as Record<string, unknown>)['versionId'] === targetMatch.versionId) {
+      return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
     }
-    return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
+
+    // Fingerprint path: compute source hash from snapshot (no API call needed),
+    // compare against stored target hash if available
+    const srcHash = computeContentHash(wf as Record<string, unknown>);
+    const tgtEntry = fingerprints.envs[options.target]?.[resolvedName];
+    if (tgtEntry && srcHash === tgtEntry.contentHash) {
+      return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
+    }
+
+    return { workflow: wf, resolvedName, action: 'would-update', targetActive: targetMatch.active };
   });
 
   // ── Credential map ────────────────────────────────────────────────────────
@@ -362,26 +472,318 @@ export async function runPush(
     }
   }
 
-  // Summary + next hint
+  // ── Dry-run mode: show summary and exit ──────────────────────────────────
+  if (options.dryRun) {
+    const changeCount = toCreate.length + toUpdate.length;
+    console.log();
+    if (changeCount === 0) {
+      console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync — no changes needed`);
+    } else {
+      console.log(
+        `  ${plural(changeCount, 'change')}. Run without ${chalk.dim('--dry-run')} to apply.`,
+      );
+    }
+
+    const nextParts = [
+      `--source ${options.source}`,
+      `--target ${options.target}`,
+      options.tag ? `--tag ${options.tag}` : '',
+      options.pattern ? `--pattern "${options.pattern}"` : '',
+    ].filter(Boolean);
+
+    console.log(`\n  ${chalk.dim('Next:')} flightdeck push ${nextParts.join(' ')}`);
+    console.log();
+    return;
+  }
+
+  // ── Live push mode ──────────────────────────────────────────────────────
   const changeCount = toCreate.length + toUpdate.length;
-  console.log();
+
+  // No changes needed
   if (changeCount === 0) {
+    console.log();
     console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync — no changes needed`);
-  } else {
-    console.log(
-      `  ${plural(changeCount, 'change')}. Run without ${chalk.dim('--dry-run')} to apply.`,
+    console.log();
+    return;
+  }
+
+  // ── Concurrent push detection ───────────────────────────────────────────
+  if (!options.yes) {
+    const auditLog = readAuditLog(flightdeckDir);
+    const lastPullFromTarget = auditLog
+      .filter((e) => e.action === 'pull' && e.source_env === options.target)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+    const lastPushToTarget = auditLog
+      .filter((e) => e.action === 'push' && e.target_env === options.target)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+    if (lastPushToTarget && lastPullFromTarget) {
+      const pushTime = new Date(lastPushToTarget.timestamp);
+      const pullTime = new Date(lastPullFromTarget.timestamp);
+      if (pushTime > pullTime) {
+        console.log();
+        const hoursAgo = Math.floor((Date.now() - pushTime.getTime()) / (1000 * 60 * 60));
+        const timeStr = hoursAgo === 0 ? 'just now' : `${hoursAgo} ${hoursAgo === 1 ? 'hour' : 'hours'} ago`;
+        console.log(`  ${chalk.yellow('⚠')}  ${options.target} was last pushed by ${lastPushToTarget.actor} ${timeStr}.`);
+        console.log(`     You may be overwriting their changes.`);
+        console.log(`     Run 'flightdeck diff --source ${options.target} --target ${options.source}' to check.`);
+        console.log();
+
+        try {
+          const proceed = await confirm({
+            message: 'Push anyway?',
+            default: false,
+          });
+          if (!proceed) throw new ControlledExit(0);
+        } catch (err) {
+          throw err;
+        }
+      }
+    }
+  }
+
+  // ── Confirmation prompt ─────────────────────────────────────────────────
+  if (!options.yes) {
+    console.log();
+
+    // Type-to-confirm for prod, yes/no for others
+    const isProd = options.target.toLowerCase().includes('prod');
+    if (isProd) {
+      console.log(
+        `  ${chalk.yellow('⚠')}  Pushing to ${options.target} — review changes above carefully.`,
+      );
+      try {
+        const answer = await confirm({
+          message: `Type "${options.target}" to confirm`,
+          default: false,
+        });
+        if (!answer) throw new ControlledExit(0);
+      } catch (err) {
+        throw err;
+      }
+    } else {
+      try {
+        const proceed = await confirm({
+          message: `${changeCount} ${changeCount === 1 ? 'change' : 'changes'} to ${options.target}. Continue?`,
+          default: false,
+        });
+        if (!proceed) throw new ControlledExit(0);
+      } catch (err) {
+        throw err;
+      }
+    }
+  }
+
+  // ── Create pre-push snapshot ────────────────────────────────────────────
+  const targetDeploymentId = generateDeploymentId();
+  const preSnapshotSpinner = !isJson
+    ? ora({ text: `  Creating pre-push snapshot…`, color: 'cyan' }).start()
+    : null;
+
+  try {
+    const inScopeWorkflows = classified.filter((c) => c.action !== 'skipped');
+    for (const c of inScopeWorkflows) {
+      const targetWorkflow = targetByName.get(c.resolvedName);
+      if (targetWorkflow) {
+        const fullWorkflow = await targetClient.getWorkflow(targetWorkflow.id);
+        writeSnapshot(flightdeckDir, targetDeploymentId, fullWorkflow);
+      }
+    }
+    writeSnapshotMeta(flightdeckDir, targetDeploymentId, {
+      deployment_id: targetDeploymentId,
+      env: options.target,
+      command: 'push',
+      timestamp: new Date().toISOString(),
+      workflow_count: inScopeWorkflows.length,
+      filters: { tag: options.tag ?? null, pattern: options.pattern ?? null, onlyActive: false, id: null },
+    });
+  } catch (err) {
+    if (preSnapshotSpinner) failSpinner(preSnapshotSpinner, err);
+    throw err;
+  }
+
+  if (preSnapshotSpinner) {
+    preSnapshotSpinner.succeed(
+      chalk.green(`  Snapshot saved`) + chalk.dim(` → .flightdeck/snapshots/${targetDeploymentId}/`),
     );
   }
 
-  const nextParts = [
-    `--source ${options.source}`,
-    `--target ${options.target}`,
-    options.tag ? `--tag ${options.tag}` : '',
-    options.pattern ? `--pattern "${options.pattern}"` : '',
-  ].filter(Boolean);
-
-  console.log(`\n  ${chalk.dim('Next:')} flightdeck push ${nextParts.join(' ')}`);
+  // ── Apply changes ──────────────────────────────────────────────────────
   console.log();
+  const results = { created: [] as string[], updated: [] as string[], skipped: [] as string[], failed: [] as Array<{ name: string; error: string }> };
+
+  for (const c of classified) {
+    if (c.action === 'skipped') {
+      console.log(`  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(already up to date — skipped)')}`);
+      results.skipped.push(c.workflow.name);
+      continue;
+    }
+
+    const sourceWorkflow = c.workflow as Record<string, unknown>;
+    const remappedWorkflow = applyCredentialMap(sourceWorkflow, credMap);
+    const sanitizedForCreate = sanitizeWorkflowForApi(remappedWorkflow, 'create');
+    const sanitizedForUpdate = sanitizeWorkflowForApi(remappedWorkflow, 'update');
+    const targetWorkflow = targetByName.get(c.resolvedName);
+
+    try {
+      if (c.action === 'would-create') {
+        // Prompt for new workflows unless --yes
+        if (!options.yes) {
+          try {
+            const createIt = await confirm({
+              message: `"${c.resolvedName}" doesn't exist in ${options.target} yet — create it?`,
+              default: false,
+            });
+            if (!createIt) {
+              console.log(`  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(skipped at user request)')}`);
+              results.skipped.push(c.workflow.name);
+              continue;
+            }
+          } catch (err) {
+            throw err;
+          }
+        }
+
+        const createResult = await targetClient.createWorkflow(sanitizedForCreate as Parameters<typeof targetClient.createWorkflow>[0]);
+
+        // POST does not accept description — follow up with PUT if source has one
+        if (typeof sourceWorkflow['description'] === 'string' && sourceWorkflow['description']) {
+          await targetClient.updateWorkflow(createResult.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
+        }
+
+        fingerprints.envs[options.target]![c.resolvedName] = {
+          versionId: createResult.versionId,
+          contentHash: computeContentHash(sourceWorkflow),
+          structureHash: computeStructureHash(sourceWorkflow),
+          updatedAt: new Date().toISOString(),
+        };
+        writeFingerprints(flightdeckDir, fingerprints);
+        console.log(`  ${chalk.green('✓')} Created  ${c.workflow.name}`);
+        results.created.push(c.workflow.name);
+      } else if (c.action === 'would-update' && targetWorkflow) {
+        // Warn and confirm for active workflows with ongoing executions
+        if (targetWorkflow.active && !options.yes) {
+          console.log();
+          console.log(
+            `  ${chalk.yellow('⚠')}  "${c.resolvedName}" is active. Ongoing executions will continue with the old workflow definition.`,
+          );
+          try {
+            const updateIt = await confirm({
+              message: 'Update anyway?',
+              default: false,
+            });
+            if (!updateIt) {
+              console.log(`  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(skipped at user request)')}`);
+              results.skipped.push(c.workflow.name);
+              console.log();
+              continue;
+            }
+          } catch (err) {
+            throw err;
+          }
+          console.log();
+        }
+
+        // Deactivate if active
+        if (targetWorkflow.active) {
+          await targetClient.deactivateWorkflow(targetWorkflow.id);
+        }
+
+        // Update
+        const updateResult = await targetClient.updateWorkflow(targetWorkflow.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
+        fingerprints.envs[options.target]![c.resolvedName] = {
+          versionId: updateResult.versionId,
+          contentHash: computeContentHash(sourceWorkflow),
+          structureHash: computeStructureHash(sourceWorkflow),
+          updatedAt: new Date().toISOString(),
+        };
+        writeFingerprints(flightdeckDir, fingerprints);
+
+        // Reactivate if was active and --no-activate not set
+        if (targetWorkflow.active && !options.noActivate) {
+          await targetClient.activateWorkflow(targetWorkflow.id);
+          console.log(`  ${chalk.green('✓')} Updated  ${c.workflow.name}  ${chalk.dim('(reactivated)')}`);
+        } else {
+          console.log(`  ${chalk.green('✓')} Updated  ${c.workflow.name}`);
+        }
+
+        results.updated.push(c.workflow.name);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`  ${chalk.red('✗')} Failed   ${c.workflow.name}  ${chalk.dim(`(${msg})`)}  `);
+
+      // Log full error details to stderr for debugging
+      console.error(`\n  [DEBUG] Error updating "${c.workflow.name}":`);
+      console.error(`  [DEBUG] Message: ${msg}`);
+      if (err instanceof Error && err.stack) {
+        console.error(`  [DEBUG] Stack: ${err.stack}`);
+      }
+      console.error(`  [DEBUG] Workflow body (sanitized):`);
+      console.error(`  ${JSON.stringify(sanitizedForUpdate, null, 2).split('\n').join('\n  ')}\n`);
+
+      results.failed.push({ name: c.workflow.name, error: msg });
+    }
+  }
+
+  // ── Audit log entry ────────────────────────────────────────────────────
+  const actor = getGitActor();
+  const auditEntry: AuditEntry = {
+    event_id: randomUUID(),
+    event_schema_version: 1,
+    timestamp: new Date().toISOString(),
+    actor,
+    action: 'push',
+    project: config.project,
+    source_env: options.source,
+    target_env: options.target,
+    workflow_ids: [...results.created, ...results.updated],
+    result: results.failed.length === 0 ? 'success' : results.created.length + results.updated.length === 0 ? 'failure' : 'aborted',
+    error: results.failed.length > 0 ? `${results.failed.length} workflow(s) failed` : null,
+    flightdeck_version: '0.0.1', // TODO: read from package.json
+  };
+  writeAuditEntry(flightdeckDir, auditEntry);
+
+  // ── Summary ────────────────────────────────────────────────────────────
+  console.log();
+  if (results.failed.length === 0) {
+    console.log(
+      `  ${chalk.green('✓')} Push complete — ${plural(results.created.length + results.updated.length, 'change')}`,
+    );
+    console.log(`    Deployment: ${targetDeploymentId}`);
+  } else {
+    console.log(
+      `  ${chalk.red('✗')} Push incomplete — ${plural(results.created.length + results.updated.length, 'change')} of ${plural(changeCount, 'change')} applied.`,
+    );
+    console.log(`    Pre-push snapshot saved at .flightdeck/snapshots/${targetDeploymentId}/`);
+    if (results.failed.length > 0) {
+      console.log(`    Failed: ${results.failed.map((f) => f.name).join(', ')}`);
+    }
+  }
+
+  console.log();
+  console.log(`  ${chalk.dim('Next:')} flightdeck pull --env ${options.target}`);
+  console.log();
+
+  // ── Git sync ───────────────────────────────────────────────────────────────
+  if (!isJson && results.failed.length === 0) {
+    const commitMsg = `chore(flightdeck): push ${options.source}→${options.target}`;
+    const syncResult = await syncToRemote(flightdeckDir, config, commitMsg);
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        if (syncResult.message) logSyncError(syncResult.message);
+      }
+      console.log();
+    }
+  }
+
+  if (results.failed.length > 0) {
+    throw new ControlledExit(1);
+  }
 }
 
 // ── Commander definition ──────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { input, password, confirm } from '@inquirer/prompts';
 import ora from 'ora';
 import chalk from 'chalk';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
@@ -10,6 +10,7 @@ import {
   readProjectNameFromExample,
   loadConfigAndDir,
   type Config,
+  type GitSync,
 } from '../lib/config.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
@@ -92,10 +93,29 @@ function printSummary(
   console.log(bar('└', '┴', '┘'));
 }
 
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function readGitSyncFromExample(flightdeckDir: string): GitSync | undefined {
+  const examplePath = join(flightdeckDir, 'config.example.json');
+  try {
+    const raw = JSON.parse(readFileSync(examplePath, 'utf-8'));
+    if (raw?.gitSync?.enabled && raw.gitSync.remote) {
+      return {
+        enabled: Boolean(raw.gitSync.enabled),
+        remote: String(raw.gitSync.remote),
+        branch: typeof raw.gitSync.branch === 'string' ? raw.gitSync.branch : 'main',
+      };
+    }
+  } catch {
+    // config.example.json missing or unparseable — no gitSync to carry
+  }
+  return undefined;
+}
+
 // ─── main logic ─────────────────────────────────────────────────────────────
 
 export async function runConfigure(
-  options: { env?: string; skipTest?: boolean },
+  options: { env?: string; skipTest?: boolean; remote?: string },
   cwd: string = process.cwd(),
 ): Promise<void> {
   const flightdeckDir = findFlightdeckDir(cwd);
@@ -107,6 +127,7 @@ export async function runConfigure(
   let project: string;
   let environments: Record<string, { url: string; apiKey: string }> = {};
   let licenseKey: string | undefined;
+  let gitSync: GitSync | undefined;
 
   const configPath = join(flightdeckDir, 'config.json');
   if (existsSync(configPath)) {
@@ -115,6 +136,7 @@ export async function runConfigure(
       project = config.project;
       environments = { ...config.environments };
       licenseKey = config.licenseKey;
+      gitSync = config.gitSync;
 
       console.log(`\n  ${chalk.bold(project)} ${chalk.dim('— current configuration')}\n`);
       for (const [name, env] of Object.entries(environments)) {
@@ -128,6 +150,31 @@ export async function runConfigure(
     }
   } else {
     project = readProjectNameFromExample(flightdeckDir);
+    // Carry gitSync from config.example.json if init wrote it there
+    gitSync = readGitSyncFromExample(flightdeckDir);
+  }
+
+  // --remote flag: update or enable gitSync; save and return if we already have environments
+  if (options.remote) {
+    const currentBranch = gitSync?.branch ?? 'main';
+    gitSync = { enabled: true, remote: options.remote, branch: currentBranch };
+    console.log(
+      `\n  ${chalk.green('✓')}  Git sync remote set → ${chalk.cyan(options.remote)} ${chalk.dim(`(${currentBranch})`)}`,
+    );
+
+    if (Object.keys(environments).length > 0) {
+      const config: Config = {
+        version: 1,
+        project,
+        environments,
+        ...(licenseKey ? { licenseKey } : {}),
+        gitSync,
+      };
+      writeConfig(flightdeckDir, config);
+      console.log('  ' + chalk.green('✓') + ' Saved .flightdeck/config.json  ' + chalk.dim('(mode 600)'));
+      console.log();
+      return;
+    }
   }
 
   const results: EnvResult[] = [];
@@ -244,6 +291,7 @@ export async function runConfigure(
     project,
     environments,
     ...(licenseKey ? { licenseKey } : {}),
+    ...(gitSync ? { gitSync } : {}),
   };
   writeConfig(flightdeckDir, config);
   console.log('\n  ' + chalk.green('✓') + ' Saved .flightdeck/config.json  ' + chalk.dim('(mode 600)'));
@@ -261,6 +309,7 @@ export const configureCommand = new Command('configure')
   .description('Set up or update environment connections in .flightdeck/config.json')
   .option('--env <env>', 'Configure a specific environment (skips env name prompt)')
   .option('--skip-test', 'Skip the connection test')
+  .option('--remote <remote>', 'Set or update the git remote for auto-sync (e.g. "origin")')
   .addHelpText(
     'after',
     `
@@ -273,6 +322,9 @@ Examples:
 
   Configure without testing the connection:
     flightdeck configure --env dev --skip-test
+
+  Update the git sync remote:
+    flightdeck configure --remote origin
 `,
   )
   .action(async (options) => {
