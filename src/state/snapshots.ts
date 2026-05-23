@@ -21,7 +21,7 @@ const SnapshotWorkflowSchema = z
 const SnapshotMetaSchema = z.object({
   deployment_id: z.string(),
   env: z.string(),
-  command: z.enum(['pull', 'adopt']),
+  command: z.enum(['pull', 'adopt', 'push']),
   timestamp: z.string().datetime(),
   workflow_count: z.number().int(),
   filters: z.object({

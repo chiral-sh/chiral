@@ -84,6 +84,39 @@ function setupProject(config = VALID_CONFIG) {
   });
 }
 
+// Pre-populate fingerprints so the fallback path is not triggered.
+// Tests that assert 'modified' behaviour need source and target to have
+// divergent content hashes; tests that assert 'unchanged' pass matching hashes.
+function setupDivergentFingerprints(
+  srcWorkflowName: string,
+  tgtWorkflowName = srcWorkflowName,
+) {
+  vol.writeFileSync(
+    '/project/.flightdeck/fingerprints.json',
+    JSON.stringify({
+      version: 1,
+      envs: {
+        dev: {
+          [srcWorkflowName]: {
+            versionId: 'v1',
+            contentHash: 'sha256:' + 'a'.repeat(64),
+            structureHash: 'sha256:' + 'a'.repeat(64),
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        },
+        prod: {
+          [tgtWorkflowName]: {
+            versionId: 'v2',
+            contentHash: 'sha256:' + 'b'.repeat(64),
+            structureHash: 'sha256:' + 'b'.repeat(64),
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      },
+    }),
+  );
+}
+
 // ── setup errors ──────────────────────────────────────────────────────────────
 
 describe('runDiff — setup errors', () => {
@@ -163,6 +196,7 @@ describe('runDiff — diff symbols', () => {
 
   it('shows ~ for workflow with differing versionId', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
@@ -175,7 +209,7 @@ describe('runDiff — diff symbols', () => {
 
     expect(output.join('\n')).toContain('~');
     expect(output.join('\n')).toContain('Workflow One');
-    expect(output.join('\n')).toContain('versionId differs');
+    expect(output.join('\n')).toContain('(modified)');
   });
 
   it('shows identical message when both envs match exactly', async () => {
@@ -213,6 +247,7 @@ describe('runDiff — diff symbols', () => {
 
   it('shows summary line with counts when differences exist', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1, SRC_WF2]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED, TGT_WF3]) }),
@@ -328,6 +363,8 @@ describe('runDiff — name resolution via workflows.json', () => {
         },
       }),
     );
+    // Source key = 'Order Processor [DEV]', target key = 'Order Processor' (mapped name)
+    setupDivergentFingerprints('Order Processor [DEV]', 'Order Processor');
 
     const srcWf = makeSummary({ id: 'src-op', name: 'Order Processor [DEV]', versionId: 'v1' });
     const tgtWf = makeSummary({ id: 'tgt-op', name: 'Order Processor', versionId: 'v2' });
@@ -389,6 +426,7 @@ describe('runDiff — --json output', () => {
 
   it('includes added/removed/modified arrays in JSON output', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1, SRC_WF2]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED, TGT_WF3]) }),
@@ -407,6 +445,7 @@ describe('runDiff — --json output', () => {
 
   it('includes sourceVersionId and targetVersionId for modified workflows', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
@@ -460,6 +499,7 @@ describe('runDiff — --json output', () => {
 describe('runDiff — --name-only output', () => {
   it('prints only differing workflow names, one per line', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1, SRC_WF2]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED, TGT_WF3]) }),
@@ -557,6 +597,7 @@ describe('runDiff — --pattern filter', () => {
 describe('runDiff — --exit-code', () => {
   it('throws ControlledExit(1) when differences exist', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
@@ -642,11 +683,97 @@ describe('runDiff — audit entries', () => {
   });
 });
 
+// ── fingerprint-based change detection ───────────────────────────────────────
+
+describe('runDiff — fingerprint-based change detection', () => {
+  it('reports unchanged when fingerprints show identical content despite different versionId', async () => {
+    setupProject();
+    // Both envs have the SAME contentHash → identical despite versionId mismatch
+    vol.writeFileSync(
+      '/project/.flightdeck/fingerprints.json',
+      JSON.stringify({
+        version: 1,
+        envs: {
+          dev:  { 'Workflow One': { versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' } },
+          prod: { 'Workflow One': { versionId: 'v2', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' } },
+        },
+      }),
+    );
+
+    const srcGetWorkflow = vi.fn();
+    const tgtGetWorkflow = vi.fn();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]), getWorkflow: srcGetWorkflow }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]), getWorkflow: tgtGetWorkflow }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+
+    // Fingerprint fast path detected identical content — no API fetches
+    expect(srcGetWorkflow).not.toHaveBeenCalled();
+    expect(tgtGetWorkflow).not.toHaveBeenCalled();
+    expect(output.join('\n')).toContain('identical');
+    expect(output.join('\n')).not.toContain('~');
+  });
+
+  it('fetches full workflows via fallback when fingerprints are absent and detects real modification', async () => {
+    setupProject(); // no fingerprints.json
+
+    const srcFull = { ...SRC_WF1, nodes: [{ name: 'Node', type: 'n8n-nodes-base.httpRequest', parameters: {} }], connections: {}, settings: {} };
+    const tgtFull = { ...TGT_WF1_UPDATED, nodes: [{ name: 'Node', type: 'n8n-nodes-base.httpRequest', parameters: { url: 'https://changed.example.com' } }], connections: {}, settings: {} };
+
+    const srcGetWorkflow = vi.fn().mockResolvedValue(srcFull);
+    const tgtGetWorkflow = vi.fn().mockResolvedValue(tgtFull);
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]), getWorkflow: srcGetWorkflow }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]), getWorkflow: tgtGetWorkflow }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+
+    // Fallback path triggered — both sides fetched, content differs → modified
+    expect(srcGetWorkflow).toHaveBeenCalledWith(SRC_WF1.id);
+    expect(tgtGetWorkflow).toHaveBeenCalledWith(TGT_WF1_UPDATED.id);
+    expect(output.join('\n')).toContain('~');
+    expect(output.join('\n')).toContain('(modified)');
+  });
+
+  it('reports unchanged via fallback when full workflow content matches despite different versionId', async () => {
+    setupProject(); // no fingerprints.json
+
+    // Same content on both sides → fallback computes equal hashes → unchanged
+    const sharedContent = { nodes: [{ name: 'Node', type: 'n8n-nodes-base.httpRequest', parameters: {} }], connections: {}, settings: {} };
+    const srcFull = { ...SRC_WF1, ...sharedContent };
+    const tgtFull = { ...TGT_WF1_UPDATED, ...sharedContent };
+
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]), getWorkflow: vi.fn().mockResolvedValue(srcFull) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]), getWorkflow: vi.fn().mockResolvedValue(tgtFull) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+
+    // Content is the same → classified as unchanged (versionId bump was cosmetic)
+    expect(output.join('\n')).toContain('identical');
+    expect(output.join('\n')).not.toContain('~');
+  });
+});
+
 // ── Next: hint ────────────────────────────────────────────────────────────────
 
 describe('runDiff — Next: hint', () => {
   it('shows push --dry-run hint when differences found', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     setupTwoClientMocks(
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
@@ -662,6 +789,7 @@ describe('runDiff — Next: hint', () => {
 
   it('carries --tag filter into push hint', async () => {
     setupProject();
+    setupDivergentFingerprints('Workflow One');
     const taggedSrc = makeSummary({ id: 'src-1', name: 'Workflow One', tags: [{ id: 't1', name: 'production' }], versionId: 'v1' });
     const taggedTgt = makeSummary({ id: 'tgt-1', name: 'Workflow One', tags: [{ id: 't1', name: 'production' }], versionId: 'v2' });
 

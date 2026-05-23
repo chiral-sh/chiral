@@ -967,6 +967,77 @@ describe('runPull — staleness warning', () => {
   });
 });
 
+describe('runPull — fingerprints', () => {
+  it('writes fingerprints.json with one entry per pulled workflow on first pull', async () => {
+    setupProject();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    await runPull({ env: 'dev' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(raw);
+    expect(fp.version).toBe(1);
+    expect(fp.envs.dev).toBeDefined();
+    expect(fp.envs.dev['Workflow One']).toBeDefined();
+    expect(fp.envs.dev['Workflow Two']).toBeDefined();
+    expect(fp.envs.dev['Workflow One'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(fp.envs.dev['Workflow One'].structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(fp.envs.dev['Workflow One'].versionId).toBe('v1');
+  });
+
+  it('updates fingerprint entry when a workflow is pulled with a new versionId', async () => {
+    setupProject();
+    setupPreviousSnapshot(); // WF1 v1 on disk
+
+    // Write an existing fingerprints.json with stale versionId
+    vol.writeFileSync(
+      '/project/.flightdeck/fingerprints.json',
+      JSON.stringify({
+        version: 1,
+        envs: {
+          dev: {
+            'Workflow One': { versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
+          },
+        },
+      }),
+    );
+
+    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+        ),
+      }) as never,
+    );
+
+    await runPull({ env: 'dev' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(raw);
+    expect(fp.envs.dev['Workflow One'].versionId).toBe('v2');
+    expect(fp.envs.dev['Workflow Two']).toBeDefined();
+  });
+
+  it('writes fingerprint for the single workflow when using --id', async () => {
+    setupProject();
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
+    );
+
+    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(raw);
+    expect(fp.envs.dev['Workflow One']).toBeDefined();
+    expect(fp.envs.dev['Workflow One'].versionId).toBe('v1');
+    expect(fp.envs.dev['Workflow One'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // Only one entry — the --id workflow; WF2 is not in this pull
+    expect(Object.keys(fp.envs.dev)).toHaveLength(1);
+  });
+});
+
 describe('runPull — server-side filter params', () => {
   it('calls listWorkflows with active=true when --only-active is set', async () => {
     setupProject();

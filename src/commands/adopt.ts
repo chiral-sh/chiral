@@ -7,6 +7,7 @@ import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import { generateDeploymentId, writeSnapshot, writeSnapshotMeta } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
+import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 
 function getGitActor(): string {
   try {
@@ -73,9 +74,10 @@ export async function runAdopt(
       chalk.green(`  Fetched ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`),
     );
 
-    // ── snapshot ──────────────────────────────────────────────────────────────
+    // ── snapshot + fingerprints ───────────────────────────────────────────────
     const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
     const deploymentId = generateDeploymentId();
+    const snapshotTimestamp = new Date().toISOString();
     for (const workflow of workflows) {
       writeSnapshot(flightdeckDir, deploymentId, workflow);
     }
@@ -83,10 +85,23 @@ export async function runAdopt(
       deployment_id: deploymentId,
       env: options.env,
       command: 'adopt',
-      timestamp: new Date().toISOString(),
+      timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
+
+    const fingerprints = loadFingerprints(flightdeckDir);
+    if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
+    for (const workflow of workflows) {
+      fingerprints.envs[options.env]![workflow.name] = {
+        versionId: workflow.versionId,
+        contentHash: computeContentHash(workflow),
+        structureHash: computeStructureHash(workflow),
+        updatedAt: snapshotTimestamp,
+      };
+    }
+    writeFingerprints(flightdeckDir, fingerprints);
+
     spinner3.succeed(
       chalk.green('  Snapshot saved') +
         chalk.dim(` → .flightdeck/snapshots/${deploymentId}/`),

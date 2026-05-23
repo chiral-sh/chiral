@@ -209,4 +209,66 @@ describe('runAdopt', () => {
     const entry = JSON.parse(auditContent.trim());
     expect(entry.result).toBe('success');
   });
+
+  it('writes fingerprints.json after adopting workflows', async () => {
+    setupFlightdeckDir();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const fingerprints = JSON.parse(raw);
+    expect(fingerprints.version).toBe(1);
+    expect(fingerprints.envs.dev).toBeDefined();
+    expect(fingerprints.envs.dev['My Workflow']).toBeDefined();
+  });
+
+  it('writes all three fingerprint fields for each workflow', async () => {
+    setupFlightdeckDir();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const entry = JSON.parse(raw).envs.dev['My Workflow'];
+    expect(entry.versionId).toBe('v1');
+    expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(entry.structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(entry.updatedAt).toBeTruthy();
+  });
+
+  it('writes a fingerprint entry for each adopted workflow', async () => {
+    setupFlightdeckDir();
+    const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
+    const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, wf2Summary]),
+        getWorkflow: vi.fn()
+          .mockResolvedValueOnce(WORKFLOW_FULL)
+          .mockResolvedValueOnce(wf2Full),
+      }) as never,
+    );
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const envEntries = JSON.parse(raw).envs.dev;
+    expect(Object.keys(envEntries)).toHaveLength(2);
+    expect(envEntries['My Workflow']).toBeDefined();
+    expect(envEntries['Second Workflow']).toBeDefined();
+  });
+
+  it('does not write fingerprints.json when the API call fails', async () => {
+    setupFlightdeckDir();
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockRejectedValue(new UserError('connection refused')),
+      }) as never,
+    );
+
+    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow();
+
+    expect(vol.existsSync('/project/.flightdeck/fingerprints.json')).toBe(false);
+  });
 });
