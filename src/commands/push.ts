@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { loadWorkflowMap, resolveTargetName } from '../state/workflows.js';
@@ -764,6 +765,21 @@ export async function runPush(
   console.log();
   console.log(`  ${chalk.dim('Next:')} flightdeck pull --env ${options.target}`);
   console.log();
+
+  // ── Git sync ───────────────────────────────────────────────────────────────
+  if (!isJson && results.failed.length === 0) {
+    const commitMsg = `chore(flightdeck): push ${options.source}→${options.target}`;
+    const syncResult = await syncToRemote(flightdeckDir, config, commitMsg);
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        if (syncResult.message) logSyncError(syncResult.message);
+      }
+      console.log();
+    }
+  }
 
   if (results.failed.length > 0) {
     throw new ControlledExit(1);

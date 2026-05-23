@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import {
@@ -242,6 +243,21 @@ export async function runPull(
 
       baseEntry.workflow_ids = [options.id];
       writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+
+      if (!isSilent) {
+        const syncResult = await syncToRemote(
+          flightdeckDir, config, `chore(flightdeck): pull ${options.env}`,
+        );
+        if (!syncResult.skipped && !syncResult.nothingToCommit) {
+          if (syncResult.success) {
+            console.log(formatSyncSuccess(syncResult));
+          } else {
+            for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+          }
+          console.log();
+        }
+      }
+
       if (options.exitCode && hasChanges) throw new ControlledExit(1);
       return;
     }
@@ -449,6 +465,22 @@ export async function runPull(
 
     baseEntry.workflow_ids = workflows.map((w) => w.id);
     writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+
+    if (!isSilent) {
+      const syncResult = await syncToRemote(
+        flightdeckDir, config, `chore(flightdeck): pull ${options.env}`,
+      );
+      if (!syncResult.skipped && !syncResult.nothingToCommit) {
+        if (syncResult.success) {
+          console.log(formatSyncSuccess(syncResult));
+        } else {
+          for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+          if (syncResult.message) logSyncError(syncResult.message);
+        }
+        console.log();
+      }
+    }
+
     if (options.exitCode && hasChanges) throw new ControlledExit(1);
   } catch (err) {
     if (err instanceof ControlledExit) throw err;
