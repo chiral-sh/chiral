@@ -7,6 +7,13 @@ import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
+import {
+  loadFingerprints,
+  writeFingerprints,
+  computeContentHash,
+  computeStructureHash,
+  type Fingerprints,
+} from '../state/fingerprints.js';
 
 function getGitActor(): string {
   try {
@@ -66,13 +73,73 @@ interface DiffResult {
   unchanged: UnchangedEntry[];
 }
 
-function computeDiff(
+interface FingerprintContext {
+  fingerprints: Fingerprints;
+  sourceClient: N8nClient;
+  targetClient: N8nClient;
+  flightdeckDir: string;
+}
+
+async function isContentUnchanged(
+  src: WorkflowSummary,
+  tgt: WorkflowSummary,
+  sourceEnv: string,
+  targetEnv: string,
+  ctx: FingerprintContext,
+): Promise<boolean> {
+  // Fast path: identical versionId means definitely the same
+  if (src.versionId === tgt.versionId) return true;
+
+  // Fingerprint path: both entries present — compare content hashes
+  const srcEntry = ctx.fingerprints.envs[sourceEnv]?.[src.name];
+  const tgtEntry = ctx.fingerprints.envs[targetEnv]?.[tgt.name];
+
+  if (srcEntry && tgtEntry) {
+    return srcEntry.contentHash === tgtEntry.contentHash;
+  }
+
+  // Fallback: fetch full content for whichever side is missing, compute + cache hash
+  const [srcFull, tgtFull] = await Promise.all([
+    srcEntry ? Promise.resolve(null) : ctx.sourceClient.getWorkflow(src.id),
+    tgtEntry ? Promise.resolve(null) : ctx.targetClient.getWorkflow(tgt.id),
+  ]);
+
+  const srcHash = srcEntry?.contentHash ?? computeContentHash(srcFull as Record<string, unknown>);
+  const tgtHash = tgtEntry?.contentHash ?? computeContentHash(tgtFull as Record<string, unknown>);
+  const now = new Date().toISOString();
+
+  if (!ctx.fingerprints.envs[sourceEnv]) ctx.fingerprints.envs[sourceEnv] = {};
+  if (!ctx.fingerprints.envs[targetEnv]) ctx.fingerprints.envs[targetEnv] = {};
+
+  if (!srcEntry && srcFull) {
+    ctx.fingerprints.envs[sourceEnv]![src.name] = {
+      versionId: src.versionId,
+      contentHash: srcHash,
+      structureHash: computeStructureHash(srcFull as Record<string, unknown>),
+      updatedAt: now,
+    };
+  }
+  if (!tgtEntry && tgtFull) {
+    ctx.fingerprints.envs[targetEnv]![tgt.name] = {
+      versionId: tgt.versionId,
+      contentHash: tgtHash,
+      structureHash: computeStructureHash(tgtFull as Record<string, unknown>),
+      updatedAt: now,
+    };
+  }
+
+  writeFingerprints(ctx.flightdeckDir, ctx.fingerprints);
+  return srcHash === tgtHash;
+}
+
+async function computeDiff(
   sourceWorkflows: WorkflowSummary[],
   targetWorkflows: WorkflowSummary[],
   workflowMap: WorkflowMap,
   sourceEnv: string,
   targetEnv: string,
-): DiffResult {
+  ctx: FingerprintContext,
+): Promise<DiffResult> {
   const targetByName = new Map(targetWorkflows.map((w) => [w.name, w]));
   const matchedTargetIds = new Set<string>();
 
@@ -88,15 +155,15 @@ function computeDiff(
       added.push({ name: src.name, sourceName: src.name, sourceId: src.id, hint: 'wrong name?' });
     } else {
       matchedTargetIds.add(tgt.id);
-      if (src.versionId !== tgt.versionId) {
+      if (await isContentUnchanged(src, tgt, sourceEnv, targetEnv, ctx)) {
+        unchanged.push({ name: src.name });
+      } else {
         modified.push({
           name: src.name,
           sourceId: src.id,
           sourceVersionId: src.versionId,
           targetVersionId: tgt.versionId,
         });
-      } else {
-        unchanged.push({ name: src.name });
       }
     }
   }
@@ -199,8 +266,10 @@ export async function runDiff(
       );
     }
 
+    const fingerprints = loadFingerprints(flightdeckDir);
+    const ctx: FingerprintContext = { fingerprints, sourceClient, targetClient, flightdeckDir };
     const workflowMap = loadWorkflowMap(flightdeckDir);
-    const diff = computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target);
+    const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target, ctx);
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
 
     if (options.nameOnly) {
@@ -252,7 +321,7 @@ export async function runDiff(
         }
         for (const w of diff.modified) {
           console.log(
-            `  ${chalk.yellow('~')} ${w.name}    ${chalk.dim('(modified — versionId differs)')}`,
+            `  ${chalk.yellow('~')} ${w.name}    ${chalk.dim('(modified)')}`,
           );
         }
         if (options.showUnchanged) {

@@ -14,6 +14,13 @@ import {
   type SnapshotWorkflow,
 } from '../state/snapshots.js';
 import { writeAuditEntry, readAuditLog } from '../state/audit.js';
+import {
+  computeContentHash,
+  computeStructureHash,
+  loadFingerprints,
+  writeFingerprints,
+  upsertFingerprintEntry,
+} from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
 
 function getGitActor(): string {
@@ -187,14 +194,21 @@ export async function runPull(
       const hasChanges = isNew || isUpdated;
 
       const deploymentId = generateDeploymentId();
+      const snapshotTimestamp = new Date().toISOString();
       writeSnapshot(flightdeckDir, deploymentId, workflow);
       writeSnapshotMeta(flightdeckDir, deploymentId, {
         deployment_id: deploymentId,
         env: options.env,
         command: 'pull',
-        timestamp: new Date().toISOString(),
+        timestamp: snapshotTimestamp,
         workflow_count: 1,
         filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
+      });
+      upsertFingerprintEntry(flightdeckDir, options.env, workflow.name, {
+        versionId: workflow.versionId,
+        contentHash: computeContentHash(workflow),
+        structureHash: computeStructureHash(workflow),
+        updatedAt: snapshotTimestamp,
       });
 
       if (options.nameOnly) {
@@ -292,11 +306,12 @@ export async function runPull(
 
     // ── write snapshot ────────────────────────────────────────────────────────
     const deploymentId = generateDeploymentId();
+    const snapshotTimestamp = new Date().toISOString();
     const meta = {
       deployment_id: deploymentId,
       env: options.env,
       command: 'pull' as const,
-      timestamp: new Date().toISOString(),
+      timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
       filters: {
         tag: options.tag ?? null,
@@ -414,6 +429,22 @@ export async function runPull(
         if (hint) console.log(`\n  ${chalk.dim('Next:')} ${hint}`);
         console.log();
       }
+    }
+
+    // Batch-update fingerprints for every pulled workflow — runs for both the
+    // "no changes" and "first pull / changes found" branches.
+    if (workflows.length > 0) {
+      const fp = loadFingerprints(flightdeckDir);
+      if (!fp.envs[options.env]) fp.envs[options.env] = {};
+      for (const wf of workflows) {
+        fp.envs[options.env]![wf.name] = {
+          versionId: wf.versionId,
+          contentHash: computeContentHash(wf),
+          structureHash: computeStructureHash(wf),
+          updatedAt: snapshotTimestamp,
+        };
+      }
+      writeFingerprints(flightdeckDir, fp);
     }
 
     baseEntry.workflow_ids = workflows.map((w) => w.id);

@@ -197,4 +197,34 @@ export class N8nClient {
       clearTimeout(timeoutId);
     }
   }
+
+  async createWorkflow(body: WorkflowFull): Promise<{ id: string; versionId: string }> {
+    const response = await this.request<{ id: string; versionId: string }>(
+      '/workflows',
+      { method: 'POST', body: JSON.stringify(body), scope: 'workflow:create' },
+    );
+    return { id: response.id, versionId: response.versionId };
+  }
+
+  async updateWorkflow(id: string, body: WorkflowFull): Promise<{ versionId: string }> {
+    const response = await this.request<{ id: string; versionId: string }>(
+      `/workflows/${id}`,
+      { method: 'PUT', body: JSON.stringify(body), scope: 'workflow:update' },
+    );
+    return { versionId: response.versionId };
+  }
+
+  async activateWorkflow(id: string): Promise<void> {
+    await this.request<void>(
+      `/workflows/${id}/activate`,
+      { method: 'POST', scope: 'workflow:activate' },
+    );
+  }
+
+  async deactivateWorkflow(id: string): Promise<void> {
+    await this.request<void>(
+      `/workflows/${id}/deactivate`,
+      { method: 'POST', scope: 'workflow:activate' },
+    );
+  }
 }
