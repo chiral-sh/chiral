@@ -167,6 +167,14 @@ export interface DiffOptions {
   exitCode?: boolean;
 }
 
+type OutputMode = 'human' | 'json' | 'name-only';
+
+function resolveOutputMode(options: DiffOptions): OutputMode {
+  if (options.json) return 'json';
+  if (options.nameOnly) return 'name-only';
+  return 'human';
+}
+
 export async function runDiff(
   options: DiffOptions,
   cwd: string = process.cwd(),
@@ -194,8 +202,8 @@ export async function runDiff(
     chiral_version: '0.1.0',
   };
 
-  const isSilent = options.json || options.nameOnly;
-  if (!isSilent) {
+  const outputMode = resolveOutputMode(options);
+  if (outputMode === 'human') {
     console.log();
     console.log(`  Comparing ${chalk.cyan(options.source)} → ${chalk.cyan(options.target)}`);
   }
@@ -212,7 +220,7 @@ export async function runDiff(
       ? `  Fetching workflows [${filterLabel}]…`
       : '  Fetching workflows…';
 
-    const spinner = !isSilent ? ora({ text: spinnerText, color: 'cyan' }).start() : null;
+    const spinner = outputMode === 'human' ? ora({ text: spinnerText, color: 'cyan' }).start() : null;
 
     let sourceSummaries: WorkflowSummary[];
     let targetSummaries: WorkflowSummary[];
@@ -253,11 +261,11 @@ export async function runDiff(
     const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target, ctx);
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
 
-    if (options.nameOnly) {
+    if (outputMode === 'name-only') {
       for (const w of diff.added) console.log(w.name);
       for (const w of diff.removed) console.log(w.name);
       for (const w of diff.modified) console.log(w.targetName);
-    } else if (options.json) {
+    } else if (outputMode === 'json') {
       console.log(
         JSON.stringify({
           source: options.source,
@@ -291,8 +299,11 @@ export async function runDiff(
         }
       } else {
         for (const w of diff.added) {
+          const hintText = w.hint === 'wrong name?'
+            ? 'will be created — wrong name? run: chiral workflow map'
+            : w.hint;
           console.log(
-            `  ${chalk.green('+')} ${w.name}    ${chalk.dim(`(in ${options.source}, not in ${options.target} — ${w.hint} run: chiral workflow map)`)}`,
+            `  ${chalk.green('+')} ${w.name}    ${chalk.dim(`(${hintText})`)}`,
           );
         }
         for (const w of diff.removed) {
@@ -312,9 +323,9 @@ export async function runDiff(
         }
 
         const parts: string[] = [];
-        if (diff.added.length > 0) parts.push(plural(diff.added.length, 'added'));
-        if (diff.modified.length > 0) parts.push(plural(diff.modified.length, 'modified'));
-        if (diff.removed.length > 0) parts.push(plural(diff.removed.length, 'removed'));
+        if (diff.added.length > 0) parts.push(plural(diff.added.length, 'added', 'added'));
+        if (diff.modified.length > 0) parts.push(plural(diff.modified.length, 'modified', 'modified'));
+        if (diff.removed.length > 0) parts.push(plural(diff.removed.length, 'removed', 'removed'));
 
         const pushParts = [
           `--source ${options.source}`,

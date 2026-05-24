@@ -7,8 +7,8 @@ export function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): neve
   throw err;
 }
 
-export function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+export function plural(n: number, word: string, pluralForm?: string): string {
+  return `${n} ${n === 1 ? word : (pluralForm ?? `${word}s`)}`;
 }
 
 export function matchesGlob(name: string, pattern: string): boolean {
