@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import chalk from 'chalk';
 import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
@@ -26,6 +26,36 @@ program.addCommand(diffCommand);
 program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
 
+// Global protection against Commander eagerly eating flags as option values.
+// Catches cases like `--remote --solo` where Commander assigns '--solo' as the
+// string value for --remote instead of rejecting it.
+program.hook('preAction', (_thisCmd, actionCmd) => {
+  const opts = actionCmd.opts();
+  for (const [key, value] of Object.entries(opts)) {
+    if (typeof value === 'string' && value.startsWith('-')) {
+      const opt = actionCmd.options.find((o) => o.attributeName() === key);
+      const flagName = opt ? (opt.long || opt.short || key) : key;
+      throw new UserError(
+        `Option '${flagName}' requires a value, but received '${value}' which looks like another flag. Did you forget to provide a value?`,
+      );
+    }
+  }
+});
+
+// addCommand() does not call copyInheritedSettings, so _exitCallback and
+// _outputConfiguration are not inherited by subcommands. Apply both recursively
+// after all commands are registered so Commander routes parse errors (conflicts,
+// missing args, unknown flags) through our catch block instead of writing its
+// own "error: ..." to stderr and calling process.exit directly.
+function configureErrorHandling(cmd: Command): void {
+  cmd.exitOverride();
+  cmd.configureOutput({ outputError: () => { } });
+  for (const sub of cmd.commands) {
+    configureErrorHandling(sub);
+  }
+}
+configureErrorHandling(program);
+
 try {
   await program.parseAsync(process.argv);
 } catch (err) {
@@ -36,8 +66,17 @@ try {
   if (err instanceof ControlledExit) {
     process.exit(err.code);
   }
+  if (err instanceof CommanderError) {
+    if (err.exitCode === 0) process.exit(0); // --help, --version: output already written
+    // Commander bakes "error: " into the message — strip it for our formatter
+    const message = err.message.replace(/^error:\s*/, '');
+    console.error(`\n  ${chalk.red('✗')}  ${message}\n`);
+    process.exit(1);
+  }
   if (err instanceof UserError) {
-    console.error(`\n  ${chalk.red('✗')}  ${err.message}\n`);
+    console.error(`\n  ${chalk.red('✗')}  ${err.message}`);
+    if (err.hint) console.error(chalk.dim(err.hint));
+    console.error();
     process.exit(1);
   }
   const message = err instanceof Error ? err.message : String(err);

@@ -1,10 +1,11 @@
-import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import ora from 'ora';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { ControlledExit } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
+import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
 import {
@@ -14,34 +15,6 @@ import {
   computeStructureHash,
   type Fingerprints,
 } from '../state/fingerprints.js';
-
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set — configure it before running chiral',
-    );
-  }
-}
-
-function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
-  const msg = err instanceof Error ? err.message : String(err);
-  spinner.fail(chalk.red(`  ${msg}`));
-  throw err;
-}
-
-function matchesGlob(name: string, pattern: string): boolean {
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`^${regexStr}$`).test(name);
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
 
 interface AddedEntry {
   name: string;
@@ -382,8 +355,8 @@ export const diffCommand = new Command('diff')
   .option('--tag <tag>', 'Filter to workflows with this tag (applied to both environments)')
   .option('--pattern <glob>', 'Glob pattern matched against source workflow names (e.g. "Customer *")')
   .option('--show-unchanged', 'Include identical workflows in output')
-  .option('--name-only', 'Print only differing workflow names, one per line — suitable for piping')
-  .option('--json', 'Output a machine-readable JSON summary instead of human output')
+  .addOption(new Option('--name-only', 'Print only differing workflow names, one per line — suitable for piping').conflicts('json'))
+  .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
   .option('--exit-code', 'Exit 1 if any differences found, 0 if environments are identical (CI use)')
   .addHelpText(
     'after',

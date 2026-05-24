@@ -1,11 +1,12 @@
-import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import ora from 'ora';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { ControlledExit } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
+import { failSpinner, plural, matchesGlob, detectsEnvMarker } from '../lib/cli.js';
 import {
   generateDeploymentId,
   writeSnapshot,
@@ -23,31 +24,39 @@ import {
   upsertFingerprintEntry,
 } from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
-import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry } from '../state/workflows.js';
+import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set — configure it before running chiral',
-    );
-  }
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface PullOptions {
+  env: string;
+  tag?: string;
+  pattern?: string;
+  id?: string;
+  onlyActive?: boolean;
+  json?: boolean;
+  verbose?: boolean;
+  nameOnly?: boolean;
+  exitCode?: boolean;
 }
 
-function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
-  const msg = err instanceof Error ? err.message : String(err);
-  spinner.fail(chalk.red(`  ${msg}`));
-  throw err;
+// Output mode matrix:
+//   --json   | --name-only | result
+//   true     | false       | 'json'
+//   false    | true        | 'name-only'
+//   false    | false       | 'human'
+//   true     | true        | UserError (mutually exclusive)
+type OutputMode = 'human' | 'json' | 'name-only';
+
+// ── Output mode ───────────────────────────────────────────────────────────────
+
+function resolveOutputMode(options: PullOptions): OutputMode {
+  if (options.json) return 'json';
+  if (options.nameOnly) return 'name-only';
+  return 'human';
 }
 
-function matchesGlob(name: string, pattern: string): boolean {
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`^${regexStr}$`).test(name);
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 interface Delta {
   added: WorkflowFull[];
@@ -118,10 +127,6 @@ function checkStaleness(chiralDir: string, env: string): void {
   }
 }
 
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
 function printWorkflowList(workflows: WorkflowFull[]): void {
   console.log(`\n  ${chalk.bold('Workflows pulled:')}`);
   for (const wf of workflows) {
@@ -130,26 +135,35 @@ function printWorkflowList(workflows: WorkflowFull[]): void {
   }
 }
 
-interface PullOptions {
-  env: string;
-  tag?: string;
-  pattern?: string;
-  id?: string;
-  onlyActive?: boolean;
-  json?: boolean;
-  verbose?: boolean;
-  nameOnly?: boolean;
-  exitCode?: boolean;
+function warnIfEnvSpecificNames(
+  workflows: { name: string }[],
+  chiralDir: string,
+  env: string,
+  config: Config,
+): void {
+  const wfMap = loadWorkflowMap(chiralDir);
+  const envSpecific = workflows.filter(
+    (wf) => detectsEnvMarker(wf.name, Object.keys(config.environments)) && !findLogicalByEnvAndName(wfMap, env, wf.name),
+  );
+  if (envSpecific.length === 0) return;
+
+  const example = envSpecific[0].name;
+  const otherEnvs = Object.keys(config.environments).filter((e) => e !== env);
+  const targetHint = otherEnvs[0] ?? '<other-env>';
+  console.log(
+    `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
+  );
+  console.log(chalk.dim(`     If they exist under different names in other environments, run:`));
+  console.log(chalk.dim(`     chiral workflow match --source ${env} --target ${targetHint}`));
 }
+
+// ── Run function ──────────────────────────────────────────────────────────────
 
 export async function runPull(
   options: PullOptions,
   cwd: string = process.cwd(),
 ): Promise<void> {
-  if (options.id && (options.tag || options.pattern || options.onlyActive)) {
-    throw new UserError('--id cannot be combined with --tag, --pattern, or --only-active');
-  }
-
+  const outputMode = resolveOutputMode(options);
   const actor = getGitActor();
   const { config, chiralDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
@@ -169,8 +183,7 @@ export async function runPull(
     chiral_version: '0.1.0',
   };
 
-  const isSilent = options.json || options.nameOnly;
-  if (!isSilent) {
+  if (outputMode === 'human') {
     console.log();
     checkStaleness(chiralDir, options.env);
   }
@@ -178,13 +191,15 @@ export async function runPull(
   try {
     // ── --id: single-workflow path ────────────────────────────────────────────
     if (options.id) {
-      const spinner = ora({
-        text: `  Connecting to ${chalk.cyan(options.env)}…`,
-        color: 'cyan',
-      }).start();
+      const spinner = outputMode === 'human'
+        ? ora({ text: `  Connecting to ${chalk.cyan(options.env)}…`, color: 'cyan' }).start()
+        : null;
 
-      const workflow = await client.getWorkflow(options.id).catch((err) => failSpinner(spinner, err));
-      spinner.succeed(chalk.green(`  Fetched "${workflow.name}"`));
+      const workflow = await client.getWorkflow(options.id).catch((err) => {
+        if (spinner) return failSpinner(spinner, err);
+        throw err;
+      });
+      if (spinner) spinner.succeed(chalk.green(`  Fetched "${workflow.name}"`));
 
       const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
       const previousWorkflows = previousDeploymentId
@@ -224,9 +239,9 @@ export async function runPull(
         }
       }
 
-      if (options.nameOnly) {
+      if (outputMode === 'name-only') {
         if (hasChanges) console.log(workflow.name);
-      } else if (options.json) {
+      } else if (outputMode === 'json') {
         console.log(
           JSON.stringify({
             env: options.env,
@@ -256,18 +271,18 @@ export async function runPull(
       baseEntry.workflow_ids = [options.id];
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
-      if (!isSilent) {
-        const syncResult = await syncToRemote(
-          chiralDir, config, `chore(chiral): pull ${options.env}`,
-        );
-        if (!syncResult.skipped && !syncResult.nothingToCommit) {
-          if (syncResult.success) {
-            console.log(formatSyncSuccess(syncResult));
-          } else {
-            for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-          }
-          console.log();
+      // Sync always runs; output only shown in human mode
+      const syncResult = await syncToRemote(
+        chiralDir, config, `chore(chiral): pull ${options.env}`,
+      );
+      if (outputMode === 'human' && !syncResult.skipped && !syncResult.nothingToCommit) {
+        if (syncResult.success) {
+          console.log(formatSyncSuccess(syncResult));
+        } else {
+          for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+          if (syncResult.message) logSyncError(syncResult.message);
         }
+        console.log();
       }
 
       if (options.exitCode && hasChanges) throw new ControlledExit(1);
@@ -286,7 +301,9 @@ export async function runPull(
     const connectText = filterLabel
       ? `  Connecting to ${chalk.cyan(options.env)} [${filterLabel}]…`
       : `  Connecting to ${chalk.cyan(options.env)}…`;
-    const spinner1 = ora({ text: connectText, color: 'cyan' }).start();
+    const spinner1 = outputMode === 'human'
+      ? ora({ text: connectText, color: 'cyan' }).start()
+      : null;
 
     // Server-side filtering for active and tags; pattern stays client-side
     const summaries = await client
@@ -294,7 +311,10 @@ export async function runPull(
         active: options.onlyActive ? true : undefined,
         tags: options.tag,
       })
-      .catch((err) => failSpinner(spinner1, err));
+      .catch((err) => {
+        if (spinner1) return failSpinner(spinner1, err);
+        throw err;
+      });
 
     // Client-side filters as belt-and-suspenders (and for pattern which has no server-side support)
     const filtered = summaries.filter((wf) => {
@@ -306,7 +326,10 @@ export async function runPull(
 
     const workflows = await Promise.all(
       filtered.map((s) => client.getWorkflow(s.id)),
-    ).catch((err) => failSpinner(spinner1, err));
+    ).catch((err) => {
+      if (spinner1) return failSpinner(spinner1, err);
+      throw err;
+    });
 
     const activeCount = filtered.filter((w) => w.active).length;
     const inactiveCount = filtered.length - activeCount;
@@ -315,9 +338,11 @@ export async function runPull(
       filtered.length < summaries.length
         ? chalk.dim(` (filtered from ${summaries.length} total)`)
         : '';
-    spinner1.succeed(
-      chalk.green(`  Fetched ${plural(workflows.length, 'workflow')} — ${activeLabel}`) + filteredNote,
-    );
+    if (spinner1) {
+      spinner1.succeed(
+        chalk.green(`  Fetched ${plural(workflows.length, 'workflow')} — ${activeLabel}`) + filteredNote,
+      );
+    }
 
     // ── delta ─────────────────────────────────────────────────────────────────
     const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
@@ -354,9 +379,9 @@ export async function runPull(
       for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
       writeSnapshotMeta(chiralDir, deploymentId, meta);
 
-      if (options.nameOnly) {
+      if (outputMode === 'name-only') {
         // nothing changed — no output
-      } else if (options.json) {
+      } else if (outputMode === 'json') {
         console.log(
           JSON.stringify({
             env: options.env,
@@ -383,6 +408,7 @@ export async function runPull(
             `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date — no changes since last pull`,
           );
           if (options.verbose) printWorkflowList(workflows);
+          warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
           const hint = buildNextHint(config, options.env, false, false, {});
           if (hint) console.log(`\n  ${chalk.dim('Next:')} ${hint}`);
         }
@@ -390,20 +416,24 @@ export async function runPull(
       }
     } else {
       // first pull or changes found — show snapshot spinner
-      const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
+      const spinner3 = outputMode === 'human'
+        ? ora({ text: '  Writing snapshot…', color: 'cyan' }).start()
+        : null;
       for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
       writeSnapshotMeta(chiralDir, deploymentId, meta);
-      spinner3.succeed(
-        chalk.green('  Snapshot saved') +
-        chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
-      );
+      if (spinner3) {
+        spinner3.succeed(
+          chalk.green('  Snapshot saved') +
+          chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
+        );
+      }
 
-      if (options.nameOnly) {
+      if (outputMode === 'name-only') {
         // print only names of changed workflows — no other output
         for (const wf of (delta?.added ?? [])) console.log(wf.name);
         for (const wf of (delta?.updated ?? [])) console.log(wf.name);
         for (const wf of (delta?.deleted ?? [])) console.log(wf.name);
-      } else if (options.json) {
+      } else if (outputMode === 'json') {
         console.log(
           JSON.stringify({
             env: options.env,
@@ -450,6 +480,7 @@ export async function runPull(
         }
 
         if (options.verbose) printWorkflowList(workflows);
+        warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
         const hint = buildNextHint(config, options.env, hasChanges, isFirstPull, {
           tag: options.tag,
           pattern: options.pattern,
@@ -491,19 +522,18 @@ export async function runPull(
     baseEntry.workflow_ids = workflows.map((w) => w.id);
     writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
-    if (!isSilent) {
-      const syncResult = await syncToRemote(
-        chiralDir, config, `chore(chiral): pull ${options.env}`,
-      );
-      if (!syncResult.skipped && !syncResult.nothingToCommit) {
-        if (syncResult.success) {
-          console.log(formatSyncSuccess(syncResult));
-        } else {
-          for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-          if (syncResult.message) logSyncError(syncResult.message);
-        }
-        console.log();
+    // Sync always runs; output only shown in human mode
+    const syncResult = await syncToRemote(
+      chiralDir, config, `chore(chiral): pull ${options.env}`,
+    );
+    if (outputMode === 'human' && !syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        if (syncResult.message) logSyncError(syncResult.message);
       }
+      console.log();
     }
 
     if (options.exitCode && hasChanges) throw new ControlledExit(1);
@@ -519,20 +549,28 @@ export async function runPull(
   }
 }
 
+// ── Command definition ────────────────────────────────────────────────────────
+
 export const pullCommand = new Command('pull')
   .description('Sync workflow snapshots from an n8n environment')
   .requiredOption('--env <env>', 'Environment to pull from')
-  .option('--tag <tag>', 'Only pull workflows with this tag name')
-  .option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")')
-  .option('--id <workflow-id>', 'Pull a single workflow by its n8n ID (mutually exclusive with --tag, --pattern, --only-active)')
-  .option('--only-active', 'Only pull currently active workflows')
+  .addOption(new Option('--tag <tag>', 'Only pull workflows with this tag name').conflicts('id'))
+  .addOption(new Option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")').conflicts('id'))
   .option('--verbose', 'List every pulled workflow with its active/inactive status')
-  .option('--name-only', 'Print only changed workflow names, one per line — suitable for piping')
-  .option('--json', 'Output a machine-readable JSON summary instead of human output')
+  .addOption(new Option('--only-active', 'Only pull currently active workflows').conflicts('id'))
+  .addOption(new Option('--id <workflow-id>', 'Pull a single workflow by its n8n ID').conflicts(['tag', 'pattern', 'onlyActive']))
+  .addOption(new Option('--name-only', 'Print only changed workflow names, one per line — suitable for piping').conflicts('json'))
+  .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
   .option('--exit-code', 'Exit 1 if changes were detected, 0 if everything was already up to date (CI use)')
   .addHelpText(
     'after',
     `
+Flag interactions:
+  --json and --name-only are mutually exclusive output modes — use one or the other.
+  --id cannot be combined with --tag, --pattern, or --only-active.
+  --exit-code is composable with all output modes including --json and --name-only.
+  --verbose is ignored in --json and --name-only modes.
+
 Examples:
   Pull all workflows from dev:
     chiral pull --env dev

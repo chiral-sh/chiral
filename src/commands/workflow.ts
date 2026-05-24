@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import { input, confirm, search } from '@inquirer/prompts';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
@@ -787,11 +787,6 @@ export async function runWorkflowList(
   options: { env?: string; unmapped?: boolean; incomplete?: boolean; json?: boolean },
   cwd: string = process.cwd(),
 ): Promise<void> {
-  // Mutual exclusion
-  if (options.unmapped && options.incomplete) {
-    throw new UserError('--unmapped and --incomplete cannot be used together');
-  }
-
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
     throw new UserError("No .chiral/ found. Run 'chiral init' first.");
@@ -993,8 +988,8 @@ Examples:
 const workflowListCmd = new Command('list')
   .description('List all workflow name mappings from workflows.json')
   .option('--env <env>', 'Show only entries that include a mapping for this environment')
-  .option('--unmapped', 'Show workflows from the most recent snapshot with no mapping')
-  .option('--incomplete', 'Show mapped workflows that are missing IDs or env coverage')
+  .addOption(new Option('--unmapped', 'Show workflows from the most recent snapshot with no mapping').conflicts('incomplete'))
+  .addOption(new Option('--incomplete', 'Show mapped workflows that are missing IDs or env coverage').conflicts('unmapped'))
   .option('--json', 'Emit machine-readable JSON instead of human output')
   .addHelpText(
     'after',
