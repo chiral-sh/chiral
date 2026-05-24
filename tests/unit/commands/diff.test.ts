@@ -79,8 +79,8 @@ beforeEach(() => {
 
 function setupProject(config = VALID_CONFIG) {
   vol.fromJSON({
-    '/project/.flightdeck/config.json': config,
-    '/project/.flightdeck/audit.jsonl': '',
+    '/project/.chiral/config.json': config,
+    '/project/.chiral/audit.jsonl': '',
   });
 }
 
@@ -94,7 +94,7 @@ function setupDivergentFingerprints(
   tgtName = srcName,
 ) {
   vol.writeFileSync(
-    '/project/.flightdeck/fingerprints.json',
+    '/project/.chiral/fingerprints.json',
     JSON.stringify({
       version: 1,
       envs: {
@@ -138,7 +138,7 @@ describe('runDiff — setup errors', () => {
     ).rejects.toThrow(UserError);
     await expect(
       runDiff({ source: 'dev', target: 'prod' }, '/project'),
-    ).rejects.toThrow('flightdeck init');
+    ).rejects.toThrow('chiral init');
   });
 
   it('throws UserError when --source env is not in config', async () => {
@@ -328,7 +328,7 @@ describe('runDiff — name resolution via workflows.json', () => {
   it('matches workflows by mapped name across environments', async () => {
     setupProject();
     vol.writeFileSync(
-      '/project/.flightdeck/workflows.json',
+      '/project/.chiral/workflows.json',
       JSON.stringify({
         version: 1,
         workflows: {
@@ -359,7 +359,7 @@ describe('runDiff — name resolution via workflows.json', () => {
   it('shows ~ when mapped workflow has a different versionId', async () => {
     setupProject();
     vol.writeFileSync(
-      '/project/.flightdeck/workflows.json',
+      '/project/.chiral/workflows.json',
       JSON.stringify({
         version: 1,
         workflows: {
@@ -642,7 +642,7 @@ describe('runDiff — audit entries', () => {
     await runDiff({ source: 'dev', target: 'prod' }, '/project');
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
     );
     expect(entry.action).toBe('diff');
     expect(entry.result).toBe('success');
@@ -660,7 +660,7 @@ describe('runDiff — audit entries', () => {
     await runDiff({ source: 'dev', target: 'prod' }, '/project');
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
     );
     expect(entry.workflow_ids).toContain('src-1');
     expect(entry.workflow_ids).toContain('src-2');
@@ -680,7 +680,7 @@ describe('runDiff — audit entries', () => {
     ).rejects.toThrow('API key for dev is invalid or expired');
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
     );
     expect(entry.result).toBe('failure');
     expect(entry.error).toContain('API key for dev');
@@ -694,11 +694,11 @@ describe('runDiff — fingerprint-based change detection', () => {
     setupProject();
     // Both envs have the SAME contentHash → identical despite versionId mismatch
     vol.writeFileSync(
-      '/project/.flightdeck/fingerprints.json',
+      '/project/.chiral/fingerprints.json',
       JSON.stringify({
         version: 1,
         envs: {
-          dev:  { 'src-1': { name: 'Workflow One', versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' } },
+          dev: { 'src-1': { name: 'Workflow One', versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' } },
           prod: { 'tgt-1': { name: 'Workflow One', versionId: 'v2', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' } },
         },
       }),
@@ -788,7 +788,7 @@ describe('runDiff — Next: hint', () => {
 
     await runDiff({ source: 'dev', target: 'prod' }, '/project');
 
-    expect(output.join('\n')).toContain('flightdeck push --source dev --target prod --dry-run');
+    expect(output.join('\n')).toContain('chiral push --source dev --target prod --dry-run');
   });
 
   it('carries --tag filter into push hint', async () => {

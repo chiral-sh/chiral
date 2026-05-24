@@ -59,15 +59,15 @@ describe('runInit', () => {
     });
 
     await expect(runInit({ project: 'my-project' }, '/no-git')).rejects.toThrow(
-      new UserError('flightdeck init must be run inside a Git repository'),
+      new UserError('chiral init must be run inside a Git repository'),
     );
   });
 
-  it('throws UserError when .flightdeck/ already exists', async () => {
-    vol.fromJSON({ '/project/.flightdeck/.gitignore': 'config.json\n' });
+  it('throws UserError when .chiral/ already exists', async () => {
+    vol.fromJSON({ '/project/.chiral/.gitignore': 'config.json\n' });
 
     await expect(runInit({ project: 'my-project' }, '/project')).rejects.toThrow(
-      new UserError('Already initialized. Delete .flightdeck/ to start over.'),
+      new UserError('Already initialized. Delete .chiral/ to start over.'),
     );
   });
 
@@ -79,22 +79,22 @@ describe('runInit', () => {
     );
   });
 
-  it('creates .flightdeck/ directory structure on success', async () => {
+  it('creates .chiral/ directory structure on success', async () => {
     await runInit({ project: 'my-project' }, '/project');
 
-    expect(vol.existsSync('/project/.flightdeck')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/locks')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/snapshots')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/config.example.json')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/.gitignore')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/audit.jsonl')).toBe(true);
+    expect(vol.existsSync('/project/.chiral')).toBe(true);
+    expect(vol.existsSync('/project/.chiral/locks')).toBe(true);
+    expect(vol.existsSync('/project/.chiral/snapshots')).toBe(true);
+    expect(vol.existsSync('/project/.chiral/config.example.json')).toBe(true);
+    expect(vol.existsSync('/project/.chiral/.gitignore')).toBe(true);
+    expect(vol.existsSync('/project/.chiral/audit.jsonl')).toBe(true);
   });
 
   it('uses project name from --project flag without prompting', async () => {
     await runInit({ project: 'flagged-project' }, '/project');
 
     expect(mockInput).not.toHaveBeenCalled();
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
     expect(JSON.parse(raw).project).toBe('flagged-project');
   });
 
@@ -104,7 +104,7 @@ describe('runInit', () => {
     await runInit({}, '/project');
 
     expect(mockInput).toHaveBeenCalledOnce();
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
     expect(JSON.parse(raw).project).toBe('prompted-name');
   });
 
@@ -134,7 +134,7 @@ describe('runInit', () => {
 
     await runInit({ project: 'my-project' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
     expect(JSON.parse(raw).gitSync?.branch).toBe('master');
   });
 
@@ -143,7 +143,7 @@ describe('runInit', () => {
 
     await runInit({ project: 'my-project', remote: 'origin' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
     expect(JSON.parse(raw).gitSync?.branch).toBe('develop');
   });
 
@@ -154,6 +154,6 @@ describe('runInit', () => {
     vi.mocked(console.log).mockRestore();
 
     expect(output.some((l) => l.includes('acme'))).toBe(true);
-    expect(output.some((l) => l.includes('flightdeck configure'))).toBe(true);
+    expect(output.some((l) => l.includes('chiral configure'))).toBe(true);
   });
 });

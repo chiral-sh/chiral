@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
-  findFlightdeckDir,
+  findChiralDir,
   writeConfig,
   readProjectNameFromExample,
   loadConfigAndDir,
@@ -95,8 +95,8 @@ function printSummary(
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-function readGitSyncFromExample(flightdeckDir: string): GitSync | undefined {
-  const examplePath = join(flightdeckDir, 'config.example.json');
+function readGitSyncFromExample(chiralDir: string): GitSync | undefined {
+  const examplePath = join(chiralDir, 'config.example.json');
   try {
     const raw = JSON.parse(readFileSync(examplePath, 'utf-8'));
     if (raw?.gitSync?.enabled && raw.gitSync.remote) {
@@ -118,9 +118,9 @@ export async function runConfigure(
   options: { env?: string; skipTest?: boolean; remote?: string },
   cwd: string = process.cwd(),
 ): Promise<void> {
-  const flightdeckDir = findFlightdeckDir(cwd);
-  if (!flightdeckDir) {
-    throw new UserError("No .flightdeck/ found. Run 'flightdeck init' first.");
+  const chiralDir = findChiralDir(cwd);
+  if (!chiralDir) {
+    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
   }
 
   // Load existing config or start fresh from config.example.json
@@ -129,10 +129,10 @@ export async function runConfigure(
   let licenseKey: string | undefined;
   let gitSync: GitSync | undefined;
 
-  const configPath = join(flightdeckDir, 'config.json');
+  const configPath = join(chiralDir, 'config.json');
   if (existsSync(configPath)) {
     try {
-      const { config } = loadConfigAndDir(flightdeckDir);
+      const { config } = loadConfigAndDir(chiralDir);
       project = config.project;
       environments = { ...config.environments };
       licenseKey = config.licenseKey;
@@ -146,12 +146,12 @@ export async function runConfigure(
       }
       console.log();
     } catch {
-      project = readProjectNameFromExample(flightdeckDir);
+      project = readProjectNameFromExample(chiralDir);
     }
   } else {
-    project = readProjectNameFromExample(flightdeckDir);
+    project = readProjectNameFromExample(chiralDir);
     // Carry gitSync from config.example.json if init wrote it there
-    gitSync = readGitSyncFromExample(flightdeckDir);
+    gitSync = readGitSyncFromExample(chiralDir);
   }
 
   // --remote flag: update or enable gitSync; save and return if we already have environments
@@ -170,8 +170,8 @@ export async function runConfigure(
         ...(licenseKey ? { licenseKey } : {}),
         gitSync,
       };
-      writeConfig(flightdeckDir, config);
-      console.log('  ' + chalk.green('✓') + ' Saved .flightdeck/config.json  ' + chalk.dim('(mode 600)'));
+      writeConfig(chiralDir, config);
+      console.log('  ' + chalk.green('✓') + ' Saved .chiral/config.json  ' + chalk.dim('(mode 600)'));
       console.log();
       return;
     }
@@ -240,7 +240,7 @@ export async function runConfigure(
         ({ workflowCount } = await client.testConnection());
         spinner.succeed(
           chalk.green('  Connected') +
-            chalk.dim(` — ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`),
+          chalk.dim(` — ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`),
         );
         status = 'connected';
       } catch (err) {
@@ -293,20 +293,20 @@ export async function runConfigure(
     ...(licenseKey ? { licenseKey } : {}),
     ...(gitSync ? { gitSync } : {}),
   };
-  writeConfig(flightdeckDir, config);
-  console.log('\n  ' + chalk.green('✓') + ' Saved .flightdeck/config.json  ' + chalk.dim('(mode 600)'));
+  writeConfig(chiralDir, config);
+  console.log('\n  ' + chalk.green('✓') + ' Saved .chiral/config.json  ' + chalk.dim('(mode 600)'));
 
   // ── summary ───────────────────────────────────────────────────────────────
   printSummary(project, environments, results);
 
   const firstNew = results.find((r) => r.status === 'connected')?.name ?? results[0]?.name;
   if (firstNew) {
-    console.log(`\n  ${chalk.dim('Next:')} flightdeck adopt --env ${firstNew}\n`);
+    console.log(`\n  ${chalk.dim('Next:')} chiral adopt --env ${firstNew}\n`);
   }
 }
 
 export const configureCommand = new Command('configure')
-  .description('Set up or update environment connections in .flightdeck/config.json')
+  .description('Set up or update environment connections in .chiral/config.json')
   .option('--env <env>', 'Configure a specific environment (skips env name prompt)')
   .option('--skip-test', 'Skip the connection test')
   .option('--remote <remote>', 'Set or update the git remote for auto-sync (e.g. "origin")')
@@ -315,16 +315,16 @@ export const configureCommand = new Command('configure')
     `
 Examples:
   Configure all environments interactively:
-    flightdeck configure
+    chiral configure
 
   Update a single environment:
-    flightdeck configure --env prod
+    chiral configure --env prod
 
   Configure without testing the connection:
-    flightdeck configure --env dev --skip-test
+    chiral configure --env dev --skip-test
 
   Update the git sync remote:
-    flightdeck configure --remote origin
+    chiral configure --remote origin
 `,
   )
   .action(async (options) => {

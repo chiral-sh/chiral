@@ -5,7 +5,7 @@ import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
-import { createFlightdeckDirectory } from '../state/init.js';
+import { createChiralDirectory } from '../state/init.js';
 import type { GitSync } from '../lib/config.js';
 
 function isGitRepo(cwd: string): boolean {
@@ -42,12 +42,12 @@ export async function runInit(
   cwd: string = process.cwd(),
 ): Promise<void> {
   if (!isGitRepo(cwd)) {
-    throw new UserError('flightdeck init must be run inside a Git repository');
+    throw new UserError('chiral init must be run inside a Git repository');
   }
 
-  const flightdeckDir = join(cwd, '.flightdeck');
-  if (existsSync(flightdeckDir)) {
-    throw new UserError('Already initialized. Delete .flightdeck/ to start over.');
+  const chiralDir = join(cwd, '.chiral');
+  if (existsSync(chiralDir)) {
+    throw new UserError('Already initialized. Delete .chiral/ to start over.');
   }
 
   let projectName = options.project?.trim() ?? '';
@@ -95,19 +95,19 @@ export async function runInit(
     }
   }
 
-  createFlightdeckDirectory(flightdeckDir, projectName, gitSync);
+  createChiralDirectory(chiralDir, projectName, gitSync);
 
   // ── Output ─────────────────────────────────────────────────────────────────
   const file = (path: string, note?: string) =>
     `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('— ' + note) : ''}`;
 
   console.log(`\n  ${chalk.bold(projectName)}\n`);
-  console.log(file('.flightdeck/config.example.json', 'fill in your environments here'));
-  console.log(file('.flightdeck/.gitignore', 'keeps config.json out of git'));
-  console.log(file('.flightdeck/credentials.json'));
-  console.log(file('.flightdeck/audit.jsonl'));
-  console.log(file('.flightdeck/locks/'));
-  console.log(file('.flightdeck/snapshots/'));
+  console.log(file('.chiral/config.example.json', 'fill in your environments here'));
+  console.log(file('.chiral/.gitignore', 'keeps config.json out of git'));
+  console.log(file('.chiral/credentials.json'));
+  console.log(file('.chiral/audit.jsonl'));
+  console.log(file('.chiral/locks/'));
+  console.log(file('.chiral/snapshots/'));
 
   if (gitSync) {
     console.log(
@@ -116,11 +116,11 @@ export async function runInit(
     console.log(chalk.dim('     State changes will be committed and pushed automatically.'));
   }
 
-  console.log(`\n  ${chalk.dim('Next:')} flightdeck configure\n`);
+  console.log(`\n  ${chalk.dim('Next:')} chiral configure\n`);
 }
 
 export const initCommand = new Command('init')
-  .description('Initialize .flightdeck/ in the current Git repository')
+  .description('Initialize .chiral/ in the current Git repository')
   .option('--project <name>', 'Project name (skips interactive prompt)')
   .option('--remote <remote>', 'Git remote name or URL for team sync (skips interactive git sync prompt)')
   .option('--solo', 'Skip git sync setup entirely')
@@ -129,16 +129,16 @@ export const initCommand = new Command('init')
     `
 Examples:
   Initialize with an interactive project name prompt:
-    flightdeck init
+    chiral init
 
   Initialize with a specific project name:
-    flightdeck init --project my-n8n
+    chiral init --project my-n8n
 
   Initialize with git sync pre-configured:
-    flightdeck init --project my-n8n --remote origin
+    chiral init --project my-n8n --remote origin
 
   Initialize without git sync (solo use):
-    flightdeck init --solo
+    chiral init --solo
 `,
   )
   .action(async (options) => {

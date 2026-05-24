@@ -91,15 +91,15 @@ beforeEach(() => {
 
 function setupProject(config = VALID_CONFIG) {
   vol.fromJSON({
-    '/project/.flightdeck/config.json': config,
-    '/project/.flightdeck/audit.jsonl': '',
+    '/project/.chiral/config.json': config,
+    '/project/.chiral/audit.jsonl': '',
   });
 }
 
 function setupPreviousSnapshot(env = 'dev') {
-  writeSnapshot('/project/.flightdeck', PREV_DEPLOYMENT, { ...WF1, versionId: 'v1' });
-  writeSnapshot('/project/.flightdeck', PREV_DEPLOYMENT, { ...WF2, versionId: 'v1' });
-  writeSnapshotMeta('/project/.flightdeck', PREV_DEPLOYMENT, {
+  writeSnapshot('/project/.chiral', PREV_DEPLOYMENT, { ...WF1, versionId: 'v1' });
+  writeSnapshot('/project/.chiral', PREV_DEPLOYMENT, { ...WF2, versionId: 'v1' });
+  writeSnapshotMeta('/project/.chiral', PREV_DEPLOYMENT, {
     deployment_id: PREV_DEPLOYMENT,
     env,
     command: 'pull',
@@ -119,7 +119,7 @@ describe('runPull — setup errors', () => {
   it('throws UserError when config.json is missing', async () => {
     vol.fromJSON({});
     await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow(UserError);
-    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow('flightdeck init');
+    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow('chiral init');
   });
 
   it('throws UserError when --env is not in config', async () => {
@@ -164,7 +164,7 @@ describe('runPull — first pull (no previous snapshot)', () => {
     await runPull({ env: 'dev' }, '/project');
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
     );
     expect(entry.action).toBe('pull');
     expect(entry.result).toBe('success');
@@ -221,7 +221,7 @@ describe('runPull — zero workflows', () => {
   it('shows zero-workflow warning when previous snapshot also had zero workflows', async () => {
     setupProject();
     // Set up a previous snapshot with 0 workflows explicitly
-    writeSnapshotMeta('/project/.flightdeck', PREV_DEPLOYMENT, {
+    writeSnapshotMeta('/project/.chiral', PREV_DEPLOYMENT, {
       deployment_id: PREV_DEPLOYMENT,
       env: 'dev',
       command: 'pull',
@@ -542,7 +542,7 @@ describe('runPull — error handling', () => {
     );
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
     );
     expect(entry.result).toBe('failure');
     expect(entry.error).toContain('API key for dev');
@@ -557,7 +557,7 @@ describe('runPull — error handling', () => {
 
     await runPull({ env: 'dev' }, '/project');
 
-    expect(output.join('\n')).toContain('flightdeck diff --source dev --target prod');
+    expect(output.join('\n')).toContain('chiral diff --source dev --target prod');
   });
 
   it('shows diff Next hint when no changes found', async () => {
@@ -577,7 +577,7 @@ describe('runPull — error handling', () => {
 
     await runPull({ env: 'dev' }, '/project');
 
-    expect(output.join('\n')).toContain('flightdeck diff --source dev --target prod');
+    expect(output.join('\n')).toContain('chiral diff --source dev --target prod');
     expect(output.join('\n')).not.toContain('push');
   });
 
@@ -614,7 +614,7 @@ describe('runPull — smart Next: hint', () => {
 
     await runPull({ env: 'dev' }, '/project');
 
-    expect(output.join('\n')).toContain('flightdeck push --source dev --target prod --dry-run');
+    expect(output.join('\n')).toContain('chiral push --source dev --target prod --dry-run');
   });
 
   it('carries --tag filter forward into push hint', async () => {
@@ -908,7 +908,7 @@ describe('runPull — staleness warning', () => {
     // Write a stale audit entry (8 days ago)
     const staleTimestamp = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
     vol.writeFileSync(
-      '/project/.flightdeck/audit.jsonl',
+      '/project/.chiral/audit.jsonl',
       JSON.stringify({
         event_id: crypto.randomUUID(),
         event_schema_version: 1,
@@ -921,7 +921,7 @@ describe('runPull — staleness warning', () => {
         workflow_ids: [],
         result: 'success',
         error: null,
-        flightdeck_version: '0.1.0',
+        chiral_version: '0.1.0',
       }) + '\n',
     );
 
@@ -940,7 +940,7 @@ describe('runPull — staleness warning', () => {
     // Write a recent audit entry (1 day ago)
     const recentTimestamp = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     vol.writeFileSync(
-      '/project/.flightdeck/audit.jsonl',
+      '/project/.chiral/audit.jsonl',
       JSON.stringify({
         event_id: crypto.randomUUID(),
         event_schema_version: 1,
@@ -953,7 +953,7 @@ describe('runPull — staleness warning', () => {
         workflow_ids: [],
         result: 'success',
         error: null,
-        flightdeck_version: '0.1.0',
+        chiral_version: '0.1.0',
       }) + '\n',
     );
 
@@ -974,7 +974,7 @@ describe('runPull — fingerprints', () => {
 
     await runPull({ env: 'dev' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
     expect(fp.version).toBe(1);
     expect(fp.envs.dev).toBeDefined();
@@ -992,7 +992,7 @@ describe('runPull — fingerprints', () => {
 
     // Write an existing fingerprints.json with stale versionId
     vol.writeFileSync(
-      '/project/.flightdeck/fingerprints.json',
+      '/project/.chiral/fingerprints.json',
       JSON.stringify({
         version: 1,
         envs: {
@@ -1015,7 +1015,7 @@ describe('runPull — fingerprints', () => {
 
     await runPull({ env: 'dev' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
     expect(fp.envs.dev['wf-1'].versionId).toBe('v2');
     expect(fp.envs.dev['wf-2']).toBeDefined();
@@ -1029,7 +1029,7 @@ describe('runPull — fingerprints', () => {
 
     await runPull({ env: 'dev', id: 'wf-1' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
     expect(fp.envs.dev['wf-1']).toBeDefined();
     expect(fp.envs.dev['wf-1'].name).toBe('Workflow One');
@@ -1045,7 +1045,7 @@ describe('runPull — workflow map auto-heal', () => {
     setupProject();
 
     // Map has 'Workflow One' but n8n now returns 'Workflow One Renamed' for same ID
-    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
       version: 1,
       workflows: {
         'workflow-one': {
@@ -1066,7 +1066,7 @@ describe('runPull — workflow map auto-heal', () => {
 
     await runPull({ env: 'dev' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
     expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');
@@ -1075,7 +1075,7 @@ describe('runPull — workflow map auto-heal', () => {
   it('does not modify the map when workflow names are unchanged', async () => {
     setupProject();
 
-    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
       version: 1,
       workflows: {
         'workflow-one': { dev: { name: 'Workflow One', id: 'wf-1' } },
@@ -1087,7 +1087,7 @@ describe('runPull — workflow map auto-heal', () => {
     await runPull({ env: 'dev' }, '/project');
 
     // workflows.json should be unchanged (name matches, no heal needed)
-    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One');
   });
@@ -1095,7 +1095,7 @@ describe('runPull — workflow map auto-heal', () => {
   it('auto-heals map entry name via --id path', async () => {
     setupProject();
 
-    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
       version: 1,
       workflows: {
         'workflow-one': { dev: { name: 'Workflow One', id: 'wf-1' } },
@@ -1109,7 +1109,7 @@ describe('runPull — workflow map auto-heal', () => {
 
     await runPull({ env: 'dev', id: 'wf-1' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
     expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');

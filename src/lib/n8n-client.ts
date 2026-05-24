@@ -68,7 +68,7 @@ export class N8nClient {
     if (daysLeft > 0 && daysLeft <= EXPIRY_WARN_DAYS) {
       console.error(
         chalk.yellow(`  ⚠ API key for ${this.envName} expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`) +
-        chalk.dim(` — run flightdeck configure --env ${this.envName} to rotate it`),
+        chalk.dim(` — run chiral configure --env ${this.envName} to rotate it`),
       );
     }
   }
@@ -78,7 +78,7 @@ export class N8nClient {
       '  Recreate your key at n8n Settings → API with these scopes:\n' +
       '    workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
       '    credential:list  tag:list  tag:create\n' +
-      `  Then run: flightdeck configure --env ${this.envName}`
+      `  Then run: chiral configure --env ${this.envName}`
     );
   }
 
@@ -95,7 +95,7 @@ export class N8nClient {
     if (expiry && expiry <= new Date()) {
       throw new UserError(
         `API key for ${this.envName} expired on ${expiry.toLocaleDateString()}`,
-        `  Run: flightdeck configure --env ${this.envName} to save a new key`,
+        `  Run: chiral configure --env ${this.envName} to save a new key`,
       );
     }
 
@@ -123,7 +123,7 @@ export class N8nClient {
     if (response.status === 401) {
       throw new UserError(
         `API key for ${this.envName} is invalid or expired`,
-        `  Run: flightdeck configure --env ${this.envName} to save a new key`,
+        `  Run: chiral configure --env ${this.envName} to save a new key`,
       );
     }
     if (response.status === 403) {

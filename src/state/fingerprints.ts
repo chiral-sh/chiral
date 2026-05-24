@@ -145,8 +145,8 @@ export function computeStructureHash(wf: Record<string, unknown>): string {
 
 // ── Load / write ──────────────────────────────────────────────────────────────
 
-export function loadFingerprints(flightdeckDir: string): Fingerprints {
-  const filePath = join(flightdeckDir, 'fingerprints.json');
+export function loadFingerprints(chiralDir: string): Fingerprints {
+  const filePath = join(chiralDir, 'fingerprints.json');
   if (!existsSync(filePath)) {
     return FingerprintsSchema.parse({ version: 1, envs: {} });
   }
@@ -163,8 +163,8 @@ export function loadFingerprints(flightdeckDir: string): Fingerprints {
   return result.data;
 }
 
-export function writeFingerprints(flightdeckDir: string, data: Fingerprints): void {
-  const filePath = join(flightdeckDir, 'fingerprints.json');
+export function writeFingerprints(chiralDir: string, data: Fingerprints): void {
+  const filePath = join(chiralDir, 'fingerprints.json');
   try {
     writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
   } catch {
@@ -173,13 +173,13 @@ export function writeFingerprints(flightdeckDir: string, data: Fingerprints): vo
 }
 
 export function upsertFingerprintEntry(
-  flightdeckDir: string,
+  chiralDir: string,
   env: string,
   workflowId: string,
   entry: FingerprintEntry,
 ): void {
-  const data = loadFingerprints(flightdeckDir);
+  const data = loadFingerprints(chiralDir);
   if (!data.envs[env]) data.envs[env] = {};
   data.envs[env]![workflowId] = entry;
-  writeFingerprints(flightdeckDir, data);
+  writeFingerprints(chiralDir, data);
 }

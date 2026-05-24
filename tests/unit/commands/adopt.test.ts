@@ -68,10 +68,10 @@ beforeEach(() => {
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
 });
 
-function setupFlightdeckDir() {
+function setupChiralDir() {
   vol.fromJSON({
-    '/project/.flightdeck/config.json': VALID_CONFIG,
-    '/project/.flightdeck/audit.jsonl': '',
+    '/project/.chiral/config.json': VALID_CONFIG,
+    '/project/.chiral/audit.jsonl': '',
   });
 }
 
@@ -87,11 +87,11 @@ describe('runAdopt', () => {
     vol.fromJSON({});
 
     await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow(UserError);
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow('flightdeck init');
+    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow('chiral init');
   });
 
   it('throws UserError when --env is not in config', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     await expect(runAdopt({ env: 'staging' }, '/project')).rejects.toThrow(UserError);
@@ -99,7 +99,7 @@ describe('runAdopt', () => {
   });
 
   it('creates N8nClient with correct env and envName', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     await runAdopt({ env: 'dev' }, '/project');
@@ -111,7 +111,7 @@ describe('runAdopt', () => {
   });
 
   it('writes snapshot files for each workflow', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     await runAdopt({ env: 'dev' }, '/project');
@@ -124,12 +124,12 @@ describe('runAdopt', () => {
   });
 
   it('writes an audit log entry on success', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     await runAdopt({ env: 'dev' }, '/project');
 
-    const auditContent = vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string;
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
     expect(entry.action).toBe('adopt');
     expect(entry.result).toBe('success');
@@ -141,7 +141,7 @@ describe('runAdopt', () => {
   });
 
   it('writes a failure audit entry and re-throws on API error', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() =>
       makeClientMock({
         listWorkflows: vi.fn().mockRejectedValue(new UserError('API key for dev is invalid or expired')),
@@ -152,14 +152,14 @@ describe('runAdopt', () => {
       'API key for dev is invalid or expired',
     );
 
-    const auditContent = vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string;
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
     expect(entry.result).toBe('failure');
     expect(entry.error).toBe('API key for dev is invalid or expired');
   });
 
   it('prints workflow list with active/inactive status', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     const inactiveWf = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Inactive Workflow', active: false };
     const inactiveFull = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Inactive Workflow', active: false };
     MockN8nClient.mockImplementation(() =>
@@ -184,7 +184,7 @@ describe('runAdopt', () => {
   });
 
   it('fetches full workflow JSON for each summary', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     const getWorkflow = vi.fn().mockResolvedValue(WORKFLOW_FULL);
     MockN8nClient.mockImplementation(() =>
       makeClientMock({ getWorkflow }) as never,
@@ -196,7 +196,7 @@ describe('runAdopt', () => {
   });
 
   it('handles zero workflows gracefully', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() =>
       makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
@@ -205,18 +205,18 @@ describe('runAdopt', () => {
 
     await expect(runAdopt({ env: 'dev' }, '/project')).resolves.not.toThrow();
 
-    const auditContent = vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string;
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
     expect(entry.result).toBe('success');
   });
 
   it('writes fingerprints.json after adopting workflows', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     await runAdopt({ env: 'dev' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fingerprints = JSON.parse(raw);
     expect(fingerprints.version).toBe(1);
     expect(fingerprints.envs.dev).toBeDefined();
@@ -224,12 +224,12 @@ describe('runAdopt', () => {
   });
 
   it('writes all three fingerprint fields for each workflow', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     await runAdopt({ env: 'dev' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const entry = JSON.parse(raw).envs.dev['wf-1'];
     expect(entry.name).toBe('My Workflow');
     expect(entry.versionId).toBe('v1');
@@ -239,7 +239,7 @@ describe('runAdopt', () => {
   });
 
   it('writes a fingerprint entry for each adopted workflow', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
     const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
     MockN8nClient.mockImplementation(() =>
@@ -253,7 +253,7 @@ describe('runAdopt', () => {
 
     await runAdopt({ env: 'dev' }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const envEntries = JSON.parse(raw).envs.dev;
     expect(Object.keys(envEntries)).toHaveLength(2);
     expect(envEntries['wf-1']).toBeDefined();
@@ -261,7 +261,7 @@ describe('runAdopt', () => {
   });
 
   it('does not write fingerprints.json when the API call fails', async () => {
-    setupFlightdeckDir();
+    setupChiralDir();
     MockN8nClient.mockImplementation(() =>
       makeClientMock({
         listWorkflows: vi.fn().mockRejectedValue(new UserError('connection refused')),
@@ -270,6 +270,6 @@ describe('runAdopt', () => {
 
     await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow();
 
-    expect(vol.existsSync('/project/.flightdeck/fingerprints.json')).toBe(false);
+    expect(vol.existsSync('/project/.chiral/fingerprints.json')).toBe(false);
   });
 });

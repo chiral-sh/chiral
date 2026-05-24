@@ -12,14 +12,14 @@ const WORKFLOWS_TEMPLATE = {
   workflows: {} as Record<string, Record<string, string>>,
 };
 
-export function createFlightdeckDirectory(
-  flightdeckDir: string,
+export function createChiralDirectory(
+  chiralDir: string,
   projectName: string,
   gitSync?: GitSync,
 ): void {
-  mkdirSync(flightdeckDir, { recursive: true });
-  mkdirSync(join(flightdeckDir, 'locks'), { recursive: true });
-  mkdirSync(join(flightdeckDir, 'snapshots'), { recursive: true });
+  mkdirSync(chiralDir, { recursive: true });
+  mkdirSync(join(chiralDir, 'locks'), { recursive: true });
+  mkdirSync(join(chiralDir, 'snapshots'), { recursive: true });
 
   const configExample: Record<string, unknown> = {
     version: 1,
@@ -40,19 +40,19 @@ export function createFlightdeckDirectory(
   }
 
   writeFileSync(
-    join(flightdeckDir, 'config.example.json'),
+    join(chiralDir, 'config.example.json'),
     JSON.stringify(configExample, null, 2) + '\n',
     'utf-8',
   );
-  writeFileSync(join(flightdeckDir, '.gitignore'), 'config.json\n', 'utf-8');
-  writeFileSync(join(flightdeckDir, 'audit.jsonl'), '', 'utf-8');
+  writeFileSync(join(chiralDir, '.gitignore'), 'config.json\n', 'utf-8');
+  writeFileSync(join(chiralDir, 'audit.jsonl'), '', 'utf-8');
   writeFileSync(
-    join(flightdeckDir, 'credentials.json'),
+    join(chiralDir, 'credentials.json'),
     JSON.stringify(CREDENTIALS_TEMPLATE, null, 2) + '\n',
     'utf-8',
   );
   writeFileSync(
-    join(flightdeckDir, 'workflows.json'),
+    join(chiralDir, 'workflows.json'),
     JSON.stringify(WORKFLOWS_TEMPLATE, null, 2) + '\n',
     'utf-8',
   );

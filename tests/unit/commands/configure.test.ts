@@ -67,14 +67,14 @@ beforeEach(() => {
 });
 
 describe('runConfigure', () => {
-  it('throws UserError when no .flightdeck/ directory exists', async () => {
+  it('throws UserError when no .chiral/ directory exists', async () => {
     vol.fromJSON({});
     await expect(runConfigure({}, '/project')).rejects.toThrow(UserError);
-    await expect(runConfigure({}, '/project')).rejects.toThrow('flightdeck init');
+    await expect(runConfigure({}, '/project')).rejects.toThrow('chiral init');
   });
 
   it('reads project name from config.example.json when config.json is absent', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://n8n.example.com');
     mockPassword.mockResolvedValueOnce('my-key');
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -82,12 +82,12 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string;
+    const written = vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string;
     expect(JSON.parse(written).project).toBe('example-project');
   });
 
   it('falls back to my-project when config.example.json is also absent', async () => {
-    vol.fromJSON({ '/project/.flightdeck/': null });
+    vol.fromJSON({ '/project/.chiral/': null });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://n8n.example.com');
     mockPassword.mockResolvedValueOnce('my-key');
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -95,12 +95,12 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string;
+    const written = vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string;
     expect(JSON.parse(written).project).toBe('my-project');
   });
 
   it('loads and displays existing config when config.json exists', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': VALID_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
     mockInput.mockResolvedValueOnce('prod').mockResolvedValueOnce('https://prod.n8n.example.com');
     mockPassword.mockResolvedValueOnce('prod-key');
     MockN8nClient.mockImplementation(() => makeClientMock(8) as never);
@@ -116,7 +116,7 @@ describe('runConfigure', () => {
   });
 
   it('writes config.json with new environment on success', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('test-api-key');
     MockN8nClient.mockImplementation(() => makeClientMock(3) as never);
@@ -124,14 +124,14 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(written.environments.dev.url).toBe('https://dev.n8n.example.com');
     expect(written.environments.dev.apiKey).toBe('test-api-key');
     expect(written.version).toBe(1);
   });
 
   it('writes config.json with 0600 permissions', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('test-key');
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -139,26 +139,26 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const stat = vol.statSync('/project/.flightdeck/config.json');
+    const stat = vol.statSync('/project/.chiral/config.json');
     expect(stat.mode & 0o777).toBe(0o600);
   });
 
   it('uses --env flag to skip env name prompt', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('https://staging.n8n.example.com');
     mockPassword.mockResolvedValueOnce('staging-key');
     MockN8nClient.mockImplementation(() => makeClientMock(2) as never);
 
     await runConfigure({ env: 'staging' }, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(written.environments.staging).toBeDefined();
     // input should only have been called once (for URL, not for env name)
     expect(mockInput).toHaveBeenCalledTimes(1);
   });
 
   it('keeps existing API key when password input is empty', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': VALID_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce(''); // empty → keep existing
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -166,7 +166,7 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(written.environments.dev.apiKey).toBe('existing-key');
   });
 
@@ -177,7 +177,7 @@ describe('runConfigure', () => {
       environments: { dev: { url: 'https://dev.n8n.example.com', apiKey: 'key' } },
       licenseKey: 'eyJhbGciOiJSUzI1NiJ9.test',
     });
-    vol.fromJSON({ '/project/.flightdeck/config.json': configWithLicense });
+    vol.fromJSON({ '/project/.chiral/config.json': configWithLicense });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('key');
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -185,12 +185,12 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(written.licenseKey).toBe('eyJhbGciOiJSUzI1NiJ9.test');
   });
 
   it('skips connection test when --skip-test is set', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('key');
     mockConfirm.mockResolvedValueOnce(false);
@@ -202,7 +202,7 @@ describe('runConfigure', () => {
   });
 
   it('shows spinner and calls testConnection during connection test', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('key');
     MockN8nClient.mockImplementation(() => makeClientMock(7) as never);
@@ -215,7 +215,7 @@ describe('runConfigure', () => {
   });
 
   it('shows failure and asks to save anyway when connection test fails', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('bad-key');
     MockN8nClient.mockImplementation(() => ({
@@ -228,12 +228,12 @@ describe('runConfigure', () => {
     await runConfigure({}, '/project');
 
     expect(mockSpinner.fail).toHaveBeenCalled();
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(written.environments.dev).toBeDefined();
   });
 
   it('skips env and continues loop when connection fails and user declines save', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     // First env: fails, don't save
     mockInput
       .mockResolvedValueOnce('dev')
@@ -256,13 +256,13 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(written.environments.dev).toBeUndefined();
     expect(written.environments.prod).toBeDefined();
   });
 
   it('loops for multiple environments when user confirms add another', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput
       .mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com')
       .mockResolvedValueOnce('prod').mockResolvedValueOnce('https://prod.n8n.example.com');
@@ -274,12 +274,12 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/config.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
     expect(Object.keys(written.environments)).toEqual(['dev', 'prod']);
   });
 
   it('throws UserError when API key is empty and no existing key to fall back to', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce(''); // empty, no existing
 
@@ -289,7 +289,7 @@ describe('runConfigure', () => {
   });
 
   it('shows connected status in summary when env is retried after a failed attempt', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     // First attempt: dev fails, user declines save, tries dev again and succeeds
     mockInput
       .mockResolvedValueOnce('dev').mockResolvedValueOnce('https://bad.n8n.example.com')
@@ -315,7 +315,7 @@ describe('runConfigure', () => {
   });
 
   it('does nothing and exits cleanly when all envs are skipped', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.example.json': EXAMPLE_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
     mockPassword.mockResolvedValueOnce('bad-key');
     MockN8nClient.mockImplementation(() => ({
@@ -327,6 +327,6 @@ describe('runConfigure', () => {
 
     await runConfigure({}, '/project');
 
-    expect(vol.existsSync('/project/.flightdeck/config.json')).toBe(false);
+    expect(vol.existsSync('/project/.chiral/config.json')).toBe(false);
   });
 });

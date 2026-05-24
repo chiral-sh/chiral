@@ -60,9 +60,9 @@ beforeEach(() => {
 
 function setupBase(workflowsContent = EMPTY_WORKFLOWS) {
   vol.fromJSON({
-    '/project/.flightdeck/config.json': VALID_CONFIG,
-    '/project/.flightdeck/workflows.json': workflowsContent,
-    '/project/.flightdeck/audit.jsonl': '',
+    '/project/.chiral/config.json': VALID_CONFIG,
+    '/project/.chiral/workflows.json': workflowsContent,
+    '/project/.chiral/audit.jsonl': '',
   });
 }
 
@@ -71,8 +71,8 @@ function setupBase(workflowsContent = EMPTY_WORKFLOWS) {
 describe('runWorkflowMap', () => {
   it('throws UserError when workflows.json not found', async () => {
     vol.fromJSON({
-      '/project/.flightdeck/config.json': VALID_CONFIG,
-      '/project/.flightdeck/audit.jsonl': '',
+      '/project/.chiral/config.json': VALID_CONFIG,
+      '/project/.chiral/audit.jsonl': '',
     });
     await expect(
       runWorkflowMap(['order-processor', 'dev=Order Processor [DEV]', 'prod=Order Processor'], {}, '/project'),
@@ -83,7 +83,7 @@ describe('runWorkflowMap', () => {
     setupBase();
     await runWorkflowMap(['invoice-sync', 'Invoice Sync'], {}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toEqual({ dev: { name: 'Invoice Sync' }, prod: { name: 'Invoice Sync' } });
   });
 
@@ -95,7 +95,7 @@ describe('runWorkflowMap', () => {
       '/project',
     );
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['order-processor']).toEqual({
       dev: { name: 'Order Processor [DEV]' },
       prod: { name: 'Order Processor' },
@@ -106,7 +106,7 @@ describe('runWorkflowMap', () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     await runWorkflowMap(['invoice-sync', 'dev=Invoice Sync Dev'], {}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']['dev']).toEqual({ name: 'Invoice Sync Dev' });
     expect(written.workflows['invoice-sync']['prod']).toEqual({ name: 'Invoice Sync' });
     expect(Object.keys(written.workflows)).toHaveLength(1);
@@ -130,7 +130,7 @@ describe('runWorkflowMap', () => {
     setupBase();
     await runWorkflowMap(['invoice-sync', 'Invoice Sync'], { dryRun: true }, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows).toEqual({});
   });
 
@@ -149,7 +149,7 @@ describe('runWorkflowMap', () => {
     setupBase();
     await runWorkflowMap(['invoice-sync', 'Invoice Sync'], {}, '/project');
 
-    const auditContent = vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string;
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
     expect(entry.action).toBe('map');
     expect(entry.match_method).toBe('manual');
@@ -162,19 +162,19 @@ describe('runWorkflowMap', () => {
     // "first workflow" from staging should then be skipped (already mapped), not re-prompted
     const DEP_DEV = '20260524T120000Z-aaaaaaaa';
     const DEP_STG = '20260524T120001Z-bbbbbbbb';
-    const FD = '/project/.flightdeck';
+    const FD = '/project/.chiral';
     const BASE_META = { command: 'adopt' as const, workflow_count: 1, filters: { tag: null, pattern: null, onlyActive: false, id: null } };
 
     vol.fromJSON({
-      '/project/.flightdeck/config.json': JSON.stringify({
+      '/project/.chiral/config.json': JSON.stringify({
         version: 1, project: 'test-project',
         environments: {
           dev: { url: 'https://dev.n8n.example.com', apiKey: 'key-dev' },
           staging: { url: 'https://staging.n8n.example.com', apiKey: 'key-staging' },
         },
       }),
-      '/project/.flightdeck/workflows.json': EMPTY_WORKFLOWS,
-      '/project/.flightdeck/audit.jsonl': '',
+      '/project/.chiral/workflows.json': EMPTY_WORKFLOWS,
+      '/project/.chiral/audit.jsonl': '',
     });
 
     writeSnapshot(FD, DEP_DEV, { id: '101', name: 'webhook caller - dev' });
@@ -204,7 +204,7 @@ describe('runWorkflowMap', () => {
     // input should have been called exactly 3 times — not 4+ (which would mean "first workflow" was re-prompted)
     expect(mockInput).toHaveBeenCalledTimes(3);
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['webhook-caller']).toEqual({
       dev: { name: 'webhook caller - dev', id: '101' },
       staging: { name: 'first workflow', id: '201' },
@@ -216,7 +216,7 @@ describe('runWorkflowMap', () => {
 
 describe('runWorkflowList', () => {
   it('throws UserError when workflows.json not found', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': VALID_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
     await expect(runWorkflowList({}, '/project')).rejects.toThrow(UserError);
   });
 
@@ -280,10 +280,10 @@ describe('runWorkflowList', () => {
     setupBase();
     // Create a snapshot
     vol.fromJSON({
-      '/project/.flightdeck/config.json': VALID_CONFIG,
-      '/project/.flightdeck/workflows.json': EMPTY_WORKFLOWS,
-      '/project/.flightdeck/audit.jsonl': '',
-      '/project/.flightdeck/snapshots/20240101T120000Z-a3f2b9c1/meta.json': JSON.stringify({
+      '/project/.chiral/config.json': VALID_CONFIG,
+      '/project/.chiral/workflows.json': EMPTY_WORKFLOWS,
+      '/project/.chiral/audit.jsonl': '',
+      '/project/.chiral/snapshots/20240101T120000Z-a3f2b9c1/meta.json': JSON.stringify({
         deployment_id: '20240101T120000Z-a3f2b9c1',
         env: 'dev',
         command: 'adopt',
@@ -291,7 +291,7 @@ describe('runWorkflowList', () => {
         workflow_count: 1,
         filters: { tag: null, pattern: null, onlyActive: false, id: null },
       }),
-      '/project/.flightdeck/snapshots/20240101T120000Z-a3f2b9c1/wf-1.json': JSON.stringify({
+      '/project/.chiral/snapshots/20240101T120000Z-a3f2b9c1/wf-1.json': JSON.stringify({
         id: 'wf-1',
         name: 'My Unmapped Workflow',
         active: true,
@@ -310,7 +310,7 @@ describe('runWorkflowList', () => {
 
 describe('runWorkflowUnmap', () => {
   it('throws UserError when workflows.json not found', async () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': VALID_CONFIG });
+    vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
     await expect(runWorkflowUnmap('invoice-sync', {}, '/project')).rejects.toThrow(UserError);
   });
 
@@ -323,7 +323,7 @@ describe('runWorkflowUnmap', () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     await runWorkflowUnmap('invoice-sync', {}, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toBeUndefined();
   });
 
@@ -337,7 +337,7 @@ describe('runWorkflowUnmap', () => {
     setupBase(multiEnvWorkflows);
     await runWorkflowUnmap('invoice-sync', { env: 'staging' }, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toEqual({
       dev: { name: 'Invoice Sync' },
       prod: { name: 'Invoice Sync' },
@@ -361,7 +361,7 @@ describe('runWorkflowUnmap', () => {
     setupBase(singleEnvWorkflow);
     await runWorkflowUnmap('invoice-sync', { env: 'dev' }, '/project');
 
-    const written = JSON.parse(vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string);
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toBeUndefined();
   });
 
@@ -369,7 +369,7 @@ describe('runWorkflowUnmap', () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     await runWorkflowUnmap('invoice-sync', {}, '/project');
 
-    const auditContent = vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string;
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
     expect(entry.action).toBe('unmap');
     expect(entry.result).toBe('success');

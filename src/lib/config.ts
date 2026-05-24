@@ -5,7 +5,7 @@ import { UserError } from './errors.js';
 
 export interface ConfigWithDir {
   config: Config;
-  flightdeckDir: string;
+  chiralDir: string;
 }
 
 const EnvironmentSchema = z.object({
@@ -38,7 +38,7 @@ export type GitSync = z.infer<typeof GitSyncSchema>;
 function findConfigPath(startDir: string): string | null {
   let current = startDir;
   while (true) {
-    const candidate = join(current, '.flightdeck', 'config.json');
+    const candidate = join(current, '.chiral', 'config.json');
     if (existsSync(candidate)) return candidate;
     const parent = dirname(current);
     if (parent === current) return null;
@@ -49,7 +49,7 @@ function findConfigPath(startDir: string): string | null {
 export function loadConfigAndDir(startDir: string = process.cwd()): ConfigWithDir {
   const configPath = findConfigPath(startDir);
   if (!configPath) {
-    throw new UserError("No .flightdeck/config.json found. Run 'flightdeck init' first.");
+    throw new UserError("No .chiral/config.json found. Run 'chiral init' first.");
   }
 
   let raw: unknown;
@@ -68,17 +68,17 @@ export function loadConfigAndDir(startDir: string = process.cwd()): ConfigWithDi
     );
   }
 
-  return { config: result.data, flightdeckDir: dirname(configPath) };
+  return { config: result.data, chiralDir: dirname(configPath) };
 }
 
 export function loadConfig(startDir: string = process.cwd()): Config {
   return loadConfigAndDir(startDir).config;
 }
 
-export function findFlightdeckDir(startDir: string): string | null {
+export function findChiralDir(startDir: string): string | null {
   let current = startDir;
   while (true) {
-    const candidate = join(current, '.flightdeck');
+    const candidate = join(current, '.chiral');
     if (existsSync(candidate)) return candidate;
     const parent = dirname(current);
     if (parent === current) return null;
@@ -86,20 +86,20 @@ export function findFlightdeckDir(startDir: string): string | null {
   }
 }
 
-export function writeConfig(flightdeckDir: string, config: Config): void {
-  const configPath = join(flightdeckDir, 'config.json');
+export function writeConfig(chiralDir: string, config: Config): void {
+  const configPath = join(chiralDir, 'config.json');
   try {
     writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', {
       encoding: 'utf-8',
       mode: 0o600,
     });
   } catch {
-    throw new UserError('Could not write .flightdeck/config.json');
+    throw new UserError('Could not write .chiral/config.json');
   }
 }
 
-export function readProjectNameFromExample(flightdeckDir: string): string {
-  const examplePath = join(flightdeckDir, 'config.example.json');
+export function readProjectNameFromExample(chiralDir: string): string {
+  const examplePath = join(chiralDir, 'config.example.json');
   try {
     const raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as { project?: unknown };
     return typeof raw.project === 'string' && raw.project ? raw.project : 'my-project';

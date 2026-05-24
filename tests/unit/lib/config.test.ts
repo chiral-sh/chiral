@@ -20,15 +20,15 @@ const VALID_CONFIG = {
 beforeEach(() => vol.reset());
 
 describe('loadConfig', () => {
-  it('loads valid config from .flightdeck/config.json', () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(VALID_CONFIG) });
+  it('loads valid config from .chiral/config.json', () => {
+    vol.fromJSON({ '/project/.chiral/config.json': JSON.stringify(VALID_CONFIG) });
     const config = loadConfig('/project');
     expect(config.project).toBe('test-project');
     expect(config.version).toBe(1);
   });
 
   it('resolves config by walking up from a subdirectory', () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(VALID_CONFIG) });
+    vol.fromJSON({ '/project/.chiral/config.json': JSON.stringify(VALID_CONFIG) });
     const config = loadConfig('/project/src/commands');
     expect(config.project).toBe('test-project');
   });
@@ -37,26 +37,26 @@ describe('loadConfig', () => {
     vol.fromJSON({});
     expect(() => loadConfig('/no-config')).toThrow(UserError);
     expect(() => loadConfig('/no-config')).toThrow(
-      "No .flightdeck/config.json found. Run 'flightdeck init' first.",
+      "No .chiral/config.json found. Run 'chiral init' first.",
     );
   });
 
   it('throws UserError when config.json is invalid JSON', () => {
-    vol.fromJSON({ '/project/.flightdeck/config.json': 'not json {{{' });
+    vol.fromJSON({ '/project/.chiral/config.json': 'not json {{{' });
     expect(() => loadConfig('/project')).toThrow(UserError);
     expect(() => loadConfig('/project')).toThrow('Could not read');
   });
 
   it('throws UserError when version field is wrong', () => {
     const bad = { ...VALID_CONFIG, version: 2 };
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(bad) });
+    vol.fromJSON({ '/project/.chiral/config.json': JSON.stringify(bad) });
     expect(() => loadConfig('/project')).toThrow(UserError);
     expect(() => loadConfig('/project')).toThrow('Invalid config');
   });
 
   it('throws UserError when environments is empty', () => {
     const bad = { ...VALID_CONFIG, environments: {} };
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(bad) });
+    vol.fromJSON({ '/project/.chiral/config.json': JSON.stringify(bad) });
     expect(() => loadConfig('/project')).toThrow(UserError);
   });
 
@@ -65,14 +65,14 @@ describe('loadConfig', () => {
       ...VALID_CONFIG,
       environments: { dev: { url: 'not-a-url', apiKey: 'key' } },
     };
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(bad) });
+    vol.fromJSON({ '/project/.chiral/config.json': JSON.stringify(bad) });
     expect(() => loadConfig('/project')).toThrow(UserError);
     expect(() => loadConfig('/project')).toThrow('Invalid config');
   });
 
   it('accepts optional licenseKey', () => {
     const cfg = { ...VALID_CONFIG, licenseKey: 'eyJhbGciOiJSUzI1NiJ9' };
-    vol.fromJSON({ '/project/.flightdeck/config.json': JSON.stringify(cfg) });
+    vol.fromJSON({ '/project/.chiral/config.json': JSON.stringify(cfg) });
     const config = loadConfig('/project');
     expect(config.licenseKey).toBe('eyJhbGciOiJSUzI1NiJ9');
   });

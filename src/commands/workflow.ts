@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import { input, confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
-import { loadConfigAndDir, findFlightdeckDir } from '../lib/config.js';
+import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
@@ -29,7 +29,7 @@ function getGitActor(): string {
     return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     throw new UserError(
-      'git config user.email is not set — configure it before running flightdeck',
+      'git config user.email is not set — configure it before running chiral',
     );
   }
 }
@@ -63,10 +63,10 @@ function checkNameConflict(
 }
 
 // Look up the n8n ID for a workflow name from the latest snapshot for that env.
-function lookupSnapshotId(flightdeckDir: string, env: string, name: string): string | undefined {
-  const dId = findLatestDeploymentForEnv(flightdeckDir, env);
+function lookupSnapshotId(chiralDir: string, env: string, name: string): string | undefined {
+  const dId = findLatestDeploymentForEnv(chiralDir, env);
   if (!dId) return undefined;
-  return readAllWorkflowsInDeployment(flightdeckDir, dId).find((w) => w.name === name)?.id;
+  return readAllWorkflowsInDeployment(chiralDir, dId).find((w) => w.name === name)?.id;
 }
 
 interface ParsedArgs {
@@ -141,16 +141,16 @@ export async function runWorkflowMap(
   cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const flightdeckDir = findFlightdeckDir(cwd);
-  if (!flightdeckDir) {
-    throw new UserError("No .flightdeck/ found. Run 'flightdeck init' first.");
+  const chiralDir = findChiralDir(cwd);
+  if (!chiralDir) {
+    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
   }
 
-  const map = loadWorkflowMapRequired(flightdeckDir);
+  const map = loadWorkflowMapRequired(chiralDir);
 
   // ── --prune mode ──────────────────────────────────────────────────────────
   if (options.prune) {
-    await runWorkflowPrune(flightdeckDir, map, actor, options.yes ?? false, options.dryRun ?? false);
+    await runWorkflowPrune(chiralDir, map, actor, options.yes ?? false, options.dryRun ?? false);
     return;
   }
 
@@ -252,9 +252,9 @@ export async function runWorkflowMap(
     for (const [env, newEntry] of Object.entries(envNames)) {
       upsertEnvEntry(map, logicalName, env, newEntry);
     }
-    writeWorkflowMap(flightdeckDir, map);
+    writeWorkflowMap(chiralDir, map);
 
-    writeAuditEntry(flightdeckDir, {
+    writeAuditEntry(chiralDir, {
       event_id: crypto.randomUUID(),
       event_schema_version: 1,
       timestamp: new Date().toISOString(),
@@ -266,7 +266,7 @@ export async function runWorkflowMap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      flightdeck_version: '0.1.0',
+      chiral_version: '0.1.0',
       match_method: 'manual',
       match_score: null,
     });
@@ -282,9 +282,9 @@ export async function runWorkflowMap(
 
     // Sync
     const syncResult = await syncToRemote(
-      flightdeckDir,
+      chiralDir,
       configResult?.config ?? { version: 1, project: 'unknown', environments: {} } as never,
-      `chore(flightdeck): workflow map ${logicalName}`,
+      `chore(chiral): workflow map ${logicalName}`,
     );
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
@@ -301,7 +301,7 @@ export async function runWorkflowMap(
   // ── Interactive modes ──────────────────────────────────────────────────────
   if (!configResult) {
     throw new UserError(
-      "Interactive mode requires config.json. Run 'flightdeck configure' first.",
+      "Interactive mode requires config.json. Run 'chiral configure' first.",
     );
   }
 
@@ -318,9 +318,9 @@ export async function runWorkflowMap(
   const allSnapshotNames = new Map<string, string>();
 
   for (const env of envs) {
-    const deploymentId = findLatestDeploymentForEnv(flightdeckDir, env);
+    const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
     if (!deploymentId) continue;
-    const workflows = readAllWorkflowsInDeployment(flightdeckDir, deploymentId);
+    const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
     for (const wf of workflows) {
       if (!isAlreadyMapped(map, env, wf.name)) {
         unmapped.push({ name: wf.name, id: wf.id, sourceEnv: env });
@@ -338,11 +338,11 @@ export async function runWorkflowMap(
     const firstEnv = envs[0] ?? 'dev';
     const secondEnv = envs[1] ?? 'prod';
     console.log(
-      `  No snapshots found — flightdeck doesn't know what workflows exist yet.\n\n` +
+      `  No snapshots found — chiral doesn't know what workflows exist yet.\n\n` +
       `  ${chalk.dim('Run this first to discover your workflows:')}\n` +
-      `    flightdeck adopt --env ${firstEnv}\n\n` +
+      `    chiral adopt --env ${firstEnv}\n\n` +
       `  ${chalk.dim('Or map a workflow manually without snapshots:')}\n` +
-      `    flightdeck workflow map <logical-name> ${firstEnv}="<name in ${firstEnv}>" ${secondEnv}="<name in ${secondEnv}>"\n`,
+      `    chiral workflow map <logical-name> ${firstEnv}="<name in ${firstEnv}>" ${secondEnv}="<name in ${secondEnv}>"\n`,
     );
     return;
   } else if (unmapped.length === 0) {
@@ -387,7 +387,7 @@ export async function runWorkflowMap(
         if (env === sourceEnv && name === wfName) {
           envNames[env] = { name, id: wfId };
         } else {
-          const id = lookupSnapshotId(flightdeckDir, env, name);
+          const id = lookupSnapshotId(chiralDir, env, name);
           envNames[env] = { name, ...(id ? { id } : {}) };
         }
       }
@@ -397,8 +397,8 @@ export async function runWorkflowMap(
         for (const [env, entry] of Object.entries(envNames)) {
           upsertEnvEntry(map, targetLogical, env, entry);
         }
-        writeWorkflowMap(flightdeckDir, map);
-        writeAuditEntry(flightdeckDir, {
+        writeWorkflowMap(chiralDir, map);
+        writeAuditEntry(chiralDir, {
           event_id: crypto.randomUUID(),
           event_schema_version: 1,
           timestamp: new Date().toISOString(),
@@ -410,7 +410,7 @@ export async function runWorkflowMap(
           workflow_ids: [],
           result: 'success',
           error: null,
-          flightdeck_version: '0.1.0',
+          chiral_version: '0.1.0',
           match_method: 'manual',
           match_score: null,
         });
@@ -425,9 +425,9 @@ export async function runWorkflowMap(
 
   if (mappedCount > 0 && !options.dryRun) {
     const syncResult = await syncToRemote(
-      flightdeckDir,
+      chiralDir,
       config,
-      `chore(flightdeck): workflow map`,
+      `chore(chiral): workflow map`,
     );
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
@@ -444,7 +444,7 @@ export async function runWorkflowMap(
 // ── --prune helper ────────────────────────────────────────────────────────────
 
 async function runWorkflowPrune(
-  flightdeckDir: string,
+  chiralDir: string,
   map: WorkflowMap,
   actor: string,
   autoYes: boolean,
@@ -460,9 +460,9 @@ async function runWorkflowPrune(
 
   for (const [logical, envMap] of Object.entries(map.workflows)) {
     for (const [env, entry] of Object.entries(envMap)) {
-      const deploymentId = findLatestDeploymentForEnv(flightdeckDir, env);
+      const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
       if (!deploymentId) continue;
-      const workflows = readAllWorkflowsInDeployment(flightdeckDir, deploymentId);
+      const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
       if (!workflows.some((w) => w.name === entry.name)) {
         stale.push({ logical, env, name: entry.name });
       }
@@ -499,8 +499,8 @@ async function runWorkflowPrune(
       if (Object.keys(map.workflows[logical] ?? {}).length === 0) {
         delete map.workflows[logical];
       }
-      writeWorkflowMap(flightdeckDir, map);
-      writeAuditEntry(flightdeckDir, {
+      writeWorkflowMap(chiralDir, map);
+      writeAuditEntry(chiralDir, {
         event_id: crypto.randomUUID(),
         event_schema_version: 1,
         timestamp: new Date().toISOString(),
@@ -512,7 +512,7 @@ async function runWorkflowPrune(
         workflow_ids: [],
         result: 'success',
         error: null,
-        flightdeck_version: '0.1.0',
+        chiral_version: '0.1.0',
       });
       console.log(`  ${chalk.green('✓')} Removed "${logical}" → ${env} mapping.`);
       removed++;
@@ -532,12 +532,12 @@ export async function runWorkflowList(
   options: { env?: string; unmapped?: boolean; json?: boolean },
   cwd: string = process.cwd(),
 ): Promise<void> {
-  const flightdeckDir = findFlightdeckDir(cwd);
-  if (!flightdeckDir) {
-    throw new UserError("No .flightdeck/ found. Run 'flightdeck init' first.");
+  const chiralDir = findChiralDir(cwd);
+  if (!chiralDir) {
+    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
   }
 
-  const map = loadWorkflowMapRequired(flightdeckDir);
+  const map = loadWorkflowMapRequired(chiralDir);
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
   try {
@@ -570,10 +570,10 @@ export async function runWorkflowList(
   }
 
   if (options.unmapped) {
-    const hasAnySnapshot = listDeployments(flightdeckDir).length > 0;
+    const hasAnySnapshot = listDeployments(chiralDir).length > 0;
     if (!hasAnySnapshot) {
       throw new UserError(
-        "No snapshots found. Run 'flightdeck adopt --env <env>' first.",
+        "No snapshots found. Run 'chiral adopt --env <env>' first.",
       );
     }
 
@@ -582,9 +582,9 @@ export async function runWorkflowList(
 
     console.log('\n  Unmapped workflows (not in workflows.json):\n');
     for (const env of envs) {
-      const deploymentId = findLatestDeploymentForEnv(flightdeckDir, env);
+      const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
       if (!deploymentId) continue;
-      const workflows = readAllWorkflowsInDeployment(flightdeckDir, deploymentId);
+      const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
       const unmapped = workflows.filter((w) => !isAlreadyMapped(map, env, w.name));
       if (unmapped.length > 0) {
         foundAny = true;
@@ -605,8 +605,8 @@ export async function runWorkflowList(
     const targetEnv = envs[1] ?? envs[0] ?? 'prod';
     console.log(
       chalk.dim(
-        `  Run 'flightdeck workflow map --source ${sourceEnv} --target ${targetEnv}' to auto-detect matches.\n` +
-        `  Or map manually: flightdeck workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
+        `  Run 'chiral workflow map --source ${sourceEnv} --target ${targetEnv}' to auto-detect matches.\n` +
+        `  Or map manually: chiral workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
       ),
     );
     return;
@@ -620,7 +620,7 @@ export async function runWorkflowList(
   }
 
   if (entries.length === 0) {
-    console.log(chalk.dim('\n  No workflow mappings found. Run flightdeck workflow map to add one.\n'));
+    console.log(chalk.dim('\n  No workflow mappings found. Run chiral workflow map to add one.\n'));
     return;
   }
 
@@ -657,12 +657,12 @@ export async function runWorkflowUnmap(
   cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const flightdeckDir = findFlightdeckDir(cwd);
-  if (!flightdeckDir) {
-    throw new UserError("No .flightdeck/ found. Run 'flightdeck init' first.");
+  const chiralDir = findChiralDir(cwd);
+  if (!chiralDir) {
+    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
   }
 
-  const map = loadWorkflowMapRequired(flightdeckDir);
+  const map = loadWorkflowMapRequired(chiralDir);
 
   if (!(logicalName in map.workflows)) {
     throw new UserError(
@@ -690,9 +690,9 @@ export async function runWorkflowUnmap(
     delete map.workflows[logicalName];
   }
 
-  writeWorkflowMap(flightdeckDir, map);
+  writeWorkflowMap(chiralDir, map);
 
-  writeAuditEntry(flightdeckDir, {
+  writeAuditEntry(chiralDir, {
     event_id: crypto.randomUUID(),
     event_schema_version: 1,
     timestamp: new Date().toISOString(),
@@ -704,7 +704,7 @@ export async function runWorkflowUnmap(
     workflow_ids: [],
     result: 'success',
     error: null,
-    flightdeck_version: '0.1.0',
+    chiral_version: '0.1.0',
   });
 
   if (options.env) {
@@ -718,9 +718,9 @@ export async function runWorkflowUnmap(
   }
 
   const syncResult = await syncToRemote(
-    flightdeckDir,
+    chiralDir,
     configResult?.config ?? { version: 1, project: 'unknown', environments: {} } as never,
-    `chore(flightdeck): workflow unmap ${logicalName}`,
+    `chore(chiral): workflow unmap ${logicalName}`,
   );
   if (!syncResult.skipped && !syncResult.nothingToCommit) {
     if (syncResult.success) {
@@ -748,19 +748,19 @@ const workflowMapCmd = new Command('map')
     `
 Examples:
   Interactive — discover and map unmapped workflows:
-    flightdeck workflow map
+    chiral workflow map
 
   Provide logical name, prompt for env names:
-    flightdeck workflow map order-processor
+    chiral workflow map order-processor
 
   Uniform name (same in all environments):
-    flightdeck workflow map invoice-sync "Invoice Sync"
+    chiral workflow map invoice-sync "Invoice Sync"
 
   Per-environment names:
-    flightdeck workflow map order-processor dev="Order Processor [DEV]" prod="Order Processor"
+    chiral workflow map order-processor dev="Order Processor [DEV]" prod="Order Processor"
 
   Remove stale entries:
-    flightdeck workflow map --prune
+    chiral workflow map --prune
 `,
   )
   .action(async (args: string[], options) => {
@@ -777,13 +777,13 @@ const workflowListCmd = new Command('list')
     `
 Examples:
   List all mappings:
-    flightdeck workflow list
+    chiral workflow list
 
   Show only mappings for prod:
-    flightdeck workflow list --env prod
+    chiral workflow list --env prod
 
   Find unmapped workflows across all environments:
-    flightdeck workflow list --unmapped
+    chiral workflow list --unmapped
 `,
   )
   .action(async (options) => {
@@ -799,10 +799,10 @@ const workflowUnmapCmd = new Command('unmap')
     `
 Examples:
   Remove the entire logical workflow entry:
-    flightdeck workflow unmap order-processor
+    chiral workflow unmap order-processor
 
   Remove only the staging mapping:
-    flightdeck workflow unmap order-processor --env staging
+    chiral workflow unmap order-processor --env staging
 `,
   )
   .action(async (logicalName: string, options) => {

@@ -10,11 +10,11 @@ export const CredentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof CredentialsSchema>;
 
-export function loadCredentials(flightdeckDir: string): Credentials {
-  const credPath = join(flightdeckDir, 'credentials.json');
+export function loadCredentials(chiralDir: string): Credentials {
+  const credPath = join(chiralDir, 'credentials.json');
   if (!existsSync(credPath)) {
     throw new UserError(
-      "No .flightdeck/credentials.json found. Run 'flightdeck init' first.",
+      "No .chiral/credentials.json found. Run 'chiral init' first.",
     );
   }
 
@@ -37,8 +37,8 @@ export function loadCredentials(flightdeckDir: string): Credentials {
   return result.data;
 }
 
-export function writeCredentials(flightdeckDir: string, data: Credentials): void {
-  const credPath = join(flightdeckDir, 'credentials.json');
+export function writeCredentials(chiralDir: string, data: Credentials): void {
+  const credPath = join(chiralDir, 'credentials.json');
   try {
     writeFileSync(credPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
   } catch {

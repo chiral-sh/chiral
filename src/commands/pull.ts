@@ -30,7 +30,7 @@ function getGitActor(): string {
     return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     throw new UserError(
-      'git config user.email is not set — configure it before running flightdeck',
+      'git config user.email is not set — configure it before running chiral',
     );
   }
 }
@@ -98,13 +98,13 @@ function buildNextHint(
       filters.pattern ? `--pattern "${filters.pattern}"` : '',
       '--dry-run',
     ].filter(Boolean);
-    return `flightdeck push ${parts.join(' ')}`;
+    return `chiral push ${parts.join(' ')}`;
   }
-  return `flightdeck diff --source ${env} --target ${target}`;
+  return `chiral diff --source ${env} --target ${target}`;
 }
 
-function checkStaleness(flightdeckDir: string, env: string): void {
-  const entries = readAuditLog(flightdeckDir);
+function checkStaleness(chiralDir: string, env: string): void {
+  const entries = readAuditLog(chiralDir);
   const lastPull = [...entries]
     .reverse()
     .find((e) => e.action === 'pull' && e.target_env === env && e.result === 'success');
@@ -151,7 +151,7 @@ export async function runPull(
   }
 
   const actor = getGitActor();
-  const { config, flightdeckDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
   client.warnIfExpiringSoon();
@@ -166,13 +166,13 @@ export async function runPull(
     source_env: null,
     target_env: options.env,
     workflow_ids: [] as string[],
-    flightdeck_version: '0.1.0',
+    chiral_version: '0.1.0',
   };
 
   const isSilent = options.json || options.nameOnly;
   if (!isSilent) {
     console.log();
-    checkStaleness(flightdeckDir, options.env);
+    checkStaleness(chiralDir, options.env);
   }
 
   try {
@@ -186,9 +186,9 @@ export async function runPull(
       const workflow = await client.getWorkflow(options.id).catch((err) => failSpinner(spinner, err));
       spinner.succeed(chalk.green(`  Fetched "${workflow.name}"`));
 
-      const previousDeploymentId = findLatestDeploymentForEnv(flightdeckDir, options.env);
+      const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
       const previousWorkflows = previousDeploymentId
-        ? readAllWorkflowsInDeployment(flightdeckDir, previousDeploymentId)
+        ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId)
         : null;
       const prevEntry = previousWorkflows?.find((w) => w.id === options.id);
       const isNew = !prevEntry;
@@ -197,8 +197,8 @@ export async function runPull(
 
       const deploymentId = generateDeploymentId();
       const snapshotTimestamp = new Date().toISOString();
-      writeSnapshot(flightdeckDir, deploymentId, workflow);
-      writeSnapshotMeta(flightdeckDir, deploymentId, {
+      writeSnapshot(chiralDir, deploymentId, workflow);
+      writeSnapshotMeta(chiralDir, deploymentId, {
         deployment_id: deploymentId,
         env: options.env,
         command: 'pull',
@@ -206,7 +206,7 @@ export async function runPull(
         workflow_count: 1,
         filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
       });
-      upsertFingerprintEntry(flightdeckDir, options.env, workflow.id, {
+      upsertFingerprintEntry(chiralDir, options.env, workflow.id, {
         name: workflow.name,
         versionId: workflow.versionId,
         contentHash: computeContentHash(workflow),
@@ -216,11 +216,11 @@ export async function runPull(
 
       // Auto-heal: update map entry name if the workflow was renamed in n8n
       {
-        const wfMap = loadWorkflowMap(flightdeckDir);
+        const wfMap = loadWorkflowMap(chiralDir);
         const found = findEntryByEnvId(wfMap, options.env, workflow.id);
         if (found && found.entry.name !== workflow.name) {
           upsertEnvEntry(wfMap, found.logicalName, options.env, { name: workflow.name, id: workflow.id });
-          writeWorkflowMap(flightdeckDir, wfMap);
+          writeWorkflowMap(chiralDir, wfMap);
         }
       }
 
@@ -249,16 +249,16 @@ export async function runPull(
         } else {
           console.log(`  ${chalk.green('✓')} ${workflow.name} up to date`);
         }
-        console.log(chalk.dim(`\n  Snapshot saved → .flightdeck/snapshots/${deploymentId}/`));
+        console.log(chalk.dim(`\n  Snapshot saved → .chiral/snapshots/${deploymentId}/`));
         console.log();
       }
 
       baseEntry.workflow_ids = [options.id];
-      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+      writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
       if (!isSilent) {
         const syncResult = await syncToRemote(
-          flightdeckDir, config, `chore(flightdeck): pull ${options.env}`,
+          chiralDir, config, `chore(chiral): pull ${options.env}`,
         );
         if (!syncResult.skipped && !syncResult.nothingToCommit) {
           if (syncResult.success) {
@@ -320,9 +320,9 @@ export async function runPull(
     );
 
     // ── delta ─────────────────────────────────────────────────────────────────
-    const previousDeploymentId = findLatestDeploymentForEnv(flightdeckDir, options.env);
+    const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
     const previousWorkflows = previousDeploymentId
-      ? readAllWorkflowsInDeployment(flightdeckDir, previousDeploymentId)
+      ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId)
       : null;
 
     const delta = previousWorkflows ? computeDelta(workflows, previousWorkflows) : null;
@@ -351,8 +351,8 @@ export async function runPull(
 
     if (!isFirstPull && totalChanges === 0) {
       // nothing changed — write snapshot silently
-      for (const wf of workflows) writeSnapshot(flightdeckDir, deploymentId, wf);
-      writeSnapshotMeta(flightdeckDir, deploymentId, meta);
+      for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
+      writeSnapshotMeta(chiralDir, deploymentId, meta);
 
       if (options.nameOnly) {
         // nothing changed — no output
@@ -391,11 +391,11 @@ export async function runPull(
     } else {
       // first pull or changes found — show snapshot spinner
       const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
-      for (const wf of workflows) writeSnapshot(flightdeckDir, deploymentId, wf);
-      writeSnapshotMeta(flightdeckDir, deploymentId, meta);
+      for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
+      writeSnapshotMeta(chiralDir, deploymentId, meta);
       spinner3.succeed(
         chalk.green('  Snapshot saved') +
-          chalk.dim(` → .flightdeck/snapshots/${deploymentId}/`),
+        chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
       );
 
       if (options.nameOnly) {
@@ -462,7 +462,7 @@ export async function runPull(
     // Batch-update fingerprints for every pulled workflow — runs for both the
     // "no changes" and "first pull / changes found" branches.
     if (workflows.length > 0) {
-      const fp = loadFingerprints(flightdeckDir);
+      const fp = loadFingerprints(chiralDir);
       if (!fp.envs[options.env]) fp.envs[options.env] = {};
       for (const wf of workflows) {
         fp.envs[options.env]![wf.id] = {
@@ -473,10 +473,10 @@ export async function runPull(
           updatedAt: snapshotTimestamp,
         };
       }
-      writeFingerprints(flightdeckDir, fp);
+      writeFingerprints(chiralDir, fp);
 
       // Auto-heal: update map entry names for any workflows renamed in n8n
-      const wfMap = loadWorkflowMap(flightdeckDir);
+      const wfMap = loadWorkflowMap(chiralDir);
       let mapDirty = false;
       for (const wf of workflows) {
         const found = findEntryByEnvId(wfMap, options.env, wf.id);
@@ -485,15 +485,15 @@ export async function runPull(
           mapDirty = true;
         }
       }
-      if (mapDirty) writeWorkflowMap(flightdeckDir, wfMap);
+      if (mapDirty) writeWorkflowMap(chiralDir, wfMap);
     }
 
     baseEntry.workflow_ids = workflows.map((w) => w.id);
-    writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+    writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
     if (!isSilent) {
       const syncResult = await syncToRemote(
-        flightdeckDir, config, `chore(flightdeck): pull ${options.env}`,
+        chiralDir, config, `chore(chiral): pull ${options.env}`,
       );
       if (!syncResult.skipped && !syncResult.nothingToCommit) {
         if (syncResult.success) {
@@ -511,7 +511,7 @@ export async function runPull(
     if (err instanceof ControlledExit) throw err;
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
-      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'failure', error: errorMsg });
+      writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
       // best-effort — don't mask the original error
     }
@@ -535,31 +535,31 @@ export const pullCommand = new Command('pull')
     `
 Examples:
   Pull all workflows from dev:
-    flightdeck pull --env dev
+    chiral pull --env dev
 
   Pull only workflows tagged "production":
-    flightdeck pull --env dev --tag production
+    chiral pull --env dev --tag production
 
   Pull workflows matching a name pattern:
-    flightdeck pull --env dev --pattern "Customer *"
+    chiral pull --env dev --pattern "Customer *"
 
   Pull a single workflow by ID:
-    flightdeck pull --env dev --id abc123
+    chiral pull --env dev --id abc123
 
   Pull only active workflows (CI-friendly):
-    flightdeck pull --env dev --only-active
+    chiral pull --env dev --only-active
 
   Exit 1 if changes detected (for CI scripts):
-    flightdeck pull --env dev --exit-code
+    chiral pull --env dev --exit-code
 
   Print only changed workflow names for piping:
-    flightdeck pull --env dev --name-only
+    chiral pull --env dev --name-only
 
   Show every pulled workflow with its active/inactive status:
-    flightdeck pull --env dev --verbose
+    chiral pull --env dev --verbose
 
   Machine-readable output for scripting:
-    flightdeck pull --env dev --json
+    chiral pull --env dev --json
 `,
   )
   .action(async (options) => {

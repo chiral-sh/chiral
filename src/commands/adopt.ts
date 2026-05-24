@@ -15,7 +15,7 @@ function getGitActor(): string {
     return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     throw new UserError(
-      'git config user.email is not set — configure it before running flightdeck',
+      'git config user.email is not set — configure it before running chiral',
     );
   }
 }
@@ -31,7 +31,7 @@ export async function runAdopt(
   cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const { config, flightdeckDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
   client.warnIfExpiringSoon();
@@ -46,7 +46,7 @@ export async function runAdopt(
     source_env: null,
     target_env: options.env,
     workflow_ids: [],
-    flightdeck_version: '0.1.0',
+    chiral_version: '0.1.0',
   };
 
   console.log();
@@ -61,9 +61,9 @@ export async function runAdopt(
     ]).catch((err) => failSpinner(spinner1, err));
     spinner1.succeed(
       chalk.green('  Connected') +
-        chalk.dim(
-          ` — ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
-        ),
+      chalk.dim(
+        ` — ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
+      ),
     );
 
     // ── fetch definitions ─────────────────────────────────────────────────────
@@ -80,9 +80,9 @@ export async function runAdopt(
     const deploymentId = generateDeploymentId();
     const snapshotTimestamp = new Date().toISOString();
     for (const workflow of workflows) {
-      writeSnapshot(flightdeckDir, deploymentId, workflow);
+      writeSnapshot(chiralDir, deploymentId, workflow);
     }
-    writeSnapshotMeta(flightdeckDir, deploymentId, {
+    writeSnapshotMeta(chiralDir, deploymentId, {
       deployment_id: deploymentId,
       env: options.env,
       command: 'adopt',
@@ -91,7 +91,7 @@ export async function runAdopt(
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
 
-    const fingerprints = loadFingerprints(flightdeckDir);
+    const fingerprints = loadFingerprints(chiralDir);
     if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
     for (const workflow of workflows) {
       fingerprints.envs[options.env]![workflow.id] = {
@@ -102,11 +102,11 @@ export async function runAdopt(
         updatedAt: snapshotTimestamp,
       };
     }
-    writeFingerprints(flightdeckDir, fingerprints);
+    writeFingerprints(chiralDir, fingerprints);
 
     spinner3.succeed(
       chalk.green('  Snapshot saved') +
-        chalk.dim(` → .flightdeck/snapshots/${deploymentId}/`),
+      chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
     );
 
     // ── workflow list ─────────────────────────────────────────────────────────
@@ -116,12 +116,12 @@ export async function runAdopt(
       console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
     }
 
-    console.log(`\n  ${chalk.dim('Next:')} flightdeck pull --env ${options.env}\n`);
+    console.log(`\n  ${chalk.dim('Next:')} chiral pull --env ${options.env}\n`);
 
-    writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+    writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
     const syncResult = await syncToRemote(
-      flightdeckDir, config, `chore(flightdeck): adopt ${options.env}`,
+      chiralDir, config, `chore(chiral): adopt ${options.env}`,
     );
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
@@ -135,7 +135,7 @@ export async function runAdopt(
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
-      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'failure', error: errorMsg });
+      writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
       // best-effort — don't mask the original error
     }
@@ -144,14 +144,14 @@ export async function runAdopt(
 }
 
 export const adoptCommand = new Command('adopt')
-  .description('Import an existing n8n instance into flightdeck state')
+  .description('Import an existing n8n instance into chiral state')
   .requiredOption('--env <env>', 'Environment name from config.json')
   .addHelpText(
     'after',
     `
 Examples:
   Adopt a configured environment:
-    flightdeck adopt --env dev
+    chiral adopt --env dev
 `,
   )
   .action(async (options) => {

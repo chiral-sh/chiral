@@ -41,7 +41,7 @@ function getGitActor(): string {
     return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     throw new UserError(
-      'git config user.email is not set — configure it before running flightdeck',
+      'git config user.email is not set — configure it before running chiral',
       '  Run: git config user.email "your.email@example.com"',
     );
   }
@@ -192,7 +192,7 @@ export async function runPush(
     );
   }
 
-  const { config, flightdeckDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir(cwd);
 
   // Validate both env names exist in config (source doesn't need a live client)
   resolveEnv(config, options.source);
@@ -219,16 +219,16 @@ export async function runPush(
   }
 
   // ── Snapshot check ────────────────────────────────────────────────────────
-  const deploymentId = findLatestDeploymentForEnv(flightdeckDir, options.source);
+  const deploymentId = findLatestDeploymentForEnv(chiralDir, options.source);
   if (!deploymentId) {
     throw new UserError(
       `No snapshot found for ${options.source}.`,
-      `  Run: flightdeck pull --env ${options.source}`,
+      `  Run: chiral pull --env ${options.source}`,
     );
   }
 
   // Stale snapshot warning (>24h)
-  const meta = readSnapshotMeta(flightdeckDir, deploymentId);
+  const meta = readSnapshotMeta(chiralDir, deploymentId);
   if (meta && !options.yes && !options.json) {
     const snapshotAge = Date.now() - new Date(meta.timestamp).getTime();
     const STALE_MS = 24 * 60 * 60 * 1000;
@@ -241,7 +241,7 @@ export async function runPush(
         `  ${chalk.yellow('⚠')}  Snapshot for ${chalk.cyan(options.source)} is ${ageStr} old (taken: ${snapshotDate}).`,
       );
       console.log(
-        `     Run ${chalk.dim(`'flightdeck pull --env ${options.source}'`)} to refresh before pushing.`,
+        `     Run ${chalk.dim(`'chiral pull --env ${options.source}'`)} to refresh before pushing.`,
       );
       console.log();
 
@@ -260,7 +260,7 @@ export async function runPush(
   }
 
   // ── Load snapshot workflows ───────────────────────────────────────────────
-  let snapshotWorkflows = readAllWorkflowsInDeployment(flightdeckDir, deploymentId);
+  let snapshotWorkflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
 
   // Apply client-side filters
   snapshotWorkflows = snapshotWorkflows.filter((wf) => {
@@ -318,14 +318,14 @@ export async function runPush(
   }
 
   // ── Name resolution + classification ─────────────────────────────────────
-  const workflowMap = loadWorkflowMap(flightdeckDir);
+  const workflowMap = loadWorkflowMap(chiralDir);
   const targetByName = new Map<string, WorkflowSummary>(
     targetSummaries.map((w) => [w.name, w]),
   );
   const targetCredNames = new Set(targetCreds.map((c) => c.name));
   const targetTagMap = new Map<string, string>(targetTags.map((t) => [t.name, t.id]));
 
-  const fingerprints = loadFingerprints(flightdeckDir);
+  const fingerprints = loadFingerprints(chiralDir);
   if (!fingerprints.envs[options.target]) fingerprints.envs[options.target] = {};
 
   const classified: WorkflowClassification[] = snapshotWorkflows.map((wf) => {
@@ -359,7 +359,7 @@ export async function runPush(
     const nodes = (c.workflow as Record<string, unknown>)['nodes'];
     if (Array.isArray(nodes)) allNodes.push(...nodes);
   }
-  const credentials = loadCredentials(flightdeckDir);
+  const credentials = loadCredentials(chiralDir);
   const credMap = buildCredentialMap(allNodes, options.source, options.target, credentials);
 
   const credentialErrors: CredentialMapEntry[] = [];
@@ -384,7 +384,7 @@ export async function runPush(
   // ── Changeset counts ─────────────────────────────────────────────────────
   const toCreate = classified.filter((c) => c.action === 'would-create');
   const toUpdate = classified.filter((c) => c.action === 'would-update');
-  const toSkip   = classified.filter((c) => c.action === 'skipped');
+  const toSkip = classified.filter((c) => c.action === 'skipped');
 
   // ── JSON output ───────────────────────────────────────────────────────────
   if (options.json) {
@@ -394,10 +394,10 @@ export async function runPush(
         target: options.target,
         dry_run: true,
         deployment_id: deploymentId,
-        created:  toCreate.map((c) => c.workflow.name),
-        updated:  toUpdate.map((c) => c.workflow.name),
-        skipped:  toSkip.map((c) => c.workflow.name),
-        failed:   [],
+        created: toCreate.map((c) => c.workflow.name),
+        updated: toUpdate.map((c) => c.workflow.name),
+        skipped: toSkip.map((c) => c.workflow.name),
+        failed: [],
         credential_map: credMap.map(({ sourceName, targetName, status }) => ({
           sourceName, targetName, status,
         })),
@@ -441,7 +441,7 @@ export async function runPush(
   if (credentialErrors.length > 0) {
     const hint = credentialErrors.map((e) => {
       const logical = e.logicalName ?? e.sourceName;
-      return `  flightdeck credential add ${logical} ${options.target}=${e.targetName}`;
+      return `  chiral credential add ${logical} ${options.target}=${e.targetName}`;
     });
     console.log(
       `  ${chalk.red('✗')}  Cannot push — ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Create ${credentialErrors.length === 1 ? 'it' : 'them'} first or run:`,
@@ -455,7 +455,7 @@ export async function runPush(
   for (const c of toCreate) {
     const wasMapped = c.resolvedName !== c.workflow.name;
     const createNote = wasMapped
-      ? `will be created as "${c.resolvedName}" — run: flightdeck workflow map --validate to check`
+      ? `will be created as "${c.resolvedName}" — run: chiral workflow map --validate to check`
       : 'will be created';
     console.log(
       `  ${chalk.green('+')} ${c.resolvedName}  ${chalk.dim(`(${createNote})`)}`,
@@ -502,7 +502,7 @@ export async function runPush(
       options.pattern ? `--pattern "${options.pattern}"` : '',
     ].filter(Boolean);
 
-    console.log(`\n  ${chalk.dim('Next:')} flightdeck push ${nextParts.join(' ')}`);
+    console.log(`\n  ${chalk.dim('Next:')} chiral push ${nextParts.join(' ')}`);
     console.log();
     return;
   }
@@ -520,7 +520,7 @@ export async function runPush(
 
   // ── Concurrent push detection ───────────────────────────────────────────
   if (!options.yes) {
-    const auditLog = readAuditLog(flightdeckDir);
+    const auditLog = readAuditLog(chiralDir);
     const lastPullFromTarget = auditLog
       .filter((e) => e.action === 'pull' && e.source_env === options.target)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
@@ -538,7 +538,7 @@ export async function runPush(
         const timeStr = hoursAgo === 0 ? 'just now' : `${hoursAgo} ${hoursAgo === 1 ? 'hour' : 'hours'} ago`;
         console.log(`  ${chalk.yellow('⚠')}  ${options.target} was last pushed by ${lastPushToTarget.actor} ${timeStr}.`);
         console.log(`     You may be overwriting their changes.`);
-        console.log(`     Run 'flightdeck diff --source ${options.target} --target ${options.source}' to check.`);
+        console.log(`     Run 'chiral diff --source ${options.target} --target ${options.source}' to check.`);
         console.log();
 
         try {
@@ -598,10 +598,10 @@ export async function runPush(
       const targetWorkflow = targetByName.get(c.resolvedName);
       if (targetWorkflow) {
         const fullWorkflow = await targetClient.getWorkflow(targetWorkflow.id);
-        writeSnapshot(flightdeckDir, targetDeploymentId, fullWorkflow);
+        writeSnapshot(chiralDir, targetDeploymentId, fullWorkflow);
       }
     }
-    writeSnapshotMeta(flightdeckDir, targetDeploymentId, {
+    writeSnapshotMeta(chiralDir, targetDeploymentId, {
       deployment_id: targetDeploymentId,
       env: options.target,
       command: 'push',
@@ -616,7 +616,7 @@ export async function runPush(
 
   if (preSnapshotSpinner) {
     preSnapshotSpinner.succeed(
-      chalk.green(`  Snapshot saved`) + chalk.dim(` → .flightdeck/snapshots/${targetDeploymentId}/`),
+      chalk.green(`  Snapshot saved`) + chalk.dim(` → .chiral/snapshots/${targetDeploymentId}/`),
     );
   }
 
@@ -671,7 +671,7 @@ export async function runPush(
           structureHash: computeStructureHash(sourceWorkflow),
           updatedAt: new Date().toISOString(),
         };
-        writeFingerprints(flightdeckDir, fingerprints);
+        writeFingerprints(chiralDir, fingerprints);
 
         // Auto-register workflow map entry with IDs from both envs
         {
@@ -724,7 +724,7 @@ export async function runPush(
           structureHash: computeStructureHash(sourceWorkflow),
           updatedAt: new Date().toISOString(),
         };
-        writeFingerprints(flightdeckDir, fingerprints);
+        writeFingerprints(chiralDir, fingerprints);
 
         // Auto-register workflow map entry with IDs from both envs
         {
@@ -763,7 +763,7 @@ export async function runPush(
   }
 
   // ── Persist workflow map if any entries were added/updated ────────────
-  if (mapDirty) writeWorkflowMap(flightdeckDir, workflowMap);
+  if (mapDirty) writeWorkflowMap(chiralDir, workflowMap);
 
   // ── Audit log entry ────────────────────────────────────────────────────
   const actor = getGitActor();
@@ -779,9 +779,9 @@ export async function runPush(
     workflow_ids: [...results.created, ...results.updated],
     result: results.failed.length === 0 ? 'success' : results.created.length + results.updated.length === 0 ? 'failure' : 'aborted',
     error: results.failed.length > 0 ? `${results.failed.length} workflow(s) failed` : null,
-    flightdeck_version: '0.0.1', // TODO: read from package.json
+    chiral_version: '0.0.1', // TODO: read from package.json
   };
-  writeAuditEntry(flightdeckDir, auditEntry);
+  writeAuditEntry(chiralDir, auditEntry);
 
   // ── Summary ────────────────────────────────────────────────────────────
   console.log();
@@ -794,20 +794,20 @@ export async function runPush(
     console.log(
       `  ${chalk.red('✗')} Push incomplete — ${plural(results.created.length + results.updated.length, 'change')} of ${plural(changeCount, 'change')} applied.`,
     );
-    console.log(`    Pre-push snapshot saved at .flightdeck/snapshots/${targetDeploymentId}/`);
+    console.log(`    Pre-push snapshot saved at .chiral/snapshots/${targetDeploymentId}/`);
     if (results.failed.length > 0) {
       console.log(`    Failed: ${results.failed.map((f) => f.name).join(', ')}`);
     }
   }
 
   console.log();
-  console.log(`  ${chalk.dim('Next:')} flightdeck pull --env ${options.target}`);
+  console.log(`  ${chalk.dim('Next:')} chiral pull --env ${options.target}`);
   console.log();
 
   // ── Git sync ───────────────────────────────────────────────────────────────
   if (!isJson && results.failed.length === 0) {
-    const commitMsg = `chore(flightdeck): push ${options.source}→${options.target}`;
-    const syncResult = await syncToRemote(flightdeckDir, config, commitMsg);
+    const commitMsg = `chore(chiral): push ${options.source}→${options.target}`;
+    const syncResult = await syncToRemote(chiralDir, config, commitMsg);
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
         console.log(formatSyncSuccess(syncResult));
@@ -842,16 +842,16 @@ export const pushCommand = new Command('push')
     `
 Examples:
   Preview changes before pushing:
-    flightdeck push --source dev --target prod --dry-run
+    chiral push --source dev --target prod --dry-run
 
   Preview changes for a specific tag:
-    flightdeck push --source dev --target prod --dry-run --tag billing
+    chiral push --source dev --target prod --dry-run --tag billing
 
   Push (coming soon):
-    flightdeck push --source dev --target prod
+    chiral push --source dev --target prod
 
   Non-interactive push for CI:
-    flightdeck push --source dev --target prod --yes
+    chiral push --source dev --target prod --yes
 `,
   )
   .action(async (options: PushOptions) => {

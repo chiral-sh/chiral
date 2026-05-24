@@ -14,7 +14,7 @@ import { workflowCommand } from './commands/workflow.js';
 const program = new Command();
 
 program
-  .name('flightdeck')
+  .name('chiral')
   .description('Safer production deployments for self-hosted n8n Community Edition')
   .version('0.1.0');
 

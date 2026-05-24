@@ -61,7 +61,7 @@ function makeWorkflow(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
-const FLIGHTDECK_DIR = '/repo/.flightdeck';
+const CHIRAL_DIR = '/repo/.chiral';
 
 // ── computeContentHash ────────────────────────────────────────────────────────
 
@@ -282,8 +282,8 @@ describe('loadFingerprints', () => {
   beforeEach(() => vol.reset());
 
   it('returns empty envs when fingerprints.json does not exist', () => {
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/.keep`]: '' });
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/.keep`]: '' });
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result).toEqual({ version: 1, envs: {} });
   });
 
@@ -302,20 +302,20 @@ describe('loadFingerprints', () => {
         },
       },
     };
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(data) });
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: JSON.stringify(data) });
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result.envs['dev']?.['wf-1']?.versionId).toBe('v-abc');
     expect(result.envs['dev']?.['wf-1']?.name).toBe('Order Processor');
   });
 
   it('throws UserError when file contains invalid JSON', () => {
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: 'not json{{{' });
-    expect(() => loadFingerprints(FLIGHTDECK_DIR)).toThrow('valid JSON');
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: 'not json{{{' });
+    expect(() => loadFingerprints(CHIRAL_DIR)).toThrow('valid JSON');
   });
 
   it('returns empty envs when file has wrong schema', () => {
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify({ version: 99 }) });
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: JSON.stringify({ version: 99 }) });
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result).toEqual({ version: 1, envs: {} });
   });
 });
@@ -326,10 +326,10 @@ describe('writeFingerprints', () => {
   beforeEach(() => vol.reset());
 
   it('writes fingerprints.json with a trailing newline', () => {
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/.keep`]: '' });
+    vol.fromJSON({ [`${CHIRAL_DIR}/.keep`]: '' });
     const data = { version: 1 as const, envs: {} };
-    writeFingerprints(FLIGHTDECK_DIR, data);
-    const raw = vol.readFileSync(`${FLIGHTDECK_DIR}/fingerprints.json`, 'utf-8') as string;
+    writeFingerprints(CHIRAL_DIR, data);
+    const raw = vol.readFileSync(`${CHIRAL_DIR}/fingerprints.json`, 'utf-8') as string;
     expect(raw.endsWith('\n')).toBe(true);
     expect(JSON.parse(raw)).toEqual(data);
   });
@@ -349,9 +349,9 @@ describe('upsertFingerprintEntry', () => {
   };
 
   it('creates a new entry when fingerprints.json does not exist', () => {
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/.keep`]: '' });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/.keep`]: '' });
+    upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-1', entry);
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result.envs['dev']?.['wf-1']).toEqual(entry);
   });
 
@@ -370,9 +370,9 @@ describe('upsertFingerprintEntry', () => {
         },
       },
     };
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(existing) });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: JSON.stringify(existing) });
+    upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-1', entry);
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result.envs['dev']?.['wf-1']?.versionId).toBe('v-new');
   });
 
@@ -391,9 +391,9 @@ describe('upsertFingerprintEntry', () => {
         },
       },
     };
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(existing) });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: JSON.stringify(existing) });
+    upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-1', entry);
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result.envs['staging']?.['wf-1']?.versionId).toBe('v-staging');
     expect(result.envs['dev']?.['wf-1']?.versionId).toBe('v-new');
   });
@@ -413,9 +413,9 @@ describe('upsertFingerprintEntry', () => {
         },
       },
     };
-    vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(existing) });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
-    const result = loadFingerprints(FLIGHTDECK_DIR);
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: JSON.stringify(existing) });
+    upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-1', entry);
+    const result = loadFingerprints(CHIRAL_DIR);
     expect(result.envs['dev']?.['wf-99']?.versionId).toBe('v-other');
   });
 });

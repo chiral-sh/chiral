@@ -117,9 +117,9 @@ beforeEach(() => {
 
 function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflows: WorkflowSummary[] = []) {
   vol.fromJSON({
-    '/project/.flightdeck/config.json': VALID_CONFIG,
-    '/project/.flightdeck/audit.jsonl': '',
-    '/project/.flightdeck/credentials.json': JSON.stringify({
+    '/project/.chiral/config.json': VALID_CONFIG,
+    '/project/.chiral/audit.jsonl': '',
+    '/project/.chiral/credentials.json': JSON.stringify({
       version: 1,
       credentials: {
         postgres: { dev: 'dev_pg', prod: 'prod_pg' },
@@ -129,7 +129,7 @@ function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflow
 
   if (snapshotWorkflows.length > 0) {
     const deploymentId = '20260522T120000Z-abcdef12';
-    const snapshotDir = `/project/.flightdeck/snapshots/${deploymentId}`;
+    const snapshotDir = `/project/.chiral/snapshots/${deploymentId}`;
     vol.mkdirSync(snapshotDir, { recursive: true });
     vol.writeFileSync(
       `${snapshotDir}/meta.json`,
@@ -312,7 +312,7 @@ describe('runPush (dry-run) — credential mapping', () => {
     expect(joined).toContain('✗');
     expect(joined).toContain('missing in prod');
     expect(joined).toContain('Cannot push');
-    expect(joined).toContain('flightdeck credential add postgres prod=prod_pg');
+    expect(joined).toContain('chiral credential add postgres prod=prod_pg');
   });
 });
 
@@ -363,7 +363,7 @@ describe('runPush (dry-run) — stale snapshot', () => {
       filters: { tag: null, pattern: null, onlyActive: false, id: null }
     };
     vol.writeFileSync(
-      '/project/.flightdeck/snapshots/20260522T120000Z-abcdef12/meta.json',
+      '/project/.chiral/snapshots/20260522T120000Z-abcdef12/meta.json',
       JSON.stringify(meta),
     );
 
@@ -388,7 +388,7 @@ describe('runPush (dry-run) — stale snapshot', () => {
       filters: { tag: null, pattern: null, onlyActive: false, id: null }
     };
     vol.writeFileSync(
-      '/project/.flightdeck/snapshots/20260522T120000Z-abcdef12/meta.json',
+      '/project/.chiral/snapshots/20260522T120000Z-abcdef12/meta.json',
       JSON.stringify(meta),
     );
 
@@ -556,7 +556,7 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
     // Pre-populate target fingerprints with a hash matching the source snapshot
     const hash = computeContentHash(wf as Record<string, unknown>);
     vol.writeFileSync(
-      '/project/.flightdeck/fingerprints.json',
+      '/project/.chiral/fingerprints.json',
       JSON.stringify({
         version: 1,
         envs: {
@@ -591,7 +591,7 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
 
     // Different hash → content has genuinely changed
     vol.writeFileSync(
-      '/project/.flightdeck/fingerprints.json',
+      '/project/.chiral/fingerprints.json',
       JSON.stringify({
         version: 1,
         envs: {
@@ -628,7 +628,7 @@ describe('runPush (dry-run) — workflow map not written', () => {
 
     await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
 
-    expect(vol.existsSync('/project/.flightdeck/workflows.json')).toBe(false);
+    expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
   });
 });
 
@@ -650,7 +650,7 @@ describe('runPush (live) — fingerprint writes', () => {
 
     await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
     const entry = fp.envs?.prod?.['tgt-new'];
     expect(entry).toBeDefined();
@@ -677,7 +677,7 @@ describe('runPush (live) — fingerprint writes', () => {
 
     await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
     const entry = fp.envs?.prod?.['tgt-1'];
     expect(entry).toBeDefined();
@@ -750,12 +750,12 @@ describe('runPush (live) — fingerprint writes', () => {
     );
 
     // suppress console output — we're only checking the fingerprints file
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => { });
+    vi.spyOn(console, 'error').mockImplementation(() => { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => { });
 
-    expect(vol.existsSync('/project/.flightdeck/fingerprints.json')).toBe(false);
+    expect(vol.existsSync('/project/.chiral/fingerprints.json')).toBe(false);
   });
 });
 
@@ -777,7 +777,7 @@ describe('runPush (live) — workflow map registration', () => {
 
     await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
     const entries = Object.values(map.workflows) as Record<string, { name: string; id?: string }>[];
     expect(entries).toHaveLength(1);
@@ -803,7 +803,7 @@ describe('runPush (live) — workflow map registration', () => {
 
     await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
 
-    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
     const entries = Object.values(map.workflows) as Record<string, { name: string; id?: string }>[];
     expect(entries).toHaveLength(1);
@@ -816,7 +816,7 @@ describe('runPush (live) — workflow map registration', () => {
     const wf = makeSnapshotWf('src-1', 'Invoice Sync [DEV]', 'v1');
     setupProject([wf], []);
 
-    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
       version: 1,
       workflows: {
         'invoice-sync': {
@@ -845,7 +845,7 @@ describe('runPush (live) — workflow map registration', () => {
     expect(output.join('\n')).toContain('mapped from');
 
     // Map entry should have target ID
-    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['invoice-sync']['prod']).toEqual({ name: 'Invoice Sync', id: 'tgt-inv' });
   });
@@ -863,11 +863,11 @@ describe('runPush (live) — workflow map registration', () => {
       }) as never,
     );
 
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => { });
+    vi.spyOn(console, 'error').mockImplementation(() => { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => { });
 
-    expect(vol.existsSync('/project/.flightdeck/workflows.json')).toBe(false);
+    expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
   });
 });

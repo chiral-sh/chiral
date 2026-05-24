@@ -25,7 +25,7 @@ const STAGED_RELATIVE: string[] = [
 ];
 
 export async function syncToRemote(
-  flightdeckDir: string,
+  chiralDir: string,
   config: Config,
   commitMsg: string,
 ): Promise<SyncResult> {
@@ -36,13 +36,13 @@ export async function syncToRemote(
 
   const { remote, branch } = gs;
 
-  // simple-git operates relative to the repo root — one level above .flightdeck/
-  const repoRoot = resolve(flightdeckDir, '..');
+  // simple-git operates relative to the repo root — one level above .chiral/
+  const repoRoot = resolve(chiralDir, '..');
   const git = simpleGit(repoRoot);
 
   try {
     const toStage = STAGED_RELATIVE
-      .map((p) => join('.flightdeck', p))
+      .map((p) => join('.chiral', p))
       .filter((p) => existsSync(join(repoRoot, p)));
 
     if (toStage.length > 0) {
@@ -63,11 +63,11 @@ export async function syncToRemote(
       const current = localBranches.current || '(unknown)';
       const fixHint =
         `Your local branch is "${current}" but gitSync.branch is set to "${branch}". ` +
-        `Update gitSync.branch in .flightdeck/config.json to "${current}", ` +
-        `or run: flightdeck configure --remote ${remote}` +
+        `Update gitSync.branch in .chiral/config.json to "${current}", ` +
+        `or run: chiral configure --remote ${remote}` +
         ` (then manually set branch in config.json)`;
       const manualCmd =
-        `git add .flightdeck/ && git commit -m "${commitMsg}" && git push ${remote} ${current}`;
+        `git add .chiral/ && git commit -m "${commitMsg}" && git push ${remote} ${current}`;
       return { skipped: false, success: false, message: fixHint, manualCmd };
     }
 
@@ -89,7 +89,7 @@ export async function syncToRemote(
   } catch (err) {
     const fullMessage = err instanceof Error ? err.message : String(err);
     const manualCmd =
-      `git add .flightdeck/ && git commit -m "${commitMsg}" && git push ${remote} ${branch}`;
+      `git add .chiral/ && git commit -m "${commitMsg}" && git push ${remote} ${branch}`;
     return { skipped: false, success: false, message: fullMessage, manualCmd };
   }
 }

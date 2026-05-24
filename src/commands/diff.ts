@@ -20,7 +20,7 @@ function getGitActor(): string {
     return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     throw new UserError(
-      'git config user.email is not set — configure it before running flightdeck',
+      'git config user.email is not set — configure it before running chiral',
     );
   }
 }
@@ -77,7 +77,7 @@ interface FingerprintContext {
   fingerprints: Fingerprints;
   sourceClient: N8nClient;
   targetClient: N8nClient;
-  flightdeckDir: string;
+  chiralDir: string;
 }
 
 async function isContentUnchanged(
@@ -130,7 +130,7 @@ async function isContentUnchanged(
     };
   }
 
-  writeFingerprints(ctx.flightdeckDir, ctx.fingerprints);
+  writeFingerprints(ctx.chiralDir, ctx.fingerprints);
   return srcHash === tgtHash;
 }
 
@@ -197,7 +197,7 @@ export async function runDiff(
   cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const { config, flightdeckDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir(cwd);
   const sourceEnvObj = resolveEnv(config, options.source);
   const targetEnvObj = resolveEnv(config, options.target);
 
@@ -216,7 +216,7 @@ export async function runDiff(
     source_env: options.source,
     target_env: options.target,
     workflow_ids: [] as string[],
-    flightdeck_version: '0.1.0',
+    chiral_version: '0.1.0',
   };
 
   const isSilent = options.json || options.nameOnly;
@@ -272,9 +272,9 @@ export async function runDiff(
       );
     }
 
-    const fingerprints = loadFingerprints(flightdeckDir);
-    const ctx: FingerprintContext = { fingerprints, sourceClient, targetClient, flightdeckDir };
-    const workflowMap = loadWorkflowMap(flightdeckDir);
+    const fingerprints = loadFingerprints(chiralDir);
+    const ctx: FingerprintContext = { fingerprints, sourceClient, targetClient, chiralDir };
+    const workflowMap = loadWorkflowMap(chiralDir);
     const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target, ctx);
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
 
@@ -317,7 +317,7 @@ export async function runDiff(
       } else {
         for (const w of diff.added) {
           console.log(
-            `  ${chalk.green('+')} ${w.name}    ${chalk.dim(`(in ${options.source}, not in ${options.target} — ${w.hint} run: flightdeck workflow map)`)}`,
+            `  ${chalk.green('+')} ${w.name}    ${chalk.dim(`(in ${options.source}, not in ${options.target} — ${w.hint} run: chiral workflow map)`)}`,
           );
         }
         for (const w of diff.removed) {
@@ -348,7 +348,7 @@ export async function runDiff(
           options.pattern ? `--pattern "${options.pattern}"` : '',
           '--dry-run',
         ].filter(Boolean);
-        const pushHint = `flightdeck push ${pushParts.join(' ')}`;
+        const pushHint = `chiral push ${pushParts.join(' ')}`;
 
         console.log();
         console.log(`  ${parts.join(', ')}.`);
@@ -359,13 +359,13 @@ export async function runDiff(
     }
 
     baseEntry.workflow_ids = sourceFiltered.map((w) => w.id);
-    writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+    writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
     if (options.exitCode && hasDiff) throw new ControlledExit(1);
   } catch (err) {
     if (err instanceof ControlledExit) throw err;
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
-      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'failure', error: errorMsg });
+      writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
       // best-effort — don't mask the original error
     }
@@ -388,25 +388,25 @@ export const diffCommand = new Command('diff')
     `
 Examples:
   Compare dev and prod:
-    flightdeck diff --source dev --target prod
+    chiral diff --source dev --target prod
 
   Compare only workflows tagged "production":
-    flightdeck diff --source dev --target prod --tag production
+    chiral diff --source dev --target prod --tag production
 
   Compare workflows matching a name pattern:
-    flightdeck diff --source dev --target prod --pattern "Customer *"
+    chiral diff --source dev --target prod --pattern "Customer *"
 
   Include identical workflows in output:
-    flightdeck diff --source dev --target prod --show-unchanged
+    chiral diff --source dev --target prod --show-unchanged
 
   Exit 1 if differences exist (for CI scripts):
-    flightdeck diff --source dev --target prod --exit-code
+    chiral diff --source dev --target prod --exit-code
 
   Print only differing workflow names for piping:
-    flightdeck diff --source dev --target prod --name-only
+    chiral diff --source dev --target prod --name-only
 
   Machine-readable output for scripting:
-    flightdeck diff --source dev --target prod --json
+    chiral diff --source dev --target prod --json
 `,
   )
   .action(async (options) => {

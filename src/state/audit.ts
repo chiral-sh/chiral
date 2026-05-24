@@ -28,7 +28,7 @@ export const AuditEntrySchema = z.object({
   workflow_ids: z.array(z.string()),
   result: z.enum(['success', 'failure', 'aborted']),
   error: z.string().nullable(),
-  flightdeck_version: z.string(),
+  chiral_version: z.string(),
   match_method: z.enum(['manual', 'auto', 'fuzzy']).nullable().optional(),
   match_score: z.number().min(0).max(1).nullable().optional(),
 });
@@ -36,8 +36,8 @@ export const AuditEntrySchema = z.object({
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 
-export function writeAuditEntry(flightdeckDir: string, entry: AuditEntry): void {
-  const auditPath = join(flightdeckDir, 'audit.jsonl');
+export function writeAuditEntry(chiralDir: string, entry: AuditEntry): void {
+  const auditPath = join(chiralDir, 'audit.jsonl');
   const line = JSON.stringify(entry) + '\n';
   try {
     appendFileSync(auditPath, line, 'utf-8');
@@ -46,8 +46,8 @@ export function writeAuditEntry(flightdeckDir: string, entry: AuditEntry): void 
   }
 }
 
-export function readAuditLog(flightdeckDir: string): AuditEntry[] {
-  const auditPath = join(flightdeckDir, 'audit.jsonl');
+export function readAuditLog(chiralDir: string): AuditEntry[] {
+  const auditPath = join(chiralDir, 'audit.jsonl');
   if (!existsSync(auditPath)) return [];
 
   const lines = readFileSync(auditPath, 'utf-8')

@@ -35,8 +35,8 @@ export function deriveSafeLogicalName(map: WorkflowMap, name: string): string {
   return `${base}-${n}`;
 }
 
-export function loadWorkflowMap(flightdeckDir: string): WorkflowMap {
-  const path = join(flightdeckDir, 'workflows.json');
+export function loadWorkflowMap(chiralDir: string): WorkflowMap {
+  const path = join(chiralDir, 'workflows.json');
   if (!existsSync(path)) return { version: 1, workflows: {} };
   let raw: unknown;
   try {
@@ -54,18 +54,18 @@ export function loadWorkflowMap(flightdeckDir: string): WorkflowMap {
   return result.data;
 }
 
-export function loadWorkflowMapRequired(flightdeckDir: string): WorkflowMap {
-  const path = join(flightdeckDir, 'workflows.json');
+export function loadWorkflowMapRequired(chiralDir: string): WorkflowMap {
+  const path = join(chiralDir, 'workflows.json');
   if (!existsSync(path)) {
     throw new UserError(
-      "No .flightdeck/workflows.json found. Run 'flightdeck init' first.",
+      "No .chiral/workflows.json found. Run 'chiral init' first.",
     );
   }
-  return loadWorkflowMap(flightdeckDir);
+  return loadWorkflowMap(chiralDir);
 }
 
-export function writeWorkflowMap(flightdeckDir: string, data: WorkflowMap): void {
-  const path = join(flightdeckDir, 'workflows.json');
+export function writeWorkflowMap(chiralDir: string, data: WorkflowMap): void {
+  const path = join(chiralDir, 'workflows.json');
   try {
     writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
   } catch {

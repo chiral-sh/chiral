@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "flightdeck": "dist/index.js"
+    "chiral": "dist/index.js"
   },
   "packageManager": "pnpm@10.19.0",
   "engines": {
@@ -24,7 +24,7 @@
     "workflow",
     "deployment",
     "environment",
-    "flightdeck"
+    "chiral"
   ],
   "author": "Purvesh Gandhi",
   "license": "MIT",

@@ -48,11 +48,11 @@ export function generateDeploymentId(): string {
 }
 
 export function writeSnapshot(
-  flightdeckDir: string,
+  chiralDir: string,
   deploymentId: string,
   workflow: SnapshotWorkflow,
 ): void {
-  const dir = join(flightdeckDir, 'snapshots', deploymentId);
+  const dir = join(chiralDir, 'snapshots', deploymentId);
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -66,11 +66,11 @@ export function writeSnapshot(
 }
 
 export function readSnapshot(
-  flightdeckDir: string,
+  chiralDir: string,
   deploymentId: string,
   workflowId: string,
 ): SnapshotWorkflow {
-  const filePath = join(flightdeckDir, 'snapshots', deploymentId, `${workflowId}.json`);
+  const filePath = join(chiralDir, 'snapshots', deploymentId, `${workflowId}.json`);
   if (!existsSync(filePath)) {
     throw new UserError(
       `No snapshot found for workflow "${workflowId}" in deployment ${deploymentId}`,
@@ -89,8 +89,8 @@ export function readSnapshot(
   return result.data;
 }
 
-export function listDeployments(flightdeckDir: string): string[] {
-  const snapshotsDir = join(flightdeckDir, 'snapshots');
+export function listDeployments(chiralDir: string): string[] {
+  const snapshotsDir = join(chiralDir, 'snapshots');
   if (!existsSync(snapshotsDir)) return [];
   return readdirSync(snapshotsDir)
     .filter((name) => DEPLOYMENT_ID_RE.test(name))
@@ -99,10 +99,10 @@ export function listDeployments(flightdeckDir: string): string[] {
 }
 
 export function listSnapshotWorkflows(
-  flightdeckDir: string,
+  chiralDir: string,
   deploymentId: string,
 ): string[] {
-  const dir = join(flightdeckDir, 'snapshots', deploymentId);
+  const dir = join(chiralDir, 'snapshots', deploymentId);
   if (!existsSync(dir)) {
     throw new UserError(`No deployment found with ID "${deploymentId}"`);
   }
@@ -112,11 +112,11 @@ export function listSnapshotWorkflows(
 }
 
 export function writeSnapshotMeta(
-  flightdeckDir: string,
+  chiralDir: string,
   deploymentId: string,
   meta: SnapshotMeta,
 ): void {
-  const dir = join(flightdeckDir, 'snapshots', deploymentId);
+  const dir = join(chiralDir, 'snapshots', deploymentId);
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
@@ -126,10 +126,10 @@ export function writeSnapshotMeta(
 }
 
 export function readSnapshotMeta(
-  flightdeckDir: string,
+  chiralDir: string,
   deploymentId: string,
 ): SnapshotMeta | null {
-  const filePath = join(flightdeckDir, 'snapshots', deploymentId, 'meta.json');
+  const filePath = join(chiralDir, 'snapshots', deploymentId, 'meta.json');
   if (!existsSync(filePath)) return null;
   try {
     const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
@@ -142,21 +142,21 @@ export function readSnapshotMeta(
 
 // Scans deployments newest-first and returns the first one written for the given env.
 export function findLatestDeploymentForEnv(
-  flightdeckDir: string,
+  chiralDir: string,
   env: string,
 ): string | undefined {
-  for (const deploymentId of listDeployments(flightdeckDir)) {
-    const meta = readSnapshotMeta(flightdeckDir, deploymentId);
+  for (const deploymentId of listDeployments(chiralDir)) {
+    const meta = readSnapshotMeta(chiralDir, deploymentId);
     if (meta?.env === env) return deploymentId;
   }
   return undefined;
 }
 
 export function readAllWorkflowsInDeployment(
-  flightdeckDir: string,
+  chiralDir: string,
   deploymentId: string,
 ): SnapshotWorkflow[] {
-  const dir = join(flightdeckDir, 'snapshots', deploymentId);
+  const dir = join(chiralDir, 'snapshots', deploymentId);
   if (!existsSync(dir)) return [];
   const workflows: SnapshotWorkflow[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'meta.json')) {
@@ -171,11 +171,11 @@ export function readAllWorkflowsInDeployment(
   return workflows;
 }
 
-export function pruneSnapshots(flightdeckDir: string, keep: number): number {
-  const deployments = listDeployments(flightdeckDir);
+export function pruneSnapshots(chiralDir: string, keep: number): number {
+  const deployments = listDeployments(chiralDir);
   const toRemove = deployments.slice(keep);
   for (const id of toRemove) {
-    rmSync(join(flightdeckDir, 'snapshots', id), { recursive: true });
+    rmSync(join(chiralDir, 'snapshots', id), { recursive: true });
   }
   return toRemove.length;
 }
