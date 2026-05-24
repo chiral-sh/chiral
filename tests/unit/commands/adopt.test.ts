@@ -135,7 +135,7 @@ describe('runAdopt', () => {
     expect(entry.result).toBe('success');
     expect(entry.target_env).toBe('dev');
     expect(entry.source_env).toBeNull();
-    expect(entry.workflow_ids).toEqual([]);
+    expect(entry.workflow_ids).toEqual(['wf-1']);
     expect(entry.actor).toBe('actor@example.com');
     expect(entry.project).toBe('test-project');
   });
@@ -271,5 +271,133 @@ describe('runAdopt', () => {
     await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow();
 
     expect(vol.existsSync('/project/.chiral/fingerprints.json')).toBe(false);
+  });
+});
+
+describe('runAdopt — audit workflow_ids', () => {
+  it('records adopted workflow IDs in the audit entry', async () => {
+    setupChiralDir();
+    const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
+    const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, wf2Summary]),
+        getWorkflow: vi.fn()
+          .mockResolvedValueOnce(WORKFLOW_FULL)
+          .mockResolvedValueOnce(wf2Full),
+      }) as never,
+    );
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
+    const entry = JSON.parse(auditContent.trim());
+    expect(entry.workflow_ids).toContain('wf-1');
+    expect(entry.workflow_ids).toContain('wf-2');
+    expect(entry.workflow_ids).toHaveLength(2);
+  });
+
+  it('records empty array when no workflows are adopted', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+      }) as never,
+    );
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
+    const entry = JSON.parse(auditContent.trim());
+    expect(entry.workflow_ids).toEqual([]);
+  });
+});
+
+describe('runAdopt — fingerprints summary output', () => {
+  it('prints a fingerprints saved confirmation line', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    vi.restoreAllMocks();
+    expect(output.join('\n')).toContain('Fingerprints saved');
+    expect(output.join('\n')).toContain('fingerprints.json');
+    expect(output.join('\n')).toContain('1 workflow');
+  });
+});
+
+describe('runAdopt — env-specific name detection', () => {
+  const ENV_WORKFLOW_SUMMARY = {
+    ...WORKFLOW_SUMMARY,
+    id: 'wf-env',
+    name: 'Order Processor [DEV]',
+  };
+  const ENV_WORKFLOW_FULL = {
+    ...WORKFLOW_FULL,
+    id: 'wf-env',
+    name: 'Order Processor [DEV]',
+  };
+
+  it('prints a warning when a workflow name contains an env marker and is not mapped', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([ENV_WORKFLOW_SUMMARY]),
+        getWorkflow: vi.fn().mockResolvedValue(ENV_WORKFLOW_FULL),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    vi.restoreAllMocks();
+    expect(output.join('\n')).toContain('environment-specific');
+    expect(output.join('\n')).toContain('Order Processor [DEV]');
+    expect(output.join('\n')).toContain('workflow match');
+  });
+
+  it('does not print env-specific warning when the workflow is already in workflows.json', async () => {
+    setupChiralDir();
+    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
+      version: 1,
+      workflows: {
+        'order-processor': {
+          dev: { name: 'Order Processor [DEV]', id: 'wf-env' },
+        },
+      },
+    }));
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([ENV_WORKFLOW_SUMMARY]),
+        getWorkflow: vi.fn().mockResolvedValue(ENV_WORKFLOW_FULL),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    vi.restoreAllMocks();
+    expect(output.join('\n')).not.toContain('environment-specific');
+  });
+
+  it('does not print env-specific warning when workflow names have no env markers', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' }, '/project');
+
+    vi.restoreAllMocks();
+    expect(output.join('\n')).not.toContain('environment-specific');
   });
 });

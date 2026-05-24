@@ -3,7 +3,7 @@ import { join, basename } from 'node:path';
 import { execSync } from 'node:child_process';
 import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { UserError } from '../lib/errors.js';
 import { createChiralDirectory } from '../state/init.js';
 import type { GitSync } from '../lib/config.js';
@@ -18,15 +18,9 @@ export interface InitOptions {
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-// Flag interaction matrix:
-//   --project  : composes with everything — just skips the name prompt
-//   --remote   : sets up git sync non-interactively; mutually exclusive with --solo
-//   --solo     : skips git sync setup entirely; mutually exclusive with --remote
 function validateOptions(options: InitOptions): void {
-  if (options.remote && options.solo) {
-    throw new UserError(
-      '--remote and --solo cannot be used together — --remote sets up git sync, --solo skips it',
-    );
+  if (options.project?.startsWith('-')) {
+    throw new UserError(`Invalid project name: ${options.project}`);
   }
 }
 
@@ -148,8 +142,14 @@ export async function runInit(
 export const initCommand = new Command('init')
   .description('Initialize .chiral/ in the current Git repository')
   .option('--project <name>', 'Project name (skips interactive prompt)')
-  .option('--remote <remote>', 'Git remote name or URL for team sync (skips interactive git sync prompt)')
-  .option('--solo', 'Skip git sync setup entirely')
+  .addOption(
+    new Option('--remote <remote>', 'Git remote name or URL for team sync (skips interactive git sync prompt)')
+      .conflicts('solo'),
+  )
+  .addOption(
+    new Option('--solo', 'Skip git sync setup entirely')
+      .conflicts('remote'),
+  )
   .addHelpText(
     'after',
     `

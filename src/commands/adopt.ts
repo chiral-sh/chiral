@@ -1,35 +1,35 @@
-import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
+import { failSpinner, plural, detectsEnvMarker } from '../lib/cli.js';
 import { generateDeploymentId, writeSnapshot, writeSnapshotMeta } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
+import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
 
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set — configure it before running chiral',
-    );
-  }
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface AdoptOptions {
+  env: string;
 }
 
-function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
-  const msg = err instanceof Error ? err.message : String(err);
-  spinner.fail(chalk.red(`  ${msg}`));
-  throw err;
-}
+// ── Validation ────────────────────────────────────────────────────────────────
+
+// No invalid combinations currently exist for adopt.
+function validateOptions(_options: AdoptOptions): void {}
+
+// ── Run function ──────────────────────────────────────────────────────────────
 
 export async function runAdopt(
-  options: { env: string },
+  options: AdoptOptions,
   cwd: string = process.cwd(),
 ): Promise<void> {
+  validateOptions(options);
+
   const actor = getGitActor();
   const { config, chiralDir } = loadConfigAndDir(cwd);
   const env = resolveEnv(config, options.env);
@@ -45,7 +45,7 @@ export async function runAdopt(
     project: config.project,
     source_env: null,
     target_env: options.env,
-    workflow_ids: [],
+    workflow_ids: [] as string[],
     chiral_version: '0.1.0',
   };
 
@@ -108,6 +108,30 @@ export async function runAdopt(
       chalk.green('  Snapshot saved') +
       chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
     );
+    console.log(
+      `${chalk.green('✔')}   Fingerprints saved` +
+      chalk.dim(` → .chiral/fingerprints.json  (${plural(workflows.length, 'workflow')})`),
+    );
+
+    // ── env-specific name detection ───────────────────────────────────────────
+    const wfMap = loadWorkflowMap(chiralDir);
+    const envSpecific = workflows.filter(
+      (wf) => detectsEnvMarker(wf.name, Object.keys(config.environments)) && !findLogicalByEnvAndName(wfMap, options.env, wf.name),
+    );
+    if (envSpecific.length > 0) {
+      const example = envSpecific[0].name;
+      const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
+      const targetHint = otherEnvs[0] ?? '<other-env>';
+      console.log(
+        `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
+      );
+      console.log(
+        chalk.dim(`     If they exist under different names in other environments, run:`),
+      );
+      console.log(
+        chalk.dim(`     chiral workflow match --source ${options.env} --target ${targetHint}`),
+      );
+    }
 
     // ── workflow list ─────────────────────────────────────────────────────────
     console.log(`\n  ${chalk.bold('Workflows')}`);
@@ -118,6 +142,8 @@ export async function runAdopt(
 
     console.log(`\n  ${chalk.dim('Next:')} chiral pull --env ${options.env}\n`);
 
+    // Fix B1: record actual workflow IDs in the audit entry
+    baseEntry.workflow_ids = workflows.map((w) => w.id);
     writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
     const syncResult = await syncToRemote(
@@ -142,6 +168,8 @@ export async function runAdopt(
     throw err;
   }
 }
+
+// ── Command definition ────────────────────────────────────────────────────────
 
 export const adoptCommand = new Command('adopt')
   .description('Import an existing n8n instance into chiral state')

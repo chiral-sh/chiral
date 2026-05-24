@@ -2,12 +2,13 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
-import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
+import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
 import {
   loadWorkflowMap,
   writeWorkflowMap,
@@ -35,17 +36,6 @@ import {
 } from '../state/fingerprints.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set — configure it before running chiral',
-      '  Run: git config user.email "your.email@example.com"',
-    );
-  }
-}
 
 function sanitizeWorkflowForApi(
   workflow: Record<string, unknown>,
@@ -125,24 +115,6 @@ function transformCredentialReferences(nodes: unknown): unknown {
 
     return node;
   });
-}
-
-function matchesGlob(name: string, pattern: string): boolean {
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`^${regexStr}$`).test(name);
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
-function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
-  const msg = err instanceof Error ? err.message : String(err);
-  spinner.fail(chalk.red(`  ${msg}`));
-  throw err;
 }
 
 /** Width used for credential map column alignment */
