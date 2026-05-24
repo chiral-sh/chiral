@@ -7,6 +7,11 @@ const CREDENTIALS_TEMPLATE = {
   credentials: {} as Record<string, Record<string, string>>,
 };
 
+const WORKFLOWS_TEMPLATE = {
+  version: 1 as const,
+  workflows: {} as Record<string, Record<string, string>>,
+};
+
 export function createFlightdeckDirectory(
   flightdeckDir: string,
   projectName: string,
@@ -44,6 +49,11 @@ export function createFlightdeckDirectory(
   writeFileSync(
     join(flightdeckDir, 'credentials.json'),
     JSON.stringify(CREDENTIALS_TEMPLATE, null, 2) + '\n',
+    'utf-8',
+  );
+  writeFileSync(
+    join(flightdeckDir, 'workflows.json'),
+    JSON.stringify(WORKFLOWS_TEMPLATE, null, 2) + '\n',
     'utf-8',
   );
 }

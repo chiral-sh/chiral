@@ -8,6 +8,7 @@ import { UserError } from '../lib/errors.js';
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 const FingerprintEntrySchema = z.object({
+  name: z.string(),
   versionId: z.string(),
   contentHash: z.string(),
   structureHash: z.string(),
@@ -157,7 +158,7 @@ export function loadFingerprints(flightdeckDir: string): Fingerprints {
   }
   const result = FingerprintsSchema.safeParse(raw);
   if (!result.success) {
-    throw new UserError('fingerprints.json has invalid structure — delete it and re-run pull');
+    return FingerprintsSchema.parse({ version: 1, envs: {} });
   }
   return result.data;
 }
@@ -174,11 +175,11 @@ export function writeFingerprints(flightdeckDir: string, data: Fingerprints): vo
 export function upsertFingerprintEntry(
   flightdeckDir: string,
   env: string,
-  workflowName: string,
+  workflowId: string,
   entry: FingerprintEntry,
 ): void {
   const data = loadFingerprints(flightdeckDir);
   if (!data.envs[env]) data.envs[env] = {};
-  data.envs[env]![workflowName] = entry;
+  data.envs[env]![workflowId] = entry;
   writeFingerprints(flightdeckDir, data);
 }

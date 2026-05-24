@@ -94,7 +94,8 @@ export async function runAdopt(
     const fingerprints = loadFingerprints(flightdeckDir);
     if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
     for (const workflow of workflows) {
-      fingerprints.envs[options.env]![workflow.name] = {
+      fingerprints.envs[options.env]![workflow.id] = {
+        name: workflow.name,
         versionId: workflow.versionId,
         contentHash: computeContentHash(workflow),
         structureHash: computeStructureHash(workflow),

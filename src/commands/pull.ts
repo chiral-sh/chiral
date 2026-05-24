@@ -23,6 +23,7 @@ import {
   upsertFingerprintEntry,
 } from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
+import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry } from '../state/workflows.js';
 
 function getGitActor(): string {
   try {
@@ -205,12 +206,23 @@ export async function runPull(
         workflow_count: 1,
         filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
       });
-      upsertFingerprintEntry(flightdeckDir, options.env, workflow.name, {
+      upsertFingerprintEntry(flightdeckDir, options.env, workflow.id, {
+        name: workflow.name,
         versionId: workflow.versionId,
         contentHash: computeContentHash(workflow),
         structureHash: computeStructureHash(workflow),
         updatedAt: snapshotTimestamp,
       });
+
+      // Auto-heal: update map entry name if the workflow was renamed in n8n
+      {
+        const wfMap = loadWorkflowMap(flightdeckDir);
+        const found = findEntryByEnvId(wfMap, options.env, workflow.id);
+        if (found && found.entry.name !== workflow.name) {
+          upsertEnvEntry(wfMap, found.logicalName, options.env, { name: workflow.name, id: workflow.id });
+          writeWorkflowMap(flightdeckDir, wfMap);
+        }
+      }
 
       if (options.nameOnly) {
         if (hasChanges) console.log(workflow.name);
@@ -453,7 +465,8 @@ export async function runPull(
       const fp = loadFingerprints(flightdeckDir);
       if (!fp.envs[options.env]) fp.envs[options.env] = {};
       for (const wf of workflows) {
-        fp.envs[options.env]![wf.name] = {
+        fp.envs[options.env]![wf.id] = {
+          name: wf.name,
           versionId: wf.versionId,
           contentHash: computeContentHash(wf),
           structureHash: computeStructureHash(wf),
@@ -461,6 +474,18 @@ export async function runPull(
         };
       }
       writeFingerprints(flightdeckDir, fp);
+
+      // Auto-heal: update map entry names for any workflows renamed in n8n
+      const wfMap = loadWorkflowMap(flightdeckDir);
+      let mapDirty = false;
+      for (const wf of workflows) {
+        const found = findEntryByEnvId(wfMap, options.env, wf.id);
+        if (found && found.entry.name !== wf.name) {
+          upsertEnvEntry(wfMap, found.logicalName, options.env, { name: wf.name, id: wf.id });
+          mapDirty = true;
+        }
+      }
+      if (mapDirty) writeWorkflowMap(flightdeckDir, wfMap);
     }
 
     baseEntry.workflow_ids = workflows.map((w) => w.id);

@@ -12,6 +12,8 @@ export const AuditActionSchema = z.enum([
   'unlock',
   'adopt',
   'init',
+  'map',
+  'unmap',
 ]);
 
 export const AuditEntrySchema = z.object({
@@ -27,6 +29,8 @@ export const AuditEntrySchema = z.object({
   result: z.enum(['success', 'failure', 'aborted']),
   error: z.string().nullable(),
   flightdeck_version: z.string(),
+  match_method: z.enum(['manual', 'auto', 'fuzzy']).nullable().optional(),
+  match_score: z.number().min(0).max(1).nullable().optional(),
 });
 
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;

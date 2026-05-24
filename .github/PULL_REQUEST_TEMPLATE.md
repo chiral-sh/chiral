@@ -15,9 +15,6 @@
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes
 - [ ] Behaviour verified manually (describe below if non-trivial)
-- [ ] `docs/COMMANDS.md` updated if flags or output changed
-- [ ] `docs/LEARNINGS.md` updated if an API quirk or non-obvious design decision was discovered
-- [ ] `CLAUDE.md` build status updated if a feature is now complete
 
 ## Manual verification
 
@@ -25,4 +22,4 @@
 
 ## API / schema notes
 
-<!-- Any n8n API behaviour that was surprising or worth remembering? If yes, also add it to docs/LEARNINGS.md. -->
+<!-- Any n8n API behaviour that was surprising or worth remembering? -->

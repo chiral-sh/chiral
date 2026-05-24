@@ -561,7 +561,8 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
         version: 1,
         envs: {
           prod: {
-            'Same Content WF': {
+            'tgt-1': {
+              name: 'Same Content WF',
               versionId: 'v1',
               contentHash: hash,
               structureHash: 'sha256:' + 'a'.repeat(64),
@@ -595,7 +596,8 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
         version: 1,
         envs: {
           prod: {
-            'Changed WF': {
+            'tgt-1': {
+              name: 'Changed WF',
               versionId: 'v1',
               contentHash: 'sha256:' + 'b'.repeat(64), // intentionally different
               structureHash: 'sha256:' + 'b'.repeat(64),
@@ -615,6 +617,18 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
     expect(joined).toContain('~');
     expect(joined).toContain('Changed WF');
     expect(joined).toContain('will be updated');
+  });
+});
+
+// ── dry-run: no workflow map writes ──────────────────────────────────────────
+
+describe('runPush (dry-run) — workflow map not written', () => {
+  it('does not create workflows.json when dry-run mode is used', async () => {
+    setupProject([makeSnapshotWf('src-1', 'New WF', 'v1')], []);
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+
+    expect(vol.existsSync('/project/.flightdeck/workflows.json')).toBe(false);
   });
 });
 
@@ -638,8 +652,9 @@ describe('runPush (live) — fingerprint writes', () => {
 
     const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
-    const entry = fp.envs?.prod?.['New WF'];
+    const entry = fp.envs?.prod?.['tgt-new'];
     expect(entry).toBeDefined();
+    expect(entry.name).toBe('New WF');
     expect(entry.versionId).toBe('created-v1');
     expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(entry.structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -664,8 +679,9 @@ describe('runPush (live) — fingerprint writes', () => {
 
     const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
-    const entry = fp.envs?.prod?.['Existing WF'];
+    const entry = fp.envs?.prod?.['tgt-1'];
     expect(entry).toBeDefined();
+    expect(entry.name).toBe('Existing WF');
     expect(entry.versionId).toBe('updated-v1');
     expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
@@ -740,5 +756,118 @@ describe('runPush (live) — fingerprint writes', () => {
     await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => {});
 
     expect(vol.existsSync('/project/.flightdeck/fingerprints.json')).toBe(false);
+  });
+});
+
+// ── live push workflow map registration ───────────────────────────────────────
+
+describe('runPush (live) — workflow map registration', () => {
+  it('writes workflows.json entry with source and target IDs after createWorkflow', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' }),
+      }) as never,
+    );
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const map = JSON.parse(raw);
+    const entries = Object.values(map.workflows) as Record<string, { name: string; id?: string }>[];
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry['dev']).toEqual({ name: 'New WF', id: 'src-1' });
+    expect(entry['prod']).toEqual({ name: 'New WF', id: 'tgt-new' });
+  });
+
+  it('writes workflows.json entry with source and target IDs after updateWorkflow', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+        updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+      }) as never,
+    );
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const map = JSON.parse(raw);
+    const entries = Object.values(map.workflows) as Record<string, { name: string; id?: string }>[];
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry['dev']).toEqual({ name: 'Existing WF', id: 'src-1' });
+    expect(entry['prod']).toEqual({ name: 'Existing WF', id: 'tgt-1' });
+  });
+
+  it('uses resolved name for target entry when workflow map has a mapping', async () => {
+    const wf = makeSnapshotWf('src-1', 'Invoice Sync [DEV]', 'v1');
+    setupProject([wf], []);
+
+    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+      version: 1,
+      workflows: {
+        'invoice-sync': {
+          dev: { name: 'Invoice Sync [DEV]' },
+          prod: { name: 'Invoice Sync' },
+        },
+      },
+    }));
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-inv', versionId: 'v1' }),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    // Success line should show resolved name with mapped-from note
+    expect(output.join('\n')).toContain('Invoice Sync');
+    expect(output.join('\n')).toContain('mapped from');
+
+    // Map entry should have target ID
+    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const map = JSON.parse(raw);
+    expect(map.workflows['invoice-sync']['prod']).toEqual({ name: 'Invoice Sync', id: 'tgt-inv' });
+  });
+
+  it('does not write workflows.json when createWorkflow fails', async () => {
+    const wf = makeSnapshotWf('src-1', 'Failing WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockRejectedValue(new Error('API error')),
+      }) as never,
+    );
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => {});
+
+    expect(vol.existsSync('/project/.flightdeck/workflows.json')).toBe(false);
   });
 });
