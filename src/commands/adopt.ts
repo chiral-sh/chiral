@@ -20,7 +20,7 @@ interface AdoptOptions {
 // ── Validation ────────────────────────────────────────────────────────────────
 
 // No invalid combinations currently exist for adopt.
-function validateOptions(_options: AdoptOptions): void {}
+function validateOptions(_options: AdoptOptions): void { }
 
 // ── Run function ──────────────────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ export async function runAdopt(
       chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
     );
     console.log(
-      `${chalk.green('✔')}   Fingerprints saved` +
+      `${chalk.green('✔   Fingerprints saved')}` +
       chalk.dim(` → .chiral/fingerprints.json  (${plural(workflows.length, 'workflow')})`),
     );
 

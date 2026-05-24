@@ -14,6 +14,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('@inquirer/prompts', () => ({
   confirm: vi.fn(),
+  input: vi.fn(),
 }));
 
 vi.mock('../../../src/lib/n8n-client.js', () => ({
@@ -869,5 +870,116 @@ describe('runPush (live) — workflow map registration', () => {
     await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => { });
 
     expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
+  });
+});
+
+// ── header text ───────────────────────────────────────────────────────────────
+
+describe('runPush — header text', () => {
+  it('shows "Dry run:" header in dry-run mode', async () => {
+    setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+
+    expect(output.join('\n')).toContain('Dry run:');
+    expect(output.join('\n')).not.toContain('Pushing');
+  });
+
+  it('shows "Pushing" header in live push mode', async () => {
+    const wf = makeSnapshotWf('src-1', 'W1', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'v1' }),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+
+    expect(output.join('\n')).toContain('Pushing');
+    expect(output.join('\n')).not.toContain('Dry run:');
+  });
+});
+
+// ── stale snapshot with --yes ─────────────────────────────────────────────────
+
+describe('runPush — stale snapshot with --yes', () => {
+  function setupStaleProject() {
+    setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    vol.writeFileSync(
+      '/project/.chiral/snapshots/20260522T120000Z-abcdef12/meta.json',
+      JSON.stringify({
+        deployment_id: '20260522T120000Z-abcdef12',
+        env: 'dev',
+        command: 'pull',
+        timestamp: twoDaysAgo,
+        workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+    );
+  }
+
+  it('shows stale warning even when --yes is set', async () => {
+    setupStaleProject();
+    vi.mocked(prompts.confirm).mockResolvedValue(true);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+
+    expect(output.join('\n')).toContain('old');
+    expect(output.join('\n')).toContain('chiral pull');
+  });
+
+  it('does not show prompt when --yes is set despite stale snapshot', async () => {
+    setupStaleProject();
+    vi.mocked(prompts.confirm).mockResolvedValue(true);
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+});
+
+// ── prod type-to-confirm ──────────────────────────────────────────────────────
+
+describe('runPush (live) — prod type-to-confirm', () => {
+  it('calls input() for the prod confirmation prompt, not confirm()', async () => {
+    const wf = makeSnapshotWf('src-1', 'W1', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(() =>
+      makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'v1' }),
+      }) as never,
+    );
+
+    vi.mocked(prompts.input).mockResolvedValue('prod');
+    // Per-workflow create prompt still fires for the new workflow — allow it
+    vi.mocked(prompts.confirm).mockResolvedValue(true);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod' }, '/project');
+
+    expect(prompts.input).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('"prod" to confirm') }),
+    );
   });
 });

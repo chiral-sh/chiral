@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { confirm } from '@inquirer/prompts';
-import { Command } from 'commander';
+import { confirm, input } from '@inquirer/prompts';
+import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
@@ -126,6 +126,13 @@ function padEnd(s: string, len: number): string {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type OutputMode = 'human' | 'json';
+
+function resolveOutputMode(options: PushOptions): OutputMode {
+  if (options.json) return 'json';
+  return 'human';
+}
+
 export interface PushOptions {
   source: string;
   target: string;
@@ -173,10 +180,10 @@ export async function runPush(
   const targetClient = new N8nClient(targetEnvObj, options.target);
   targetClient.warnIfExpiringSoon();
 
-  const isJson = !!(options.json);
+  const outputMode = resolveOutputMode(options);
 
   // ── Header ────────────────────────────────────────────────────────────────
-  if (!isJson) {
+  if (outputMode === 'human') {
     console.log();
     const scopeLabel = [
       options.tag ? `tag: ${options.tag}` : '',
@@ -185,9 +192,11 @@ export async function runPush(
       .filter(Boolean)
       .join(', ');
     const scope = scopeLabel ? `  ${chalk.dim(`[${scopeLabel}]`)}` : '';
-    console.log(
-      `  Dry run: ${chalk.cyan(options.source)} → ${chalk.cyan(options.target)}${scope}`,
-    );
+    if (options.dryRun) {
+      console.log(`  Dry run: ${chalk.cyan(options.source)} → ${chalk.cyan(options.target)}${scope}`);
+    } else {
+      console.log(`  Pushing ${chalk.cyan(options.source)} → ${chalk.cyan(options.target)}${scope}`);
+    }
   }
 
   // ── Snapshot check ────────────────────────────────────────────────────────
@@ -201,7 +210,7 @@ export async function runPush(
 
   // Stale snapshot warning (>24h)
   const meta = readSnapshotMeta(chiralDir, deploymentId);
-  if (meta && !options.yes && !options.json) {
+  if (meta && outputMode === 'human') {
     const snapshotAge = Date.now() - new Date(meta.timestamp).getTime();
     const STALE_MS = 24 * 60 * 60 * 1000;
     if (snapshotAge > STALE_MS) {
@@ -217,17 +226,19 @@ export async function runPush(
       );
       console.log();
 
-      let proceed: boolean;
-      try {
-        proceed = await confirm({
-          message: 'Push from snapshot anyway?',
-          default: false,
-        });
-      } catch (err) {
-        // ExitPromptError (Ctrl+C) — let top-level handler deal with it
-        throw err;
+      if (!options.yes) {
+        let proceed: boolean;
+        try {
+          proceed = await confirm({
+            message: 'Push from snapshot anyway?',
+            default: false,
+          });
+        } catch (err) {
+          // ExitPromptError (Ctrl+C) — let top-level handler deal with it
+          throw err;
+        }
+        if (!proceed) throw new ControlledExit(0);
       }
-      if (!proceed) throw new ControlledExit(0);
     }
   }
 
@@ -246,7 +257,7 @@ export async function runPush(
   });
 
   if (snapshotWorkflows.length === 0) {
-    if (!isJson) {
+    if (outputMode === 'human') {
       console.log();
       const scopeDesc = options.tag ? ` tagged "${options.tag}"` : options.pattern ? ` matching "${options.pattern}"` : '';
       console.log(`  ${chalk.yellow('⚠')} No workflows${scopeDesc} found in snapshot for ${chalk.cyan(options.source)}.`);
@@ -262,7 +273,7 @@ export async function runPush(
   }
 
   // ── Fetch from target (parallel) ─────────────────────────────────────────
-  const spinner = !isJson
+  const spinner = outputMode === 'human'
     ? ora({ text: `  Fetching ${chalk.cyan(options.target)} workflows…`, color: 'cyan' }).start()
     : null;
 
@@ -359,7 +370,7 @@ export async function runPush(
   const toSkip = classified.filter((c) => c.action === 'skipped');
 
   // ── JSON output ───────────────────────────────────────────────────────────
-  if (options.json) {
+  if (outputMode === 'json') {
     console.log(
       JSON.stringify({
         source: options.source,
@@ -536,15 +547,12 @@ export async function runPush(
       console.log(
         `  ${chalk.yellow('⚠')}  Pushing to ${options.target} — review changes above carefully.`,
       );
-      try {
-        const answer = await confirm({
-          message: `Type "${options.target}" to confirm`,
-          default: false,
-        });
-        if (!answer) throw new ControlledExit(0);
-      } catch (err) {
-        throw err;
-      }
+      await input({
+        message: `Type "${options.target}" to confirm:`,
+        validate: (v) => v === options.target
+          ? true
+          : `Type exactly "${options.target}" to confirm`,
+      });
     } else {
       try {
         const proceed = await confirm({
@@ -560,7 +568,7 @@ export async function runPush(
 
   // ── Create pre-push snapshot ────────────────────────────────────────────
   const targetDeploymentId = generateDeploymentId();
-  const preSnapshotSpinner = !isJson
+  const preSnapshotSpinner = outputMode === 'human'
     ? ora({ text: `  Creating pre-push snapshot…`, color: 'cyan' }).start()
     : null;
 
@@ -719,17 +727,7 @@ export async function runPush(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.log(`  ${chalk.red('✗')} Failed   ${c.resolvedName}  ${chalk.dim(`(${msg})`)}  `);
-
-      // Log full error details to stderr for debugging
-      console.error(`\n  [DEBUG] Error updating "${c.workflow.name}":`);
-      console.error(`  [DEBUG] Message: ${msg}`);
-      if (err instanceof Error && err.stack) {
-        console.error(`  [DEBUG] Stack: ${err.stack}`);
-      }
-      console.error(`  [DEBUG] Workflow body (sanitized):`);
-      console.error(`  ${JSON.stringify(sanitizedForUpdate, null, 2).split('\n').join('\n  ')}\n`);
-
+      console.log(`  ${chalk.red('✗')} Failed   ${c.resolvedName}  ${chalk.dim(`(${msg})`)}`);
       results.failed.push({ name: c.workflow.name, error: msg });
     }
   }
@@ -751,7 +749,7 @@ export async function runPush(
     workflow_ids: [...results.created, ...results.updated],
     result: results.failed.length === 0 ? 'success' : results.created.length + results.updated.length === 0 ? 'failure' : 'aborted',
     error: results.failed.length > 0 ? `${results.failed.length} workflow(s) failed` : null,
-    chiral_version: '0.0.1', // TODO: read from package.json
+    chiral_version: '0.1.0',
   };
   writeAuditEntry(chiralDir, auditEntry);
 
@@ -777,7 +775,7 @@ export async function runPush(
   console.log();
 
   // ── Git sync ───────────────────────────────────────────────────────────────
-  if (!isJson && results.failed.length === 0) {
+  if (outputMode === 'human' && results.failed.length === 0) {
     const commitMsg = `chore(chiral): push ${options.source}→${options.target}`;
     const syncResult = await syncToRemote(chiralDir, config, commitMsg);
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
@@ -805,8 +803,8 @@ export const pushCommand = new Command('push')
   .option('--dry-run', 'Preview changes only — no writes made')
   .option('--tag <tag>', 'Only push workflows with this tag')
   .option('--pattern <glob>', 'Glob pattern matched against workflow names (e.g. "Customer *")')
-  .option('--yes', 'Skip all confirmation prompts — for CI/scripted use')
-  .option('--no-activate', 'Do not reactivate workflows after push (leave them inactive)')
+  .addOption(new Option('--yes', 'Skip all confirmation prompts — for CI/scripted use').conflicts('dryRun'))
+  .addOption(new Option('--no-activate', 'Do not reactivate workflows after push (leave them inactive)').conflicts('dryRun'))
   .option('--json', 'Output machine-readable JSON instead of human output')
   .option('--gated', 'Paid: gate push on smoke tests passing (requires licenseKey)')
   .addHelpText(
