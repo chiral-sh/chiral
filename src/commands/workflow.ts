@@ -7,8 +7,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import {
-  loadWorkflowMap,
-  loadWorkflowMapRequired,
+loadWorkflowMapRequired,
   writeWorkflowMap,
   upsertEnvEntry,
   deriveLogicalName,
@@ -167,12 +166,11 @@ export async function runWorkflowMap(
     prune?: boolean;
     yes?: boolean;
   },
-  cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const chiralDir = findChiralDir(cwd);
+  const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
+    throw new UserError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
@@ -186,7 +184,7 @@ export async function runWorkflowMap(
   // ── Load config for env names ──────────────────────────────────────────────
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
   try {
-    configResult = loadConfigAndDir(cwd);
+    configResult = loadConfigAndDir();
   } catch {
     // config.json not required for non-interactive non-validate mode
   }
@@ -330,7 +328,7 @@ export async function runWorkflowMap(
   // ── Interactive modes ──────────────────────────────────────────────────────
   if (!configResult) {
     throw new UserError(
-      "Interactive mode requires config.json. Run 'chiral configure' first.",
+      "Interactive mode requires config.json. Run 'chiral environment add <env>' first.",
     );
   }
 
@@ -785,18 +783,17 @@ function renderIncompleteHuman(results: IncompleteResult[]): void {
 
 export async function runWorkflowList(
   options: { env?: string; unmapped?: boolean; incomplete?: boolean; json?: boolean },
-  cwd: string = process.cwd(),
 ): Promise<void> {
-  const chiralDir = findChiralDir(cwd);
+  const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
+    throw new UserError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
   try {
-    configResult = loadConfigAndDir(cwd);
+    configResult = loadConfigAndDir();
   } catch {
     // ok — fall back to deriving env list from workflows.json
   }
@@ -872,12 +869,11 @@ export async function runWorkflowList(
 export async function runWorkflowUnmap(
   logicalName: string,
   options: { env?: string },
-  cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const chiralDir = findChiralDir(cwd);
+  const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No .chiral/ found. Run 'chiral init' first.");
+    throw new UserError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
@@ -890,7 +886,7 @@ export async function runWorkflowUnmap(
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
   try {
-    configResult = loadConfigAndDir(cwd);
+    configResult = loadConfigAndDir();
   } catch { /* best-effort */ }
 
   if (options.env) {
@@ -968,13 +964,7 @@ Examples:
   Interactive — discover and map unmapped workflows:
     chiral workflow map
 
-  Provide logical name, prompt for env names:
-    chiral workflow map order-processor
-
-  Uniform name (same in all environments):
-    chiral workflow map invoice-sync "Invoice Sync"
-
-  Per-environment names:
+  Map with per-environment names:
     chiral workflow map order-processor dev="Order Processor [DEV]" prod="Order Processor"
 
   Remove stale entries:
@@ -998,14 +988,8 @@ Examples:
   List all mappings:
     chiral workflow list
 
-  Show only mappings for prod:
-    chiral workflow list --env prod
-
-  Find unmapped workflows (as JSON):
-    chiral workflow list --unmapped --json
-
-  Find unmapped in one environment:
-    chiral workflow list --unmapped --env dev
+  Find unmapped workflows:
+    chiral workflow list --unmapped
 
   Find mappings missing IDs or env coverage:
     chiral workflow list --incomplete

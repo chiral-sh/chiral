@@ -5,11 +5,14 @@ import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
 import { initCommand } from './commands/init.js';
 import { adoptCommand } from './commands/adopt.js';
-import { configureCommand } from './commands/configure.js';
 import { pullCommand } from './commands/pull.js';
 import { diffCommand } from './commands/diff.js';
 import { pushCommand } from './commands/push.js';
 import { workflowCommand } from './commands/workflow.js';
+import { useCommand } from './commands/use.js';
+import { projectCommand } from './commands/project.js';
+import { environmentCommand } from './commands/environment.js';
+import { remoteCommand } from './commands/remote.js';
 
 const program = new Command();
 
@@ -19,7 +22,10 @@ program
   .version('0.1.0');
 
 program.addCommand(initCommand);
-program.addCommand(configureCommand);
+program.addCommand(useCommand);
+program.addCommand(projectCommand);
+program.addCommand(environmentCommand);
+program.addCommand(remoteCommand);
 program.addCommand(adoptCommand);
 program.addCommand(pullCommand);
 program.addCommand(diffCommand);
@@ -67,7 +73,7 @@ try {
     process.exit(err.code);
   }
   if (err instanceof CommanderError) {
-    if (err.exitCode === 0) process.exit(0); // --help, --version: output already written
+    if (err.exitCode === 0 || err.code === 'commander.help') process.exit(0); // --help, --version, no-subcommand: output already written
     // Commander bakes "error: " into the message — strip it for our formatter
     const message = err.message.replace(/^error:\s*/, '');
     console.error(`\n  ${chalk.red('✗')}  ${message}\n`);

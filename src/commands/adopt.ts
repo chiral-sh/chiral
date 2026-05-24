@@ -26,12 +26,11 @@ function validateOptions(_options: AdoptOptions): void { }
 
 export async function runAdopt(
   options: AdoptOptions,
-  cwd: string = process.cwd(),
 ): Promise<void> {
   validateOptions(options);
 
   const actor = getGitActor();
-  const { config, chiralDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir();
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
   client.warnIfExpiringSoon();

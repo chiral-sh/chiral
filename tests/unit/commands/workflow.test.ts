@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
 import { UserError } from '../../../src/lib/errors.js';
 
@@ -35,6 +35,13 @@ import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.j
 
 const mockExecSync = vi.mocked(execSync);
 
+const GLOBAL_DIR = '/mock-global';
+const PROJECT_DIR = '/project';
+const INDEX = JSON.stringify({
+  version: 1,
+  projects: { 'test-project': { path: PROJECT_DIR, createdAt: '2024-01-01T00:00:00.000Z' } },
+});
+
 const VALID_CONFIG = JSON.stringify({
   version: 1,
   project: 'test-project',
@@ -57,13 +64,21 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
+  process.env['CHIRAL_PROJECT'] = 'test-project';
+  vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: INDEX });
+});
+
+afterEach(() => {
+  delete process.env['CHIRAL_PROJECTS_DIR'];
+  delete process.env['CHIRAL_PROJECT'];
 });
 
 function setupBase(workflowsContent = EMPTY_WORKFLOWS) {
   vol.fromJSON({
-    '/project/.chiral/config.json': VALID_CONFIG,
-    '/project/.chiral/workflows.json': workflowsContent,
-    '/project/.chiral/audit.jsonl': '',
+    [`${PROJECT_DIR}/.chiral/config.json`]: VALID_CONFIG,
+    [`${PROJECT_DIR}/.chiral/workflows.json`]: workflowsContent,
+    [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
   });
 }
 
@@ -76,13 +91,13 @@ describe('runWorkflowMap', () => {
       '/project/.chiral/audit.jsonl': '',
     });
     await expect(
-      runWorkflowMap(['order-processor', 'dev=Order Processor [DEV]', 'prod=Order Processor'], {}, '/project'),
+      runWorkflowMap(['order-processor', 'dev=Order Processor [DEV]', 'prod=Order Processor'], {}),
     ).rejects.toThrow(UserError);
   });
 
   it('writes a uniform mapping (mode 3)', async () => {
     setupBase();
-    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], {}, '/project');
+    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], {});
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toEqual({ dev: { name: 'Invoice Sync' }, prod: { name: 'Invoice Sync' } });
@@ -93,7 +108,6 @@ describe('runWorkflowMap', () => {
     await runWorkflowMap(
       ['order-processor', 'dev=Order Processor [DEV]', 'prod=Order Processor'],
       {},
-      '/project',
     );
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
@@ -105,7 +119,7 @@ describe('runWorkflowMap', () => {
 
   it('upserts an existing entry without duplicating', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
-    await runWorkflowMap(['invoice-sync', 'dev=Invoice Sync Dev'], {}, '/project');
+    await runWorkflowMap(['invoice-sync', 'dev=Invoice Sync Dev'], {});
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']['dev']).toEqual({ name: 'Invoice Sync Dev' });
@@ -116,20 +130,20 @@ describe('runWorkflowMap', () => {
   it('throws on name conflict with another logical entry', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     await expect(
-      runWorkflowMap(['other-sync', 'dev=Invoice Sync'], {}, '/project'),
+      runWorkflowMap(['other-sync', 'dev=Invoice Sync'], {}),
     ).rejects.toThrow(UserError);
   });
 
   it('throws on unexpected plain positional argument (mode error)', async () => {
     setupBase();
     await expect(
-      runWorkflowMap(['name', 'uniform', 'extra'], {}, '/project'),
+      runWorkflowMap(['name', 'uniform', 'extra'], {}),
     ).rejects.toThrow(/Unexpected argument/);
   });
 
   it('does not write in --dry-run mode', async () => {
     setupBase();
-    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], { dryRun: true }, '/project');
+    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], { dryRun: true });
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows).toEqual({});
@@ -138,7 +152,7 @@ describe('runWorkflowMap', () => {
   it('emits JSON in --json mode', async () => {
     setupBase();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], { json: true }, '/project');
+    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], { json: true });
     const jsonOutput = spy.mock.calls.map((c) => c[0]).find((s: string) => s.startsWith('{'));
     expect(jsonOutput).toBeDefined();
     const parsed = JSON.parse(jsonOutput as string);
@@ -148,7 +162,7 @@ describe('runWorkflowMap', () => {
 
   it('writes an audit entry on success', async () => {
     setupBase();
-    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], {}, '/project');
+    await runWorkflowMap(['invoice-sync', 'Invoice Sync'], {});
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
@@ -197,7 +211,7 @@ describe('runWorkflowMap', () => {
 
     const logLines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...a) => { logLines.push(String(a[0])); });
-    await runWorkflowMap([], {}, '/project');
+    await runWorkflowMap([], {});
     spy.mockRestore();
 
     // Diagnostic: if no unmapped workflows were found, show what was logged
@@ -220,13 +234,13 @@ describe('runWorkflowMap', () => {
 describe('runWorkflowList', () => {
   it('throws UserError when workflows.json not found', async () => {
     vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
-    await expect(runWorkflowList({}, '/project')).rejects.toThrow(UserError);
+    await expect(runWorkflowList({})).rejects.toThrow(UserError);
   });
 
   it('prints dim message when no mappings exist', async () => {
     setupBase();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({}, '/project');
+    await runWorkflowList({});
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('No workflow mappings found');
     spy.mockRestore();
@@ -235,7 +249,7 @@ describe('runWorkflowList', () => {
   it('prints table with all entries', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({}, '/project');
+    await runWorkflowList({});
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('invoice-sync');
     expect(output).toContain('Invoice Sync');
@@ -252,7 +266,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(workflowsWithGap);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ env: 'dev' }, '/project');
+    await runWorkflowList({ env: 'dev' });
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('invoice-sync');
     expect(output).not.toContain('order-processor');
@@ -261,13 +275,13 @@ describe('runWorkflowList', () => {
 
   it('throws for unknown --env value', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
-    await expect(runWorkflowList({ env: 'staging' }, '/project')).rejects.toThrow(UserError);
+    await expect(runWorkflowList({ env: 'staging' })).rejects.toThrow(UserError);
   });
 
   it('emits JSON in --json mode', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ json: true }, '/project');
+    await runWorkflowList({ json: true });
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
     expect(parsed.workflows).toBeDefined();
@@ -285,7 +299,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(multiEnvWorkflows);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ env: 'prod', json: true }, '/project');
+    await runWorkflowList({ env: 'prod', json: true });
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
     expect(parsed.workflows['invoice-sync']).toBeDefined();
@@ -297,7 +311,7 @@ describe('runWorkflowList', () => {
 
   it('throws for --unmapped when no snapshots exist', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
-    await expect(runWorkflowList({ unmapped: true }, '/project')).rejects.toThrow(/No snapshots found/);
+    await expect(runWorkflowList({ unmapped: true })).rejects.toThrow(/No snapshots found/);
   });
 
   it('shows unmapped workflows from snapshots', async () => {
@@ -321,7 +335,7 @@ describe('runWorkflowList', () => {
     });
 
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ unmapped: true }, '/project');
+    await runWorkflowList({ unmapped: true });
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('My Unmapped Workflow');
     spy.mockRestore();
@@ -343,7 +357,7 @@ describe('runWorkflowList', () => {
     });
 
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ unmapped: true, json: true }, '/project');
+    await runWorkflowList({ unmapped: true, json: true });
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
     // Must be an array of UnmappedResult, NOT the full workflows.json blob
@@ -368,7 +382,7 @@ describe('runWorkflowList', () => {
     });
 
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ unmapped: true, json: true }, '/project');
+    await runWorkflowList({ unmapped: true, json: true });
     const output = spy.mock.calls[0]?.[0] as string;
     expect(JSON.parse(output)).toEqual([]);
     spy.mockRestore();
@@ -400,7 +414,7 @@ describe('runWorkflowList', () => {
     });
 
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ unmapped: true, env: 'dev', json: true }, '/project');
+    await runWorkflowList({ unmapped: true, env: 'dev', json: true });
     const parsed: Array<{ env: string; name: string }> = JSON.parse(spy.mock.calls[0]?.[0] as string);
     expect(parsed.every((r) => r.env === 'dev')).toBe(true);
     expect(parsed.some((r) => r.name === 'Dev Only WF')).toBe(true);
@@ -422,7 +436,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(missingId);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ incomplete: true, json: true }, '/project');
+    await runWorkflowList({ incomplete: true, json: true });
     const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> =
       JSON.parse(spy.mock.calls[0]?.[0] as string);
     expect(Array.isArray(parsed)).toBe(true);
@@ -443,7 +457,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(missingEnv);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ incomplete: true, json: true }, '/project');
+    await runWorkflowList({ incomplete: true, json: true });
     const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> =
       JSON.parse(spy.mock.calls[0]?.[0] as string);
     expect(parsed[0]?.issues).toContainEqual({ kind: 'missing_env', env: 'prod' });
@@ -462,7 +476,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(complete);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ incomplete: true, json: true }, '/project');
+    await runWorkflowList({ incomplete: true, json: true });
     expect(JSON.parse(spy.mock.calls[0]?.[0] as string)).toEqual([]);
     spy.mockRestore();
   });
@@ -485,7 +499,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(mixed);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ incomplete: true, env: 'prod', json: true }, '/project');
+    await runWorkflowList({ incomplete: true, env: 'prod', json: true });
     const parsed: Array<{ logical: string }> = JSON.parse(spy.mock.calls[0]?.[0] as string);
     expect(parsed.some((r) => r.logical === 'prod-missing')).toBe(true);
     expect(parsed.some((r) => r.logical === 'dev-missing')).toBe(false);
@@ -504,7 +518,7 @@ describe('runWorkflowList', () => {
     });
     setupBase(missingId);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
-    await runWorkflowList({ incomplete: true }, '/project');
+    await runWorkflowList({ incomplete: true });
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('second-wf');
     expect(output).toContain('missing id');
@@ -514,7 +528,7 @@ describe('runWorkflowList', () => {
   it('throws UserError when --unmapped and --incomplete are both set', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     await expect(
-      runWorkflowList({ unmapped: true, incomplete: true }, '/project'),
+      runWorkflowList({ unmapped: true, incomplete: true }),
     ).rejects.toThrow(UserError);
   });
 });
@@ -524,17 +538,17 @@ describe('runWorkflowList', () => {
 describe('runWorkflowUnmap', () => {
   it('throws UserError when workflows.json not found', async () => {
     vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
-    await expect(runWorkflowUnmap('invoice-sync', {}, '/project')).rejects.toThrow(UserError);
+    await expect(runWorkflowUnmap('invoice-sync', {})).rejects.toThrow(UserError);
   });
 
   it('throws when logical name not found', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
-    await expect(runWorkflowUnmap('nonexistent', {}, '/project')).rejects.toThrow(/not found/);
+    await expect(runWorkflowUnmap('nonexistent', {})).rejects.toThrow(/not found/);
   });
 
   it('removes entire logical entry when no --env', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
-    await runWorkflowUnmap('invoice-sync', {}, '/project');
+    await runWorkflowUnmap('invoice-sync', {});
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toBeUndefined();
@@ -548,7 +562,7 @@ describe('runWorkflowUnmap', () => {
       },
     });
     setupBase(multiEnvWorkflows);
-    await runWorkflowUnmap('invoice-sync', { env: 'staging' }, '/project');
+    await runWorkflowUnmap('invoice-sync', { env: 'staging' });
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toEqual({
@@ -560,7 +574,7 @@ describe('runWorkflowUnmap', () => {
   it('throws when --env mapping not found for that logical name', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     await expect(
-      runWorkflowUnmap('invoice-sync', { env: 'staging' }, '/project'),
+      runWorkflowUnmap('invoice-sync', { env: 'staging' }),
     ).rejects.toThrow(/No mapping for/);
   });
 
@@ -572,7 +586,7 @@ describe('runWorkflowUnmap', () => {
       },
     });
     setupBase(singleEnvWorkflow);
-    await runWorkflowUnmap('invoice-sync', { env: 'dev' }, '/project');
+    await runWorkflowUnmap('invoice-sync', { env: 'dev' });
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['invoice-sync']).toBeUndefined();
@@ -580,7 +594,7 @@ describe('runWorkflowUnmap', () => {
 
   it('writes an audit entry with action unmap', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
-    await runWorkflowUnmap('invoice-sync', {}, '/project');
+    await runWorkflowUnmap('invoice-sync', {});
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
@@ -591,6 +605,6 @@ describe('runWorkflowUnmap', () => {
   it('throws UserError when git actor not configured', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
     mockExecSync.mockImplementation(() => { throw new Error('no email'); });
-    await expect(runWorkflowUnmap('invoice-sync', {}, '/project')).rejects.toThrow(UserError);
+    await expect(runWorkflowUnmap('invoice-sync', {})).rejects.toThrow(UserError);
   });
 });

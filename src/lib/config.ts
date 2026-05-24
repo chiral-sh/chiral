@@ -1,11 +1,13 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from './errors.js';
+import { resolveActiveProject, type ResolvedProject } from './projects.js';
 
 export interface ConfigWithDir {
   config: Config;
   chiralDir: string;
+  projectName: string;
 }
 
 const EnvironmentSchema = z.object({
@@ -35,21 +37,13 @@ export type Config = z.infer<typeof ConfigSchema>;
 export type Environment = z.infer<typeof EnvironmentSchema>;
 export type GitSync = z.infer<typeof GitSyncSchema>;
 
-function findConfigPath(startDir: string): string | null {
-  let current = startDir;
-  while (true) {
-    const candidate = join(current, '.chiral', 'config.json');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(current);
-    if (parent === current) return null;
-    current = parent;
-  }
-}
+export function loadConfigAndDir(resolved?: ResolvedProject): ConfigWithDir {
+  const active = resolved ?? resolveActiveProject();
+  const chiralDir = active.chiralDir;
+  const configPath = join(chiralDir, 'config.json');
 
-export function loadConfigAndDir(startDir: string = process.cwd()): ConfigWithDir {
-  const configPath = findConfigPath(startDir);
-  if (!configPath) {
-    throw new UserError("No .chiral/config.json found. Run 'chiral init' first.");
+  if (!existsSync(configPath)) {
+    throw new UserError("No .chiral/config.json found. Run 'chiral environment add <env>' to set up an environment.");
   }
 
   let raw: unknown;
@@ -68,21 +62,18 @@ export function loadConfigAndDir(startDir: string = process.cwd()): ConfigWithDi
     );
   }
 
-  return { config: result.data, chiralDir: dirname(configPath) };
+  return { config: result.data, chiralDir, projectName: active.name };
 }
 
-export function loadConfig(startDir: string = process.cwd()): Config {
-  return loadConfigAndDir(startDir).config;
+export function loadConfig(): Config {
+  return loadConfigAndDir().config;
 }
 
-export function findChiralDir(startDir: string): string | null {
-  let current = startDir;
-  while (true) {
-    const candidate = join(current, '.chiral');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(current);
-    if (parent === current) return null;
-    current = parent;
+export function findChiralDir(): string | null {
+  try {
+    return resolveActiveProject().chiralDir;
+  } catch {
+    return null;
   }
 }
 
