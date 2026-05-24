@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import chalk from 'chalk';
-import { input, confirm } from '@inquirer/prompts';
+import { input, confirm, search } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
@@ -101,19 +101,48 @@ function parseWorkflowMapArgs(args: string[]): ParsedArgs {
 async function promptEnvNames(
   envs: string[],
   defaults: Record<string, string>,
-): Promise<Record<string, string>> {
-  const result: Record<string, string> = {};
+  envWorkflows?: Map<string, Array<{ name: string; id: string }>>,
+): Promise<{ names: Record<string, string>; selectedIds: Map<string, string> }> {
+  const names: Record<string, string> = {};
+  const selectedIds = new Map<string, string>();
+
   for (const env of envs) {
     const current = defaults[env];
-    const hint = current ? chalk.dim(`  [${current}]`) : chalk.dim('  (not set, Enter to skip)');
-    const answer = await input({
-      message: `  Name in ${chalk.cyan(env)}${hint}:`,
-      default: current ?? '',
-    });
-    const value = answer.trim() || current || '';
-    if (value) result[env] = value;
+    const workflows = envWorkflows?.get(env);
+
+    if (workflows && workflows.length > 0) {
+      const selected = await search<string | null>({
+        message: `  Name in ${chalk.cyan(env)}:`,
+        source: (term) => {
+          const skip = { value: null as null, name: chalk.dim('─ skip this env ─') };
+          if (!term) return [skip, ...workflows.map((w) => ({ value: w.name }))];
+          const lower = term.toLowerCase();
+          return [
+            ...workflows
+              .filter((w) => w.name.toLowerCase().includes(lower))
+              .map((w) => ({ value: w.name })),
+            skip,
+          ];
+        },
+        default: current,
+      });
+      if (selected !== null) {
+        names[env] = selected;
+        const wf = workflows.find((w) => w.name === selected);
+        if (wf) selectedIds.set(`${env}::${selected}`, wf.id);
+      }
+    } else {
+      const hint = current ? chalk.dim(`  [${current}]`) : chalk.dim('  (not set, Enter to skip)');
+      const answer = await input({
+        message: `  Name in ${chalk.cyan(env)}${hint}:`,
+        default: current ?? '',
+      });
+      const value = answer.trim() || current || '';
+      if (value) names[env] = value;
+    }
   }
-  return result;
+
+  return { names, selectedIds };
 }
 
 function printMappedEntry(logicalName: string, envNames: Record<string, WorkflowEntry>, allSame: boolean, uniformName?: string): void {
@@ -316,11 +345,13 @@ export async function runWorkflowMap(
   }
   const unmapped: UnmappedWorkflow[] = [];
   const allSnapshotNames = new Map<string, string>();
+  const snapshotWorkflowsCache = new Map<string, Array<{ name: string; id: string }>>();
 
   for (const env of envs) {
     const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
     if (!deploymentId) continue;
     const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+    snapshotWorkflowsCache.set(env, workflows.map((w) => ({ name: w.name, id: w.id })));
     for (const wf of workflows) {
       if (!isAlreadyMapped(map, env, wf.name)) {
         unmapped.push({ name: wf.name, id: wf.id, sourceEnv: env });
@@ -332,7 +363,7 @@ export async function runWorkflowMap(
   const hasSnapshots = unmapped.length > 0 || allSnapshotNames.size > 0;
   let mappedCount = 0;
 
-  console.log();
+  if (!options.json) console.log();
 
   if (unmapped.length === 0 && !hasSnapshots) {
     const firstEnv = envs[0] ?? 'dev';
@@ -346,15 +377,31 @@ export async function runWorkflowMap(
     );
     return;
   } else if (unmapped.length === 0) {
-    console.log('  All workflows from snapshots are already mapped.\n');
+    if (!options.json) console.log('  All workflows from snapshots are already mapped.\n');
   } else {
-    const toProcess = logicalName
-      ? unmapped.filter(() => true)
-      : unmapped;
+    // Pre-fetch workflow lists once per env when --validate (reused across all mappings in this session)
+    const envWorkflowsCache = new Map<string, Array<{ name: string; id: string }>>();
+    if (options.validate) {
+      for (const env of envs) {
+        const envConfig = config.environments[env];
+        if (!envConfig) continue;
+        const client = new N8nClient(envConfig, env);
+        try {
+          const workflows = await client.listWorkflows();
+          envWorkflowsCache.set(env, workflows.map((w) => ({ name: w.name, id: w.id })));
+        } catch {
+          // env unreachable — will fall back to plain input for this env
+        }
+      }
+    }
+
+    const toProcess = unmapped;
+
+    const jsonResults: Array<{ logical_name: string; env_names: Record<string, string> }> = [];
 
     for (const { name: wfName, id: wfId, sourceEnv } of toProcess) {
       if (isAlreadyMapped(map, sourceEnv, wfName)) continue;
-      console.log(`  Unmapped workflow: "${chalk.bold(wfName)}"  ${chalk.dim(`from ${sourceEnv}`)}`);
+      if (!options.json) console.log(`  Unmapped workflow: "${chalk.bold(wfName)}"  ${chalk.dim(`from ${sourceEnv}`)}`);
 
       const suggested = deriveLogicalName(wfName);
       const targetLogical = logicalName ?? await input({
@@ -367,9 +414,19 @@ export async function runWorkflowMap(
         continue;
       }
 
-      // Prompt for names in each env (raw strings)
       const rawDefaults: Record<string, string> = { [sourceEnv]: wfName };
-      const rawNames = await promptEnvNames(envs, rawDefaults);
+      const baseCache = options.validate ? envWorkflowsCache : snapshotWorkflowsCache;
+      const filteredCache = new Map(
+        Array.from(baseCache.entries()).map(([env, workflows]) => [
+          env,
+          workflows.filter((w) => !isAlreadyMapped(map, env, w.name)),
+        ]),
+      );
+      const { names: rawNames, selectedIds: validatedIds } = await promptEnvNames(
+        envs,
+        rawDefaults,
+        filteredCache,
+      );
 
       if (Object.keys(rawNames).length === 0) {
         console.log(chalk.dim('  Nothing saved for this workflow.\n'));
@@ -381,13 +438,13 @@ export async function runWorkflowMap(
         checkNameConflict(map, targetLogical, env, name);
       }
 
-      // Enrich with IDs: source env uses the snapshot ID; others get snapshot lookup
+      // Enrich with IDs: source env uses snapshot ID; validated envs use cached live ID; others snapshot lookup
       const envNames: Record<string, WorkflowEntry> = {};
       for (const [env, name] of Object.entries(rawNames)) {
         if (env === sourceEnv && name === wfName) {
           envNames[env] = { name, id: wfId };
         } else {
-          const id = lookupSnapshotId(chiralDir, env, name);
+          const id = validatedIds.get(`${env}::${name}`) ?? lookupSnapshotId(chiralDir, env, name);
           envNames[env] = { name, ...(id ? { id } : {}) };
         }
       }
@@ -416,10 +473,21 @@ export async function runWorkflowMap(
         });
       }
 
-      printMappedEntry(targetLogical, envNames, false);
+      if (options.json) {
+        jsonResults.push({
+          logical_name: targetLogical,
+          env_names: Object.fromEntries(Object.entries(envNames).map(([e, v]) => [e, v.name])),
+        });
+      } else {
+        printMappedEntry(targetLogical, envNames, false);
+      }
       mappedCount++;
 
       if (logicalName) break;
+    }
+
+    if (options.json && jsonResults.length > 0) {
+      console.log(JSON.stringify(jsonResults.length === 1 ? jsonResults[0] : jsonResults, null, 2));
     }
   }
 
@@ -429,7 +497,7 @@ export async function runWorkflowMap(
       config,
       `chore(chiral): workflow map`,
     );
-    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+    if (!options.json && !syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
         console.log(formatSyncSuccess(syncResult));
       } else {
@@ -528,10 +596,202 @@ async function runWorkflowPrune(
 
 // ── workflow list ─────────────────────────────────────────────────────────────
 
+// Result types for the collect→render pipeline
+interface UnmappedResult {
+  env: string;
+  name: string;
+  id: string;
+}
+
+type IncompleteIssue =
+  | { kind: 'missing_env'; env: string }
+  | { kind: 'missing_id'; env: string; name: string };
+
+interface IncompleteResult {
+  logical: string;
+  issues: IncompleteIssue[];
+}
+
+// ── Collect helpers (pure — no rendering side effects) ────────────────────────
+
+function collectUnmapped(
+  chiralDir: string,
+  map: WorkflowMap,
+  envs: string[],
+): UnmappedResult[] {
+  if (listDeployments(chiralDir).length === 0) {
+    throw new UserError("No snapshots found. Run 'chiral adopt --env <env>' first.");
+  }
+  const results: UnmappedResult[] = [];
+  for (const env of envs) {
+    const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
+    if (!deploymentId) continue;
+    const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+    for (const wf of workflows) {
+      if (!isAlreadyMapped(map, env, wf.name)) {
+        results.push({ env, name: wf.name, id: wf.id });
+      }
+    }
+  }
+  return results;
+}
+
+function collectIncomplete(map: WorkflowMap, envList: string[]): IncompleteResult[] {
+  const results: IncompleteResult[] = [];
+  for (const [logical, envMap] of Object.entries(map.workflows)) {
+    const issues: IncompleteIssue[] = [];
+    for (const env of envList) {
+      const entry = envMap[env];
+      if (!entry) {
+        issues.push({ kind: 'missing_env', env });
+      } else if (!entry.id) {
+        issues.push({ kind: 'missing_id', env, name: entry.name });
+      }
+    }
+    if (issues.length > 0) results.push({ logical, issues });
+  }
+  return results;
+}
+
+// ── Render helpers ────────────────────────────────────────────────────────────
+
+function renderMappedHuman(
+  entries: Array<[string, Record<string, WorkflowEntry>]>,
+  envList: string[],
+): void {
+  if (entries.length === 0) {
+    console.log(chalk.dim('\n  No workflow mappings found. Run chiral workflow map to add one.\n'));
+    return;
+  }
+
+  // Compute column widths using ANSI-stripped lengths
+  const C_LOGICAL = Math.max(
+    'LOGICAL NAME'.length,
+    ...entries.map(([l]) => l.length),
+  );
+  const C_ENVS = envList.map((env) =>
+    Math.max(env.length, ...entries.map(([, m]) => (m[env]?.name ?? '(not set)').length)),
+  );
+  const widths = [C_LOGICAL, ...C_ENVS];
+  const pad = (s: string, w: number) =>
+    s + ' '.repeat(Math.max(0, w - visibleLen(s)));
+
+  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
+  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
+  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
+  const headerRow =
+    '  │ ' +
+    [
+      pad(chalk.dim('LOGICAL NAME'), C_LOGICAL),
+      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i]!)),
+    ].join(' │ ') +
+    ' │';
+
+  console.log();
+  console.log(top);
+  console.log(headerRow);
+  console.log(sep);
+
+  for (const [logical, envMap] of entries) {
+    const hasGap = envList.some((env) => !(env in envMap));
+    const logicalStr = hasGap ? chalk.yellow(logical) : logical;
+    const cells = [
+      pad(logicalStr, C_LOGICAL),
+      ...envList.map((env, i) => {
+        const name = envMap[env]?.name;
+        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]!);
+      }),
+    ];
+    console.log('  │ ' + cells.join(' │ ') + ' │');
+  }
+
+  console.log(bot);
+  console.log();
+}
+
+function renderUnmappedHuman(results: UnmappedResult[], envList: string[]): void {
+  console.log('\n  Unmapped workflows (not in workflows.json):\n');
+
+  if (results.length === 0) {
+    console.log('  All workflows are mapped.\n');
+    return;
+  }
+
+  // Group by env for structured display
+  const byEnv = new Map<string, UnmappedResult[]>();
+  for (const r of results) {
+    const list = byEnv.get(r.env) ?? [];
+    list.push(r);
+    byEnv.set(r.env, list);
+  }
+  for (const [env, wfs] of byEnv) {
+    console.log(`    ${chalk.cyan(env)}:`);
+    for (const wf of wfs) {
+      console.log(`      ${chalk.dim('–')} ${wf.name}`);
+    }
+    console.log();
+  }
+
+  const sourceEnv = envList[0] ?? 'dev';
+  const targetEnv = envList[1] ?? envList[0] ?? 'prod';
+  console.log(
+    chalk.dim(
+      `  Run 'chiral workflow match --source ${sourceEnv} --target ${targetEnv}' to auto-detect matches.\n` +
+        `  Or map manually: chiral workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
+    ),
+  );
+}
+
+function renderIncompleteHuman(results: IncompleteResult[]): void {
+  if (results.length === 0) {
+    console.log('\n  All mappings are complete.\n');
+    return;
+  }
+
+  console.log('\n  Incomplete mappings:\n');
+
+  const firstWithMissingId = results.find((r) =>
+    r.issues.some((i) => i.kind === 'missing_id'),
+  )?.logical;
+
+  for (const { logical, issues } of results) {
+    console.log(`    ${chalk.bold(logical)}`);
+    for (const issue of issues) {
+      if (issue.kind === 'missing_id') {
+        console.log(
+          `      ${chalk.yellow('⚠')} ${chalk.cyan(issue.env)}  missing id  ${chalk.dim(`(name: "${issue.name}")`)}`,
+        );
+      } else {
+        console.log(`      ${chalk.yellow('⚠')} ${chalk.cyan(issue.env)}  missing env entry`);
+      }
+    }
+    console.log();
+  }
+
+  if (firstWithMissingId) {
+    console.log(
+      chalk.dim(
+        `  Run 'chiral workflow map --validate ${firstWithMissingId}' to fill in missing IDs.\n`,
+      ),
+    );
+  } else {
+    console.log(
+      chalk.dim(
+        `  Run 'chiral workflow map <logical-name> <env>="..."' to add missing env entries.\n`,
+      ),
+    );
+  }
+}
+
 export async function runWorkflowList(
-  options: { env?: string; unmapped?: boolean; json?: boolean },
+  options: { env?: string; unmapped?: boolean; incomplete?: boolean; json?: boolean },
   cwd: string = process.cwd(),
 ): Promise<void> {
+  // Mutual exclusion
+  if (options.unmapped && options.incomplete) {
+    throw new UserError('--unmapped and --incomplete cannot be used together');
+  }
+
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
     throw new UserError("No .chiral/ found. Run 'chiral init' first.");
@@ -564,89 +824,52 @@ export async function runWorkflowList(
     }
   }
 
-  if (options.json) {
-    console.log(JSON.stringify(map, null, 2));
-    return;
-  }
-
+  // ── --unmapped mode ───────────────────────────────────────────────────────
   if (options.unmapped) {
-    const hasAnySnapshot = listDeployments(chiralDir).length > 0;
-    if (!hasAnySnapshot) {
-      throw new UserError(
-        "No snapshots found. Run 'chiral adopt --env <env>' first.",
-      );
-    }
-
     const envs = options.env ? [options.env] : envList;
-    let foundAny = false;
-
-    console.log('\n  Unmapped workflows (not in workflows.json):\n');
-    for (const env of envs) {
-      const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
-      if (!deploymentId) continue;
-      const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
-      const unmapped = workflows.filter((w) => !isAlreadyMapped(map, env, w.name));
-      if (unmapped.length > 0) {
-        foundAny = true;
-        console.log(`    ${chalk.cyan(env)}:`);
-        for (const wf of unmapped) {
-          console.log(`      ${chalk.dim('–')} ${wf.name}`);
-        }
-        console.log();
-      }
+    const results = collectUnmapped(chiralDir, map, envs);
+    if (options.json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      renderUnmappedHuman(results, envList);
     }
-
-    if (!foundAny) {
-      console.log('  All workflows are mapped.\n');
-      return;
-    }
-
-    const sourceEnv = envs[0] ?? 'dev';
-    const targetEnv = envs[1] ?? envs[0] ?? 'prod';
-    console.log(
-      chalk.dim(
-        `  Run 'chiral workflow map --source ${sourceEnv} --target ${targetEnv}' to auto-detect matches.\n` +
-        `  Or map manually: chiral workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
-      ),
-    );
     return;
   }
 
-  // Default: table view
-  let entries = Object.entries(map.workflows);
+  // ── --incomplete mode ─────────────────────────────────────────────────────
+  if (options.incomplete) {
+    const allIncomplete = collectIncomplete(map, envList);
+    const results = options.env
+      ? allIncomplete.filter((r) => r.issues.some((i) => i.env === options.env))
+      : allIncomplete;
+    if (options.json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      renderIncompleteHuman(results);
+    }
+    return;
+  }
 
+  // ── Default: mapped table ─────────────────────────────────────────────────
+  let entries = Object.entries(map.workflows);
   if (options.env) {
     entries = entries.filter(([, envMap]) => options.env! in envMap);
   }
 
-  if (entries.length === 0) {
-    console.log(chalk.dim('\n  No workflow mappings found. Run chiral workflow map to add one.\n'));
+  if (options.json) {
+    if (options.env) {
+      // Filtered blob when --env is combined with --json
+      console.log(
+        JSON.stringify({ version: map.version, workflows: Object.fromEntries(entries) }, null, 2),
+      );
+    } else {
+      // Raw blob — backward compat
+      console.log(JSON.stringify(map, null, 2));
+    }
     return;
   }
 
-  const C_LOGICAL = Math.max(12, ...entries.map(([l]) => l.length)) + 2;
-  const C_ENV = Math.max(12, ...envList.map((e) => e.length));
-  const C_NAME = Math.max(C_ENV, 24);
-
-  console.log();
-  const headerParts = [padRight(chalk.dim('LOGICAL NAME'), C_LOGICAL)];
-  for (const env of envList) {
-    headerParts.push(padRight(chalk.dim(env.toUpperCase()), C_NAME + 2));
-  }
-  console.log('  ' + headerParts.join(''));
-
-  for (const [logical, envMap] of entries) {
-    const hasGap = envList.some((env) => !(env in envMap));
-    const logicalStr = hasGap ? chalk.yellow(logical) : logical;
-    const parts = [padRight(logicalStr, C_LOGICAL)];
-    for (const env of envList) {
-      const name = envMap[env]?.name;
-      parts.push(padRight(name ?? chalk.dim('(not set)'), C_NAME + 2));
-    }
-    console.log('  ' + parts.join(''));
-  }
-
-  console.log();
+  renderMappedHuman(entries, envList);
 }
 
 // ── workflow unmap ────────────────────────────────────────────────────────────
@@ -771,7 +994,8 @@ const workflowListCmd = new Command('list')
   .description('List all workflow name mappings from workflows.json')
   .option('--env <env>', 'Show only entries that include a mapping for this environment')
   .option('--unmapped', 'Show workflows from the most recent snapshot with no mapping')
-  .option('--json', 'Emit the full workflows.json as JSON')
+  .option('--incomplete', 'Show mapped workflows that are missing IDs or env coverage')
+  .option('--json', 'Emit machine-readable JSON instead of human output')
   .addHelpText(
     'after',
     `
@@ -782,8 +1006,14 @@ Examples:
   Show only mappings for prod:
     chiral workflow list --env prod
 
-  Find unmapped workflows across all environments:
-    chiral workflow list --unmapped
+  Find unmapped workflows (as JSON):
+    chiral workflow list --unmapped --json
+
+  Find unmapped in one environment:
+    chiral workflow list --unmapped --env dev
+
+  Find mappings missing IDs or env coverage:
+    chiral workflow list --incomplete
 `,
   )
   .action(async (options) => {

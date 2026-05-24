@@ -25,10 +25,11 @@ vi.mock('../../../src/lib/git-sync.js', () => ({
 vi.mock('@inquirer/prompts', () => ({
   input: vi.fn(),
   confirm: vi.fn(),
+  search: vi.fn(),
 }));
 
 import { execSync } from 'node:child_process';
-import { input } from '@inquirer/prompts';
+import { input, search } from '@inquirer/prompts';
 import { runWorkflowMap, runWorkflowList, runWorkflowUnmap } from '../../../src/commands/workflow.js';
 import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.js';
 
@@ -183,13 +184,14 @@ describe('runWorkflowMap', () => {
     writeSnapshotMeta(FD, DEP_STG, { ...BASE_META, deployment_id: DEP_STG, env: 'staging', timestamp: '2026-05-24T12:00:01.000Z' });
 
     const mockInput = vi.mocked(input);
+    const mockSearch = vi.mocked(search);
     // First unmapped: "webhook caller - dev" from dev
-    // prompt 1: logical name → "webhook-caller"
-    // prompt 2: name in dev → "webhook caller - dev" (default accepted)
-    // prompt 3: name in staging → "first workflow"
-    // Second unmapped: "first workflow" from staging — should be skipped, so no more prompts
-    mockInput
-      .mockResolvedValueOnce('webhook-caller')        // logical name
+    // input prompt 1: logical name → "webhook-caller"
+    // search prompt 1: name in dev (from snapshot) → "webhook caller - dev"
+    // search prompt 2: name in staging (from snapshot) → "first workflow"
+    // Second unmapped: "first workflow" from staging — already mapped, so no more prompts
+    mockInput.mockResolvedValueOnce('webhook-caller');
+    mockSearch
       .mockResolvedValueOnce('webhook caller - dev')  // name in dev
       .mockResolvedValueOnce('first workflow');        // name in staging
 
@@ -201,8 +203,9 @@ describe('runWorkflowMap', () => {
     // Diagnostic: if no unmapped workflows were found, show what was logged
     expect(logLines.join('\n'), `console.log output:\n${logLines.join('\n')}`).toContain('Unmapped');
 
-    // input should have been called exactly 3 times — not 4+ (which would mean "first workflow" was re-prompted)
-    expect(mockInput).toHaveBeenCalledTimes(3);
+    // search should have been called exactly 2 times (dev + staging) — not 4+ (which would mean "first workflow" was re-prompted)
+    expect(mockInput).toHaveBeenCalledTimes(1);  // logical name only
+    expect(mockSearch).toHaveBeenCalledTimes(2);
 
     const written = JSON.parse(vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string);
     expect(written.workflows['webhook-caller']).toEqual({
@@ -268,8 +271,29 @@ describe('runWorkflowList', () => {
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
     expect(parsed.workflows).toBeDefined();
+    expect(parsed.version).toBe(1);
     spy.mockRestore();
   });
+
+  it('emits filtered blob for --env --json', async () => {
+    const multiEnvWorkflows = JSON.stringify({
+      version: 1,
+      workflows: {
+        'invoice-sync': { dev: { name: 'Invoice Sync' }, prod: { name: 'Invoice Sync' } },
+        'dev-only': { dev: { name: 'Dev Only Workflow' } },
+      },
+    });
+    setupBase(multiEnvWorkflows);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ env: 'prod', json: true }, '/project');
+    const output = spy.mock.calls[0]?.[0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.workflows['invoice-sync']).toBeDefined();
+    expect(parsed.workflows['dev-only']).toBeUndefined();
+    spy.mockRestore();
+  });
+
+  // ── --unmapped flag ───────────────────────────────────────────────────────────
 
   it('throws for --unmapped when no snapshots exist', async () => {
     setupBase(WORKFLOWS_WITH_ENTRY);
@@ -277,8 +301,6 @@ describe('runWorkflowList', () => {
   });
 
   it('shows unmapped workflows from snapshots', async () => {
-    setupBase();
-    // Create a snapshot
     vol.fromJSON({
       '/project/.chiral/config.json': VALID_CONFIG,
       '/project/.chiral/workflows.json': EMPTY_WORKFLOWS,
@@ -303,6 +325,197 @@ describe('runWorkflowList', () => {
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('My Unmapped Workflow');
     spy.mockRestore();
+  });
+
+  it('emits UnmappedResult[] for --unmapped --json', async () => {
+    vol.fromJSON({
+      '/project/.chiral/config.json': VALID_CONFIG,
+      '/project/.chiral/workflows.json': EMPTY_WORKFLOWS,
+      '/project/.chiral/audit.jsonl': '',
+      '/project/.chiral/snapshots/20240101T120000Z-a3f2b9c1/meta.json': JSON.stringify({
+        deployment_id: '20240101T120000Z-a3f2b9c1', env: 'dev', command: 'adopt',
+        timestamp: '2024-01-01T12:00:00.000Z', workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+      '/project/.chiral/snapshots/20240101T120000Z-a3f2b9c1/wf-abc.json': JSON.stringify({
+        id: 'wf-abc', name: 'Unmapped WF', active: true,
+      }),
+    });
+
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ unmapped: true, json: true }, '/project');
+    const output = spy.mock.calls[0]?.[0] as string;
+    const parsed = JSON.parse(output);
+    // Must be an array of UnmappedResult, NOT the full workflows.json blob
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0]).toMatchObject({ env: 'dev', name: 'Unmapped WF', id: 'wf-abc' });
+    spy.mockRestore();
+  });
+
+  it('emits empty array for --unmapped --json when all are mapped', async () => {
+    vol.fromJSON({
+      '/project/.chiral/config.json': VALID_CONFIG,
+      '/project/.chiral/workflows.json': WORKFLOWS_WITH_ENTRY,
+      '/project/.chiral/audit.jsonl': '',
+      '/project/.chiral/snapshots/20240101T120000Z-a3f2b9c1/meta.json': JSON.stringify({
+        deployment_id: '20240101T120000Z-a3f2b9c1', env: 'dev', command: 'adopt',
+        timestamp: '2024-01-01T12:00:00.000Z', workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+      '/project/.chiral/snapshots/20240101T120000Z-a3f2b9c1/inv.json': JSON.stringify({
+        id: 'inv', name: 'Invoice Sync', active: true,
+      }),
+    });
+
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ unmapped: true, json: true }, '/project');
+    const output = spy.mock.calls[0]?.[0] as string;
+    expect(JSON.parse(output)).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('scopes --unmapped --env to the specified environment only', async () => {
+    vol.fromJSON({
+      '/project/.chiral/config.json': VALID_CONFIG,
+      '/project/.chiral/workflows.json': EMPTY_WORKFLOWS,
+      '/project/.chiral/audit.jsonl': '',
+      // dev snapshot has "Dev Only WF"
+      '/project/.chiral/snapshots/20240101T120000Z-aaaaaaaa/meta.json': JSON.stringify({
+        deployment_id: '20240101T120000Z-aaaaaaaa', env: 'dev', command: 'adopt',
+        timestamp: '2024-01-01T12:00:00.000Z', workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+      '/project/.chiral/snapshots/20240101T120000Z-aaaaaaaa/dev-wf.json': JSON.stringify({
+        id: 'dev-wf', name: 'Dev Only WF', active: true,
+      }),
+      // prod snapshot has "Prod Only WF"
+      '/project/.chiral/snapshots/20240101T120000Z-bbbbbbbb/meta.json': JSON.stringify({
+        deployment_id: '20240101T120000Z-bbbbbbbb', env: 'prod', command: 'adopt',
+        timestamp: '2024-01-01T12:00:01.000Z', workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+      '/project/.chiral/snapshots/20240101T120000Z-bbbbbbbb/prod-wf.json': JSON.stringify({
+        id: 'prod-wf', name: 'Prod Only WF', active: true,
+      }),
+    });
+
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ unmapped: true, env: 'dev', json: true }, '/project');
+    const parsed: Array<{ env: string; name: string }> = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(parsed.every((r) => r.env === 'dev')).toBe(true);
+    expect(parsed.some((r) => r.name === 'Dev Only WF')).toBe(true);
+    expect(parsed.some((r) => r.name === 'Prod Only WF')).toBe(false);
+    spy.mockRestore();
+  });
+
+  // ── --incomplete flag ─────────────────────────────────────────────────────────
+
+  it('emits IncompleteResult[] for --incomplete --json with a missing id', async () => {
+    const missingId = JSON.stringify({
+      version: 1,
+      workflows: {
+        'second-wf': {
+          dev: { name: 'second workflow', id: 'uejsDIYc1knExlM4' },
+          prod: { name: 'second' }, // no id
+        },
+      },
+    });
+    setupBase(missingId);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ incomplete: true, json: true }, '/project');
+    const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> =
+      JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0]?.logical).toBe('second-wf');
+    expect(parsed[0]?.issues).toContainEqual({ kind: 'missing_id', env: 'prod', name: 'second' });
+    spy.mockRestore();
+  });
+
+  it('emits IncompleteResult[] for --incomplete --json with a missing env entry', async () => {
+    const missingEnv = JSON.stringify({
+      version: 1,
+      workflows: {
+        'invoice-sync': {
+          dev: { name: 'Invoice Sync', id: 'abc' },
+          // prod entirely absent
+        },
+      },
+    });
+    setupBase(missingEnv);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ incomplete: true, json: true }, '/project');
+    const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> =
+      JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(parsed[0]?.issues).toContainEqual({ kind: 'missing_env', env: 'prod' });
+    spy.mockRestore();
+  });
+
+  it('emits empty array for --incomplete --json when all mappings are complete', async () => {
+    const complete = JSON.stringify({
+      version: 1,
+      workflows: {
+        'invoice-sync': {
+          dev: { name: 'Invoice Sync', id: 'dev-id' },
+          prod: { name: 'Invoice Sync', id: 'prod-id' },
+        },
+      },
+    });
+    setupBase(complete);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ incomplete: true, json: true }, '/project');
+    expect(JSON.parse(spy.mock.calls[0]?.[0] as string)).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('filters --incomplete --env to entries with issues in that env', async () => {
+    const mixed = JSON.stringify({
+      version: 1,
+      workflows: {
+        // dev issue only
+        'dev-missing': {
+          dev: { name: 'Dev WF' }, // missing id
+          prod: { name: 'Dev WF', id: 'p1' },
+        },
+        // prod issue only
+        'prod-missing': {
+          dev: { name: 'Prod WF', id: 'd1' },
+          prod: { name: 'Prod WF' }, // missing id
+        },
+      },
+    });
+    setupBase(mixed);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ incomplete: true, env: 'prod', json: true }, '/project');
+    const parsed: Array<{ logical: string }> = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(parsed.some((r) => r.logical === 'prod-missing')).toBe(true);
+    expect(parsed.some((r) => r.logical === 'dev-missing')).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('prints human incomplete output containing logical name and issue type', async () => {
+    const missingId = JSON.stringify({
+      version: 1,
+      workflows: {
+        'second-wf': {
+          dev: { name: 'second workflow', id: 'uejsDIYc1knExlM4' },
+          prod: { name: 'second' },
+        },
+      },
+    });
+    setupBase(missingId);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    await runWorkflowList({ incomplete: true }, '/project');
+    const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('second-wf');
+    expect(output).toContain('missing id');
+    spy.mockRestore();
+  });
+
+  it('throws UserError when --unmapped and --incomplete are both set', async () => {
+    setupBase(WORKFLOWS_WITH_ENTRY);
+    await expect(
+      runWorkflowList({ unmapped: true, incomplete: true }, '/project'),
+    ).rejects.toThrow(UserError);
   });
 });
 
