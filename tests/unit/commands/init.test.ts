@@ -147,6 +147,20 @@ describe('runInit', () => {
     expect(JSON.parse(raw).gitSync?.branch).toBe('develop');
   });
 
+  it('throws UserError when --solo and --remote are both provided', async () => {
+    await expect(runInit({ project: 'my-project', solo: true, remote: 'origin' }, '/project')).rejects.toThrow(
+      new UserError('--remote and --solo cannot be used together — --remote sets up git sync, --solo skips it'),
+    );
+  });
+
+  it('skips all git sync prompts and writes no gitSync when --solo is passed', async () => {
+    await runInit({ project: 'my-project', solo: true }, '/project');
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
+    expect(JSON.parse(raw).gitSync).toBeUndefined();
+  });
+
   it('prints project name and next-step configure instruction', async () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
