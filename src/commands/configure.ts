@@ -9,13 +9,34 @@ import {
   writeConfig,
   readProjectNameFromExample,
   loadConfigAndDir,
-  type Config,
   type GitSync,
 } from '../lib/config.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface ConfigureOptions {
+  env?: string;
+  skipTest?: boolean;
+  remote?: string;
+}
+
+// ── Validation ────────────────────────────────────────────────────────────────
+
+// Flag interaction matrix:
+//   --env        : single-env mode — skips env name prompt, exits after one env
+//   --skip-test  : skip connection test; composes with all other flags
+//   --remote     : update git sync remote; composes with --env and --skip-test
+//
+// --remote + --env    : additive — updates gitSync then falls through to configure the named env
+// --remote + --skip-test: allowed — skip-test applies to env loop if it runs; irrelevant if
+//                          --remote triggers an early return (no envs, --env not set)
+function validateOptions(_options: ConfigureOptions): void {
+  // No invalid combinations currently. Structure required by CLI guidelines.
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function maskKey(key: string): string {
   if (key.length <= 4) return '••••';
@@ -44,7 +65,7 @@ function padRight(s: string, n: number): string {
   return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
 }
 
-// ─── summary table ──────────────────────────────────────────────────────────
+// ── Summary table ─────────────────────────────────────────────────────────────
 
 interface EnvResult {
   name: string;
@@ -57,6 +78,7 @@ function printSummary(
   project: string,
   allEnvs: Record<string, { url: string; apiKey: string }>,
   results: EnvResult[],
+  gitSync?: GitSync,
 ): void {
   const names = Object.keys(allEnvs);
   const C_ENV = Math.max(5, ...names.map((n) => n.length)) + 2;
@@ -69,7 +91,13 @@ function printSummary(
   const row = (e: string, u: string, s: string) =>
     `  │ ${padRight(e, C_ENV)} │ ${padRight(u, C_URL)} │ ${padRight(s, C_ST)} │`;
 
-  console.log(`\n  ${chalk.bold(project)}\n`);
+  console.log(`\n  ${chalk.bold(project)}`);
+  if (gitSync) {
+    console.log(
+      chalk.dim(`  Git sync → ${gitSync.remote} (${gitSync.branch})`),
+    );
+  }
+  console.log();
   console.log(bar('┌', '┬', '┐'));
   console.log(row(chalk.dim('env'), chalk.dim('url'), chalk.dim('status')));
   console.log(bar('├', '┼', '┤'));
@@ -93,7 +121,7 @@ function printSummary(
   console.log(bar('└', '┴', '┘'));
 }
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// ── Git sync helpers ──────────────────────────────────────────────────────────
 
 function readGitSyncFromExample(chiralDir: string): GitSync | undefined {
   const examplePath = join(chiralDir, 'config.example.json');
@@ -112,12 +140,14 @@ function readGitSyncFromExample(chiralDir: string): GitSync | undefined {
   return undefined;
 }
 
-// ─── main logic ─────────────────────────────────────────────────────────────
+// ── Main logic ────────────────────────────────────────────────────────────────
 
 export async function runConfigure(
-  options: { env?: string; skipTest?: boolean; remote?: string },
+  options: ConfigureOptions,
   cwd: string = process.cwd(),
 ): Promise<void> {
+  validateOptions(options);
+
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
     throw new UserError("No .chiral/ found. Run 'chiral init' first.");
@@ -144,6 +174,11 @@ export async function runConfigure(
           `  ${chalk.cyan(name.padEnd(14))} ${chalk.dim(truncateUrl(env.url, 44))}  ${chalk.dim(maskKey(env.apiKey))}`,
         );
       }
+      if (gitSync) {
+        console.log(
+          chalk.dim(`\n  Git sync → ${gitSync.remote} (${gitSync.branch})`),
+        );
+      }
       console.log();
     } catch {
       project = readProjectNameFromExample(chiralDir);
@@ -154,7 +189,9 @@ export async function runConfigure(
     gitSync = readGitSyncFromExample(chiralDir);
   }
 
-  // --remote flag: update or enable gitSync; save and return if we already have environments
+  // ── --remote: update or enable gitSync ───────────────────────────────────────
+  // Early return (remote-only mode) only when --env is NOT also set AND
+  // environments already exist — otherwise fall through so --env can be handled.
   if (options.remote) {
     const currentBranch = gitSync?.branch ?? 'main';
     gitSync = { enabled: true, remote: options.remote, branch: currentBranch };
@@ -162,28 +199,35 @@ export async function runConfigure(
       `\n  ${chalk.green('✓')}  Git sync remote set → ${chalk.cyan(options.remote)} ${chalk.dim(`(${currentBranch})`)}`,
     );
 
-    if (Object.keys(environments).length > 0) {
-      const config: Config = {
+    const hasEnvs = Object.keys(environments).length > 0;
+    if (!options.env && hasEnvs) {
+      // Remote-only update: persist, show summary, hint, done.
+      writeConfig(chiralDir, {
         version: 1,
         project,
         environments,
         ...(licenseKey ? { licenseKey } : {}),
         gitSync,
-      };
-      writeConfig(chiralDir, config);
-      console.log('  ' + chalk.green('✓') + ' Saved .chiral/config.json  ' + chalk.dim('(mode 600)'));
-      console.log();
+      });
+      console.log('  ' + chalk.green('✓') + '  Saved .chiral/config.json  ' + chalk.dim('(mode 600)'));
+      printSummary(project, environments, [], gitSync);
+      const firstEnv = Object.keys(environments)[0];
+      if (firstEnv) {
+        console.log(`\n  ${chalk.dim('Next:')} chiral adopt --env ${firstEnv}\n`);
+      }
       return;
     }
+    // else: fall through — --env was provided, or no envs exist yet
   }
 
+  // ── Env collection loop ───────────────────────────────────────────────────────
   const results: EnvResult[] = [];
   const singleEnvMode = Boolean(options.env);
   let isFirst = true;
   let keepGoing = true;
 
   while (keepGoing) {
-    // ── env name ──────────────────────────────────────────────────────────
+    // ── env name ────────────────────────────────────────────────────────────
     let envName: string;
     if (isFirst && options.env) {
       envName = options.env;
@@ -203,14 +247,14 @@ export async function runConfigure(
       `\n  ${chalk.bold(isUpdating ? 'Updating' : 'Configuring')} ${chalk.cyan(envName)}\n`,
     );
 
-    // ── URL ───────────────────────────────────────────────────────────────
+    // ── URL ──────────────────────────────────────────────────────────────────
     const url = await input({
       message: '  n8n URL:',
       default: existing?.url,
       validate: validateUrl,
     });
 
-    // ── API key ───────────────────────────────────────────────────────────
+    // ── API key ──────────────────────────────────────────────────────────────
     console.log(
       chalk.dim(
         '  Scopes needed: workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
@@ -229,7 +273,7 @@ export async function runConfigure(
       throw new UserError('API key is required');
     }
 
-    // ── connection test ───────────────────────────────────────────────────
+    // ── Connection test ──────────────────────────────────────────────────────
     let workflowCount: number | undefined;
     let status: EnvResult['status'] = 'skipped';
 
@@ -265,10 +309,18 @@ export async function runConfigure(
       }
     }
 
-    // ── save env ──────────────────────────────────────────────────────────
+    // ── Save env — write immediately so Ctrl+C never loses confirmed work ────
     const normalizedUrl = url.replace(/\/+$/, '');
     environments[envName] = { url: normalizedUrl, apiKey };
     results.push({ name: envName, url: normalizedUrl, workflowCount, status });
+
+    writeConfig(chiralDir, {
+      version: 1,
+      project,
+      environments,
+      ...(licenseKey ? { licenseKey } : {}),
+      ...(gitSync ? { gitSync } : {}),
+    });
 
     isFirst = false;
 
@@ -285,19 +337,8 @@ export async function runConfigure(
     return;
   }
 
-  // ── write config.json ─────────────────────────────────────────────────────
-  const config: Config = {
-    version: 1,
-    project,
-    environments,
-    ...(licenseKey ? { licenseKey } : {}),
-    ...(gitSync ? { gitSync } : {}),
-  };
-  writeConfig(chiralDir, config);
-  console.log('\n  ' + chalk.green('✓') + ' Saved .chiral/config.json  ' + chalk.dim('(mode 600)'));
-
-  // ── summary ───────────────────────────────────────────────────────────────
-  printSummary(project, environments, results);
+  // ── Summary ───────────────────────────────────────────────────────────────────
+  printSummary(project, environments, results, gitSync);
 
   const firstNew = results.find((r) => r.status === 'connected')?.name ?? results[0]?.name;
   if (firstNew) {
@@ -313,6 +354,12 @@ export const configureCommand = new Command('configure')
   .addHelpText(
     'after',
     `
+Flag combinations:
+  --remote and --env are additive: --remote updates the git sync remote and --env
+    configures the named environment in the same invocation.
+  --skip-test composes with any other flag.
+  --remote alone (with existing environments) updates the remote and exits immediately.
+
 Examples:
   Configure all environments interactively:
     chiral configure
@@ -325,6 +372,9 @@ Examples:
 
   Update the git sync remote:
     chiral configure --remote origin
+
+  Update the git sync remote and reconfigure prod in one command:
+    chiral configure --remote origin --env prod
 `,
   )
   .action(async (options) => {

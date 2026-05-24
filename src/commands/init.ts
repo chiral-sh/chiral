@@ -8,6 +8,30 @@ import { UserError } from '../lib/errors.js';
 import { createChiralDirectory } from '../state/init.js';
 import type { GitSync } from '../lib/config.js';
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface InitOptions {
+  project?: string;
+  remote?: string;
+  solo?: boolean;
+}
+
+// ── Validation ────────────────────────────────────────────────────────────────
+
+// Flag interaction matrix:
+//   --project  : composes with everything — just skips the name prompt
+//   --remote   : sets up git sync non-interactively; mutually exclusive with --solo
+//   --solo     : skips git sync setup entirely; mutually exclusive with --remote
+function validateOptions(options: InitOptions): void {
+  if (options.remote && options.solo) {
+    throw new UserError(
+      '--remote and --solo cannot be used together — --remote sets up git sync, --solo skips it',
+    );
+  }
+}
+
+// ── Git helpers ───────────────────────────────────────────────────────────────
+
 function isGitRepo(cwd: string): boolean {
   try {
     execSync('git rev-parse --git-dir', { cwd, stdio: 'pipe' });
@@ -38,9 +62,11 @@ function detectBranch(cwd: string): string {
 }
 
 export async function runInit(
-  options: { project?: string; remote?: string; solo?: boolean },
+  options: InitOptions,
   cwd: string = process.cwd(),
 ): Promise<void> {
+  validateOptions(options);
+
   if (!isGitRepo(cwd)) {
     throw new UserError('chiral init must be run inside a Git repository');
   }
@@ -127,6 +153,10 @@ export const initCommand = new Command('init')
   .addHelpText(
     'after',
     `
+Flag combinations:
+  --remote and --solo are mutually exclusive — --remote sets up git sync, --solo skips it.
+  --project composes with any other flag.
+
 Examples:
   Initialize with an interactive project name prompt:
     chiral init

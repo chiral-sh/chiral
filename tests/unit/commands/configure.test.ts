@@ -314,6 +314,70 @@ describe('runConfigure', () => {
     expect(output.some((l) => l.includes('5 workflow'))).toBe(true);
   });
 
+  it('--remote with --env falls through to env loop and does not discard --env', async () => {
+    vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
+    // Only the URL prompt fires (env name comes from --env flag)
+    mockInput.mockResolvedValueOnce('https://dev.n8n.example.com');
+    mockPassword.mockResolvedValueOnce('new-key');
+    MockN8nClient.mockImplementation(() => makeClientMock(3) as never);
+
+    await runConfigure({ env: 'dev', remote: 'origin' }, '/project');
+
+    const written = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
+    // gitSync must be updated
+    expect(written.gitSync?.remote).toBe('origin');
+    // env must be configured (not discarded)
+    expect(written.environments.dev.apiKey).toBe('new-key');
+  });
+
+  it('--remote alone with existing envs shows Next: hint before returning', async () => {
+    vol.fromJSON({ '/project/.chiral/config.json': VALID_CONFIG });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
+
+    await runConfigure({ remote: 'origin' }, '/project');
+
+    vi.mocked(console.log).mockRestore();
+    expect(output.some((l) => l.includes('Next:'))).toBe(true);
+  });
+
+  it('writes config.json after each env so a partial loop leaves earlier envs on disk', async () => {
+    vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
+    mockInput
+      .mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com')
+      .mockResolvedValueOnce('prod').mockResolvedValueOnce('https://prod.n8n.example.com');
+    mockPassword.mockResolvedValueOnce('dev-key').mockResolvedValueOnce('prod-key');
+    MockN8nClient.mockImplementation(() => makeClientMock(2) as never);
+    mockConfirm
+      .mockResolvedValueOnce(true)  // add another after dev
+      .mockResolvedValueOnce(false); // stop after prod
+
+    // Read config.json immediately after the first env would be saved
+    let configAfterFirstEnv: string | null = null;
+    const originalWriteFile = (await import('node:fs')).writeFileSync;
+    let writeCount = 0;
+    vi.spyOn(await import('node:fs'), 'writeFileSync').mockImplementation((...args) => {
+      originalWriteFile(...args);
+      writeCount++;
+      if (writeCount === 1) {
+        configAfterFirstEnv = vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string;
+      }
+    });
+
+    await runConfigure({}, '/project');
+
+    vi.restoreAllMocks();
+
+    // After first env save, only dev should be present
+    const interim = JSON.parse(configAfterFirstEnv!);
+    expect(Object.keys(interim.environments)).toEqual(['dev']);
+
+    // Final state has both
+    const final = JSON.parse(vol.readFileSync('/project/.chiral/config.json', 'utf-8') as string);
+    expect(Object.keys(final.environments)).toEqual(['dev', 'prod']);
+  });
+
   it('does nothing and exits cleanly when all envs are skipped', async () => {
     vol.fromJSON({ '/project/.chiral/config.example.json': EXAMPLE_CONFIG });
     mockInput.mockResolvedValueOnce('dev').mockResolvedValueOnce('https://dev.n8n.example.com');
