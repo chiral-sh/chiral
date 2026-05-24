@@ -458,18 +458,18 @@ export async function runPush(
       ? `will be created as "${c.resolvedName}" — run: flightdeck workflow map --validate to check`
       : 'will be created';
     console.log(
-      `  ${chalk.green('+')} ${c.workflow.name}  ${chalk.dim(`(${createNote})`)}`,
+      `  ${chalk.green('+')} ${c.resolvedName}  ${chalk.dim(`(${createNote})`)}`,
     );
   }
   for (const c of toUpdate) {
     const activeNote = c.targetActive ? ' — active, will be paused briefly' : '';
     console.log(
-      `  ${chalk.yellow('~')} ${c.workflow.name}  ${chalk.dim(`(will be updated${activeNote})`)}`,
+      `  ${chalk.yellow('~')} ${c.resolvedName}  ${chalk.dim(`(will be updated${activeNote})`)}`,
     );
   }
   for (const c of toSkip) {
     console.log(
-      `  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(already up to date — skipped)')}`,
+      `  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date — skipped)')}`,
     );
   }
 
@@ -627,7 +627,7 @@ export async function runPush(
 
   for (const c of classified) {
     if (c.action === 'skipped') {
-      console.log(`  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(already up to date — skipped)')}`);
+      console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date — skipped)')}`);
       results.skipped.push(c.workflow.name);
       continue;
     }
@@ -648,7 +648,7 @@ export async function runPush(
               default: false,
             });
             if (!createIt) {
-              console.log(`  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(skipped at user request)')}`);
+              console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
               results.skipped.push(c.workflow.name);
               continue;
             }
@@ -699,7 +699,7 @@ export async function runPush(
               default: false,
             });
             if (!updateIt) {
-              console.log(`  ${chalk.dim('─')} ${c.workflow.name}  ${chalk.dim('(skipped at user request)')}`);
+              console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
               results.skipped.push(c.workflow.name);
               console.log();
               continue;
@@ -738,16 +738,16 @@ export async function runPush(
         // Reactivate if was active and --no-activate not set
         if (targetWorkflow.active && !options.noActivate) {
           await targetClient.activateWorkflow(targetWorkflow.id);
-          console.log(`  ${chalk.green('✓')} Updated  ${c.workflow.name}  ${chalk.dim('(reactivated)')}`);
+          console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}  ${chalk.dim('(reactivated)')}`);
         } else {
-          console.log(`  ${chalk.green('✓')} Updated  ${c.workflow.name}`);
+          console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}`);
         }
 
         results.updated.push(c.workflow.name);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.log(`  ${chalk.red('✗')} Failed   ${c.workflow.name}  ${chalk.dim(`(${msg})`)}  `);
+      console.log(`  ${chalk.red('✗')} Failed   ${c.resolvedName}  ${chalk.dim(`(${msg})`)}  `);
 
       // Log full error details to stderr for debugging
       console.error(`\n  [DEBUG] Error updating "${c.workflow.name}":`);
