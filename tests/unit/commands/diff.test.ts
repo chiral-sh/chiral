@@ -772,6 +772,96 @@ describe('runDiff — fingerprint-based change detection', () => {
   });
 });
 
+// ── + hint text ───────────────────────────────────────────────────────────────
+
+describe('runDiff — + hint text for added workflows', () => {
+  it('shows "will be created" for unmapped added workflow', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF2]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+
+    const joined = output.join('\n');
+    expect(joined).toContain('will be created');
+    expect(joined).toContain('wrong name? run: chiral workflow map');
+    // Must NOT include the old "in dev, not in prod" prefix
+    expect(joined).not.toContain('in dev, not in prod');
+  });
+
+  it('shows mapped hint without "in X, not in Y" prefix for mapped-but-not-found workflow', async () => {
+    setupProject();
+    vol.writeFileSync(
+      '/project/.chiral/workflows.json',
+      JSON.stringify({
+        version: 1,
+        workflows: {
+          'invoice-sync': { dev: { name: 'Invoice Sync [DEV]' }, prod: { name: 'Invoice Sync' } },
+        },
+      }),
+    );
+
+    const srcWf = makeSummary({ id: 'src-inv', name: 'Invoice Sync [DEV]', versionId: 'v1' });
+    // Target does NOT have 'Invoice Sync' → appears as added with mapped hint
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([srcWf]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+
+    const joined = output.join('\n');
+    expect(joined).toContain('mapped to "Invoice Sync" in prod but not found — does it exist?');
+    expect(joined).not.toContain('in dev, not in prod');
+    expect(joined).not.toContain('run: chiral workflow map');
+  });
+});
+
+// ── output mode ───────────────────────────────────────────────────────────────
+
+describe('runDiff — output mode selection', () => {
+  it('suppresses spinner and header when --json is set', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true }, '/project');
+
+    // Only one line emitted: the JSON blob
+    expect(logged).toHaveLength(1);
+    expect(() => JSON.parse(logged[0])).not.toThrow();
+  });
+
+  it('suppresses spinner and header when --name-only is set', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', nameOnly: true }, '/project');
+
+    // Envs are identical → no names emitted, no header text
+    expect(logged).toHaveLength(0);
+  });
+});
+
 // ── Next: hint ────────────────────────────────────────────────────────────────
 
 describe('runDiff — Next: hint', () => {
