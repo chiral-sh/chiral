@@ -57,6 +57,7 @@ interface RemovedEntry {
 
 interface ModifiedEntry {
   name: string;
+  targetName: string;
   sourceId: string;
   sourceVersionId: string;
   targetVersionId: string;
@@ -166,6 +167,7 @@ async function computeDiff(
       } else {
         modified.push({
           name: src.name,
+          targetName: resolvedName,
           sourceId: src.id,
           sourceVersionId: src.versionId,
           targetVersionId: tgt.versionId,
@@ -281,7 +283,7 @@ export async function runDiff(
     if (options.nameOnly) {
       for (const w of diff.added) console.log(w.name);
       for (const w of diff.removed) console.log(w.name);
-      for (const w of diff.modified) console.log(w.name);
+      for (const w of diff.modified) console.log(w.targetName);
     } else if (options.json) {
       console.log(
         JSON.stringify({
@@ -289,8 +291,8 @@ export async function runDiff(
           target: options.target,
           added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
           removed: diff.removed.map(({ name }) => ({ name })),
-          modified: diff.modified.map(({ name, sourceVersionId, targetVersionId }) => ({
-            name,
+          modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId }) => ({
+            name: targetName,
             sourceVersionId,
             targetVersionId,
           })),
@@ -327,7 +329,7 @@ export async function runDiff(
         }
         for (const w of diff.modified) {
           console.log(
-            `  ${chalk.yellow('~')} ${w.name}    ${chalk.dim('(modified)')}`,
+            `  ${chalk.yellow('~')} ${w.targetName}    ${chalk.dim('(modified)')}`,
           );
         }
         if (options.showUnchanged) {

@@ -384,7 +384,7 @@ describe('runDiff — name resolution via workflows.json', () => {
     await runDiff({ source: 'dev', target: 'prod' }, '/project');
 
     expect(output.join('\n')).toContain('~');
-    expect(output.join('\n')).toContain('Order Processor [DEV]');
+    expect(output.join('\n')).toContain('Order Processor');
   });
 
   it('falls back to exact name when no mapping exists', async () => {
