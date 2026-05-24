@@ -177,10 +177,9 @@ function resolveOutputMode(options: DiffOptions): OutputMode {
 
 export async function runDiff(
   options: DiffOptions,
-  cwd: string = process.cwd(),
 ): Promise<void> {
   const actor = getGitActor();
-  const { config, chiralDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir();
   const sourceEnvObj = resolveEnv(config, options.source);
   const targetEnvObj = resolveEnv(config, options.target);
 
@@ -376,23 +375,11 @@ Examples:
   Compare dev and prod:
     chiral diff --source dev --target prod
 
-  Compare only workflows tagged "production":
+  Filter to a tag:
     chiral diff --source dev --target prod --tag production
 
-  Compare workflows matching a name pattern:
-    chiral diff --source dev --target prod --pattern "Customer *"
-
-  Include identical workflows in output:
-    chiral diff --source dev --target prod --show-unchanged
-
-  Exit 1 if differences exist (for CI scripts):
+  Exit 1 if differences found (for CI):
     chiral diff --source dev --target prod --exit-code
-
-  Print only differing workflow names for piping:
-    chiral diff --source dev --target prod --name-only
-
-  Machine-readable output for scripting:
-    chiral diff --source dev --target prod --json
 `,
   )
   .action(async (options) => {

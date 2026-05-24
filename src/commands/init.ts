@@ -1,176 +1,147 @@
-import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { execSync } from 'node:child_process';
-import { input, confirm } from '@inquirer/prompts';
+import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
-import { Command, Option } from 'commander';
+import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
+import {
+  getProjectsDir,
+  registerProject,
+  projectExists,
+  writeSession,
+} from '../lib/projects.js';
 import { createChiralDirectory } from '../state/init.js';
-import type { GitSync } from '../lib/config.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface InitOptions {
   project?: string;
-  remote?: string;
-  solo?: boolean;
-}
-
-// ── Validation ────────────────────────────────────────────────────────────────
-
-function validateOptions(options: InitOptions): void {
-  if (options.project?.startsWith('-')) {
-    throw new UserError(`Invalid project name: ${options.project}`);
-  }
+  noGit?: boolean;
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
 
-function isGitRepo(cwd: string): boolean {
+function isGitInstalled(): boolean {
   try {
-    execSync('git rev-parse --git-dir', { cwd, stdio: 'pipe' });
+    execSync('git --version', { stdio: 'pipe' });
     return true;
   } catch {
     return false;
   }
 }
 
-function detectRemote(cwd: string): string | null {
+function runGitInit(dir: string): void {
   try {
-    const out = execSync('git remote -v', { cwd, encoding: 'utf-8', stdio: 'pipe' });
-    const match = out.match(/^(\S+)\s+(\S+)\s+\(fetch\)/m);
-    return match ? (match[1] ?? null) : null;
+    execSync('git init', { cwd: dir, stdio: 'pipe' });
   } catch {
-    return null;
+    // non-fatal — user can run git init themselves
   }
 }
 
-function detectBranch(cwd: string): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd, encoding: 'utf-8', stdio: 'pipe',
-    }).trim() || 'main';
-  } catch {
-    return 'main';
-  }
-}
+// ── Run function ──────────────────────────────────────────────────────────────
 
-export async function runInit(
-  options: InitOptions,
-  cwd: string = process.cwd(),
-): Promise<void> {
-  validateOptions(options);
-
-  if (!isGitRepo(cwd)) {
-    throw new UserError('chiral init must be run inside a Git repository');
-  }
-
-  const chiralDir = join(cwd, '.chiral');
-  if (existsSync(chiralDir)) {
-    throw new UserError('Already initialized. Delete .chiral/ to start over.');
-  }
-
+export async function runInit(options: InitOptions): Promise<void> {
+  // Determine project name
   let projectName = options.project?.trim() ?? '';
   if (!projectName) {
     projectName = await input({
       message: 'Project name:',
-      default: basename(cwd),
-      validate: (v) => (v.trim() ? true : 'Project name cannot be empty'),
+      validate: (v) => {
+        if (!v.trim()) return 'Project name cannot be empty';
+        if (/[/\\:*?"<>|]/.test(v)) return 'Project name cannot contain / \\ : * ? " < > |';
+        return true;
+      },
     });
     projectName = projectName.trim();
   }
-  if (!projectName) {
-    throw new UserError('Project name is required');
+  if (!projectName) throw new UserError('Project name is required');
+  if (/[/\\:*?"<>|]/.test(projectName)) {
+    throw new UserError(`Invalid project name: "${projectName}"`);
   }
 
-  // ── Git sync setup ─────────────────────────────────────────────────────────
-  let gitSync: GitSync | undefined;
+  // Free tier: enforce 1-project limit (no license check yet — placeholder)
+  // TODO: re-enable once paid tier / license gate is wired up (see CLAUDE.md Phase 5)
+  // const projectCount = getProjectCount();
+  // if (projectCount >= 1) {
+  //   throw new UserError(
+  //     `Free tier allows 1 project. You already have ${projectCount} project${projectCount === 1 ? '' : 's'}.\n` +
+  //     `  Run 'chiral project list' to see your projects, or upgrade to create more.`,
+  //   );
+  // }
 
-  if (!options.solo) {
-    const detectedBranch = detectBranch(cwd);
-
-    if (options.remote) {
-      // Non-interactive: remote provided via flag, branch auto-detected
-      gitSync = { enabled: true, remote: options.remote, branch: detectedBranch };
-    } else {
-      const wantsSync = await confirm({
-        message: 'Enable git sync? (auto-commits state changes to your team remote after each operation)',
-        default: true,
-      });
-
-      if (wantsSync) {
-        const detected = detectRemote(cwd);
-        const remoteAnswer = await input({
-          message: 'Git remote name or URL:',
-          default: detected ?? 'origin',
-          validate: (v) => (v.trim() ? true : 'Remote cannot be empty'),
-        });
-
-        gitSync = {
-          enabled: true,
-          remote: remoteAnswer.trim(),
-          branch: detectedBranch,
-        };
-      }
-    }
+  // Case-insensitive collision check
+  if (projectExists(projectName)) {
+    throw new UserError(
+      `A project named "${projectName}" already exists. Run 'chiral project list' to see your projects.`,
+    );
   }
 
-  createChiralDirectory(chiralDir, projectName, gitSync);
+  // Create directory under global projects dir
+  const projectsDir = getProjectsDir();
+  const projectDir = join(projectsDir, projectName);
+  if (existsSync(projectDir)) {
+    throw new UserError(
+      `Directory "${projectDir}" already exists. Choose a different project name or remove the directory.`,
+    );
+  }
+
+  mkdirSync(projectDir, { recursive: true });
+
+  const chiralDir = join(projectDir, '.chiral');
+  createChiralDirectory(chiralDir, projectName);
+
+  // Register in global index and auto-select for this terminal session
+  registerProject(projectName, projectDir);
+  const ppid = process.ppid;
+  if (ppid) writeSession(ppid, projectName);
+
+  // Run git init unless --no-git or git not installed
+  let gitInitDone = false;
+  if (!options.noGit && isGitInstalled()) {
+    runGitInit(projectDir);
+    gitInitDone = true;
+  }
 
   // ── Output ─────────────────────────────────────────────────────────────────
   const file = (path: string, note?: string) =>
     `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('— ' + note) : ''}`;
 
   console.log(`\n  ${chalk.bold(projectName)}\n`);
-  console.log(file('.chiral/config.example.json', 'fill in your environments here'));
-  console.log(file('.chiral/.gitignore', 'keeps config.json out of git'));
-  console.log(file('.chiral/credentials.json'));
-  console.log(file('.chiral/audit.jsonl'));
-  console.log(file('.chiral/locks/'));
-  console.log(file('.chiral/snapshots/'));
+  console.log(file(`${projectDir}/.chiral/config.example.json`, 'fill in your environments here'));
+  console.log(file(`${projectDir}/.chiral/.gitignore`, 'keeps config.json out of git'));
+  console.log(file(`${projectDir}/.chiral/credentials.json`));
+  console.log(file(`${projectDir}/.chiral/audit.jsonl`));
+  console.log(file(`${projectDir}/.chiral/locks/`));
+  console.log(file(`${projectDir}/.chiral/snapshots/`));
 
-  if (gitSync) {
-    console.log(
-      `\n  ${chalk.green('✓')}  Git sync enabled → ${chalk.cyan(gitSync.remote)} ${chalk.dim(`[${gitSync.branch}]`)}`,
-    );
-    console.log(chalk.dim('     State changes will be committed and pushed automatically.'));
+  if (gitInitDone) {
+    console.log(`\n  ${chalk.green('✓')}  Git initialized → ${chalk.dim(projectDir)}`);
   }
 
-  console.log(`\n  ${chalk.dim('Next:')} chiral configure\n`);
+  console.log(`\n  ${chalk.dim('Next:')} chiral environment add dev\n`);
 }
 
 export const initCommand = new Command('init')
-  .description('Initialize .chiral/ in the current Git repository')
-  .option('--project <name>', 'Project name (skips interactive prompt)')
-  .addOption(
-    new Option('--remote <remote>', 'Git remote name or URL for team sync (skips interactive git sync prompt)')
-      .conflicts('solo'),
-  )
-  .addOption(
-    new Option('--solo', 'Skip git sync setup entirely')
-      .conflicts('remote'),
-  )
+  .description('Create a new managed chiral project')
+  .argument('[name]', 'Project name (skips interactive prompt)')
+  .option('--project <name>', 'Project name (alternative to positional argument)')
+  .option('--no-git', 'Skip automatic git init inside the project folder')
   .addHelpText(
     'after',
     `
-Flag combinations:
-  --remote and --solo are mutually exclusive — --remote sets up git sync, --solo skips it.
-  --project composes with any other flag.
-
 Examples:
-  Initialize with an interactive project name prompt:
+  Create a project interactively:
     chiral init
 
-  Initialize with a specific project name:
-    chiral init --project my-n8n
+  Create a project with a specific name:
+    chiral init my-n8n
 
-  Initialize with git sync pre-configured:
-    chiral init --project my-n8n --remote origin
-
-  Initialize without git sync (solo use):
-    chiral init --solo
+  Create without running git init:
+    chiral init my-n8n --no-git
 `,
   )
-  .action(async (options) => {
-    await runInit(options);
+  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean }) => {
+    const resolvedName = nameArg ?? options.project;
+    await runInit({ project: resolvedName, noGit: options.noGit });
   });

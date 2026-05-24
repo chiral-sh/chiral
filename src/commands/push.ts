@@ -161,7 +161,6 @@ interface TagResolution {
 
 export async function runPush(
   options: PushOptions,
-  cwd: string = process.cwd(),
 ): Promise<void> {
 
   // ── Guard: source ≠ target ────────────────────────────────────────────────
@@ -171,7 +170,7 @@ export async function runPush(
     );
   }
 
-  const { config, chiralDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir();
 
   // Validate both env names exist in config (source doesn't need a live client)
   resolveEnv(config, options.source);
@@ -811,14 +810,11 @@ export const pushCommand = new Command('push')
     'after',
     `
 Examples:
+  Push all workflows from dev to prod:
+    chiral push --source dev --target prod
+
   Preview changes before pushing:
     chiral push --source dev --target prod --dry-run
-
-  Preview changes for a specific tag:
-    chiral push --source dev --target prod --dry-run --tag billing
-
-  Push (coming soon):
-    chiral push --source dev --target prod
 
   Non-interactive push for CI:
     chiral push --source dev --target prod --yes

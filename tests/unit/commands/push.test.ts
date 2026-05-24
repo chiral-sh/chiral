@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
 import { UserError, ControlledExit } from '../../../src/lib/errors.js';
 import * as prompts from '@inquirer/prompts';
@@ -30,6 +30,13 @@ import type { SnapshotWorkflow } from '../../../src/state/snapshots.js';
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
+
+const GLOBAL_DIR = '/mock-global';
+const PROJECT_DIR = '/project';
+const INDEX = JSON.stringify({
+  version: 1,
+  projects: { 'test-project': { path: PROJECT_DIR, createdAt: '2024-01-01T00:00:00.000Z' } },
+});
 
 const VALID_CONFIG = JSON.stringify({
   version: 1,
@@ -114,13 +121,21 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
+  process.env['CHIRAL_PROJECT'] = 'test-project';
+});
+
+afterEach(() => {
+  delete process.env['CHIRAL_PROJECTS_DIR'];
+  delete process.env['CHIRAL_PROJECT'];
 });
 
 function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflows: WorkflowSummary[] = []) {
   vol.fromJSON({
-    '/project/.chiral/config.json': VALID_CONFIG,
-    '/project/.chiral/audit.jsonl': '',
-    '/project/.chiral/credentials.json': JSON.stringify({
+    [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
+    [`${PROJECT_DIR}/.chiral/config.json`]: VALID_CONFIG,
+    [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
+    [`${PROJECT_DIR}/.chiral/credentials.json`]: JSON.stringify({
       version: 1,
       credentials: {
         postgres: { dev: 'dev_pg', prod: 'prod_pg' },
@@ -165,28 +180,28 @@ function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflow
 describe('runPush (dry-run) — guards', () => {
   it('throws UserError when source equals target', async () => {
     await expect(
-      runPush({ source: 'dev', target: 'dev', dryRun: true }, '/project'),
+      runPush({ source: 'dev', target: 'dev', dryRun: true }),
     ).rejects.toThrow('source and target are both "dev"');
   });
 
   it('throws when no snapshot exists for source', async () => {
     setupProject(); // empty project, no snapshot
     await expect(
-      runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project'),
+      runPush({ source: 'dev', target: 'prod', dryRun: true }),
     ).rejects.toThrow('No snapshot found for dev');
   });
 
   it('throws UserError when source env is not in config', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
     await expect(
-      runPush({ source: 'staging', target: 'prod', dryRun: true }, '/project'),
+      runPush({ source: 'staging', target: 'prod', dryRun: true }),
     ).rejects.toBeInstanceOf(UserError);
   });
 
   it('throws UserError when target env is not in config', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
     await expect(
-      runPush({ source: 'dev', target: 'staging', dryRun: true }, '/project'),
+      runPush({ source: 'dev', target: 'staging', dryRun: true }),
     ).rejects.toBeInstanceOf(UserError);
   });
 });
@@ -200,7 +215,7 @@ describe('runPush (dry-run) — classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('+');
@@ -217,7 +232,7 @@ describe('runPush (dry-run) — classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('~');
@@ -234,7 +249,7 @@ describe('runPush (dry-run) — classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('─');
@@ -251,7 +266,7 @@ describe('runPush (dry-run) — classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('active, will be paused briefly');
   });
@@ -266,7 +281,7 @@ describe('runPush (dry-run) — credential mapping', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('Credential map:');
@@ -282,7 +297,7 @@ describe('runPush (dry-run) — credential mapping', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('dev_stripe');
@@ -304,7 +319,7 @@ describe('runPush (dry-run) — credential mapping', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project').catch(e => e);
+    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(1);
@@ -327,7 +342,7 @@ describe('runPush (dry-run) — tag warnings', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('⚠');
@@ -341,7 +356,7 @@ describe('runPush (dry-run) — tag warnings', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).not.toContain('Tag "billing" not found');
@@ -371,7 +386,7 @@ describe('runPush (dry-run) — stale snapshot', () => {
     // Mock confirm to return false
     vi.mocked(prompts.confirm).mockResolvedValue(false);
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project').catch(e => e);
+    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }).catch(e => e);
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(0);
     expect(prompts.confirm).toHaveBeenCalled();
@@ -395,7 +410,7 @@ describe('runPush (dry-run) — stale snapshot', () => {
 
     vi.mocked(prompts.confirm).mockResolvedValue(true);
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
 });
@@ -409,7 +424,7 @@ describe('runPush (dry-run) — JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
@@ -436,7 +451,7 @@ describe('runPush (dry-run) — JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true }, '/project').catch(e => e);
+    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(1);
@@ -452,7 +467,7 @@ describe('runPush (dry-run) — JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true, pattern: 'NoMatch*' }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true, pattern: 'NoMatch*' });
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
@@ -473,7 +488,7 @@ describe('runPush (dry-run) — filters', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, tag: 'billing' }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, tag: 'billing' });
 
     const joined = output.join('\n');
     expect(joined).toContain('Tagged WF');
@@ -489,7 +504,7 @@ describe('runPush (dry-run) — filters', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, pattern: 'Customer *' }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, pattern: 'Customer *' });
 
     const joined = output.join('\n');
     expect(joined).toContain('Customer Orders');
@@ -521,7 +536,7 @@ describe('runPush (dry-run) — filters', () => {
 
     // Should succeed: skipped workflow's credentials are not validated
     await expect(
-      runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project'),
+      runPush({ source: 'dev', target: 'prod', dryRun: true }),
     ).resolves.toBeUndefined();
 
     expect(output.join('\n')).not.toContain('Cannot push');
@@ -540,7 +555,7 @@ describe('runPush (dry-run) — summary', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('already in sync');
   });
@@ -577,7 +592,7 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('─');
@@ -612,7 +627,7 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('~');
@@ -627,7 +642,7 @@ describe('runPush (dry-run) — workflow map not written', () => {
   it('does not create workflows.json when dry-run mode is used', async () => {
     setupProject([makeSnapshotWf('src-1', 'New WF', 'v1')], []);
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
 
     expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
   });
@@ -649,7 +664,7 @@ describe('runPush (live) — fingerprint writes', () => {
       }) as never,
     );
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
@@ -676,7 +691,7 @@ describe('runPush (live) — fingerprint writes', () => {
       }) as never,
     );
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
@@ -704,7 +719,7 @@ describe('runPush (live) — fingerprint writes', () => {
       }) as never,
     );
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
     // description must not be in the POST body
@@ -731,7 +746,7 @@ describe('runPush (live) — fingerprint writes', () => {
       }) as never,
     );
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
     expect(updateWorkflow).not.toHaveBeenCalled();
@@ -754,7 +769,7 @@ describe('runPush (live) — fingerprint writes', () => {
     vi.spyOn(console, 'log').mockImplementation(() => { });
     vi.spyOn(console, 'error').mockImplementation(() => { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => { });
+    await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
 
     expect(vol.existsSync('/project/.chiral/fingerprints.json')).toBe(false);
   });
@@ -776,7 +791,7 @@ describe('runPush (live) — workflow map registration', () => {
       }) as never,
     );
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
@@ -802,7 +817,7 @@ describe('runPush (live) — workflow map registration', () => {
       }) as never,
     );
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
@@ -839,7 +854,7 @@ describe('runPush (live) — workflow map registration', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     // Success line should show resolved name with mapped-from note
     expect(output.join('\n')).toContain('Invoice Sync');
@@ -867,7 +882,7 @@ describe('runPush (live) — workflow map registration', () => {
     vi.spyOn(console, 'log').mockImplementation(() => { });
     vi.spyOn(console, 'error').mockImplementation(() => { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project').catch(() => { });
+    await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
 
     expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
   });
@@ -882,7 +897,7 @@ describe('runPush — header text', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('Dry run:');
     expect(output.join('\n')).not.toContain('Pushing');
@@ -904,7 +919,7 @@ describe('runPush — header text', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', yes: true });
 
     expect(output.join('\n')).toContain('Pushing');
     expect(output.join('\n')).not.toContain('Dry run:');
@@ -937,7 +952,7 @@ describe('runPush — stale snapshot with --yes', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
 
     expect(output.join('\n')).toContain('old');
     expect(output.join('\n')).toContain('chiral pull');
@@ -947,7 +962,7 @@ describe('runPush — stale snapshot with --yes', () => {
     setupStaleProject();
     vi.mocked(prompts.confirm).mockResolvedValue(true);
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true }, '/project');
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
 
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
@@ -976,7 +991,7 @@ describe('runPush (live) — prod type-to-confirm', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod' }, '/project');
+    await runPush({ source: 'dev', target: 'prod' });
 
     expect(prompts.input).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('"prod" to confirm') }),

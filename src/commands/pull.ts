@@ -161,11 +161,10 @@ function warnIfEnvSpecificNames(
 
 export async function runPull(
   options: PullOptions,
-  cwd: string = process.cwd(),
 ): Promise<void> {
   const outputMode = resolveOutputMode(options);
   const actor = getGitActor();
-  const { config, chiralDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir();
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
   client.warnIfExpiringSoon();
@@ -565,12 +564,6 @@ export const pullCommand = new Command('pull')
   .addHelpText(
     'after',
     `
-Flag interactions:
-  --json and --name-only are mutually exclusive output modes — use one or the other.
-  --id cannot be combined with --tag, --pattern, or --only-active.
-  --exit-code is composable with all output modes including --json and --name-only.
-  --verbose is ignored in --json and --name-only modes.
-
 Examples:
   Pull all workflows from dev:
     chiral pull --env dev
@@ -578,26 +571,8 @@ Examples:
   Pull only workflows tagged "production":
     chiral pull --env dev --tag production
 
-  Pull workflows matching a name pattern:
-    chiral pull --env dev --pattern "Customer *"
-
-  Pull a single workflow by ID:
-    chiral pull --env dev --id abc123
-
-  Pull only active workflows (CI-friendly):
-    chiral pull --env dev --only-active
-
   Exit 1 if changes detected (for CI scripts):
     chiral pull --env dev --exit-code
-
-  Print only changed workflow names for piping:
-    chiral pull --env dev --name-only
-
-  Show every pulled workflow with its active/inactive status:
-    chiral pull --env dev --verbose
-
-  Machine-readable output for scripting:
-    chiral pull --env dev --json
 `,
   )
   .action(async (options) => {

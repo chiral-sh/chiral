@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
 import { UserError } from '../../../src/lib/errors.js';
 
@@ -22,6 +22,13 @@ import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.j
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
+
+const GLOBAL_DIR = '/mock-global';
+const PROJECT_DIR = '/project';
+const INDEX = JSON.stringify({
+  version: 1,
+  projects: { 'test-project': { path: PROJECT_DIR, createdAt: '2024-01-01T00:00:00.000Z' } },
+});
 
 const VALID_CONFIG = JSON.stringify({
   version: 1,
@@ -87,19 +94,27 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
+  process.env['CHIRAL_PROJECT'] = 'test-project';
+});
+
+afterEach(() => {
+  delete process.env['CHIRAL_PROJECTS_DIR'];
+  delete process.env['CHIRAL_PROJECT'];
 });
 
 function setupProject(config = VALID_CONFIG) {
   vol.fromJSON({
-    '/project/.chiral/config.json': config,
-    '/project/.chiral/audit.jsonl': '',
+    [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
+    [`${PROJECT_DIR}/.chiral/config.json`]: config,
+    [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
   });
 }
 
 function setupPreviousSnapshot(env = 'dev') {
-  writeSnapshot('/project/.chiral', PREV_DEPLOYMENT, { ...WF1, versionId: 'v1' });
-  writeSnapshot('/project/.chiral', PREV_DEPLOYMENT, { ...WF2, versionId: 'v1' });
-  writeSnapshotMeta('/project/.chiral', PREV_DEPLOYMENT, {
+  writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF1, versionId: 'v1' });
+  writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF2, versionId: 'v1' });
+  writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
     deployment_id: PREV_DEPLOYMENT,
     env,
     command: 'pull',
@@ -111,22 +126,23 @@ function setupPreviousSnapshot(env = 'dev') {
 
 describe('runPull — setup errors', () => {
   it('throws UserError when git user.email is not set', async () => {
+    setupProject();
     mockExecSync.mockImplementation(() => { throw new Error('no email'); });
-    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow(UserError);
-    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow('git config user.email');
+    await expect(runPull({ env: 'dev' })).rejects.toThrow(UserError);
+    await expect(runPull({ env: 'dev' })).rejects.toThrow('git config user.email');
   });
 
   it('throws UserError when config.json is missing', async () => {
-    vol.fromJSON({});
-    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow(UserError);
-    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow('chiral init');
+    vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: INDEX });
+    await expect(runPull({ env: 'dev' })).rejects.toThrow(UserError);
+    await expect(runPull({ env: 'dev' })).rejects.toThrow('chiral environment add');
   });
 
   it('throws UserError when --env is not in config', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
-    await expect(runPull({ env: 'staging' }, '/project')).rejects.toThrow(UserError);
-    await expect(runPull({ env: 'staging' }, '/project')).rejects.toThrow('Unknown environment "staging"');
+    await expect(runPull({ env: 'staging' })).rejects.toThrow(UserError);
+    await expect(runPull({ env: 'staging' })).rejects.toThrow('Unknown environment "staging"');
   });
 });
 
@@ -135,7 +151,7 @@ describe('runPull — first pull (no previous snapshot)', () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     const snapshots = Object.keys(vol.toJSON() ?? {}).filter(
       (p) => p.includes('/snapshots/') && p.endsWith('.json') && !p.endsWith('meta.json'),
@@ -147,7 +163,7 @@ describe('runPull — first pull (no previous snapshot)', () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     const metas = Object.keys(vol.toJSON() ?? {}).filter((p) => p.endsWith('meta.json'));
     expect(metas).toHaveLength(1);
@@ -161,10 +177,10 @@ describe('runPull — first pull (no previous snapshot)', () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync(`${PROJECT_DIR}/.chiral/audit.jsonl`, 'utf-8') as string).trim(),
     );
     expect(entry.action).toBe('pull');
     expect(entry.result).toBe('success');
@@ -186,7 +202,7 @@ describe('runPull — zero workflows', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     const joined = output.join('\n');
     expect(joined).toContain('No workflows found');
@@ -208,7 +224,7 @@ describe('runPull — zero workflows', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     // 0 workflows + previous snapshot had 2 → both are now deleted, so delta has changes
     // (all workflows show as ⚠ removed from n8n), not the zero-workflow warning path
@@ -240,7 +256,7 @@ describe('runPull — zero workflows', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     const joined = output.join('\n');
     expect(joined).toContain('No workflows found');
@@ -267,7 +283,7 @@ describe('runPull — delta against previous snapshot', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('Workflow Three');
     expect(output.join('\n')).toContain('(new)');
@@ -290,7 +306,7 @@ describe('runPull — delta against previous snapshot', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('Workflow One');
     expect(output.join('\n')).toContain('(updated)');
@@ -310,7 +326,7 @@ describe('runPull — delta against previous snapshot', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('Workflow Two');
     expect(output.join('\n')).toContain('(removed from n8n)');
@@ -332,7 +348,7 @@ describe('runPull — delta against previous snapshot', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('up to date');
     expect(output.join('\n')).not.toContain('(new)');
@@ -351,7 +367,7 @@ describe('runPull — filters', () => {
       }) as never,
     );
 
-    await runPull({ env: 'dev', tag: 'production' }, '/project');
+    await runPull({ env: 'dev', tag: 'production' });
 
     // WF1 has tag 'production', WF2 does not — only WF1 should be fetched
     expect(getWorkflow).toHaveBeenCalledWith('wf-1');
@@ -368,7 +384,7 @@ describe('runPull — filters', () => {
       }) as never,
     );
 
-    await runPull({ env: 'dev', pattern: 'Workflow O*' }, '/project');
+    await runPull({ env: 'dev', pattern: 'Workflow O*' });
 
     expect(getWorkflow).toHaveBeenCalledWith('wf-1');
     expect(getWorkflow).not.toHaveBeenCalledWith('wf-2');
@@ -384,7 +400,7 @@ describe('runPull — filters', () => {
       }) as never,
     );
 
-    await runPull({ env: 'dev', onlyActive: true }, '/project');
+    await runPull({ env: 'dev', onlyActive: true });
 
     expect(getWorkflow).toHaveBeenCalledWith('wf-1');
     expect(getWorkflow).not.toHaveBeenCalledWith('wf-2');
@@ -399,7 +415,7 @@ describe('runPull — filters', () => {
       }) as never,
     );
 
-    await runPull({ env: 'dev', tag: 'production', onlyActive: true }, '/project');
+    await runPull({ env: 'dev', tag: 'production', onlyActive: true });
 
     const metas = Object.keys(vol.toJSON() ?? {}).filter((p) => p.endsWith('meta.json'));
     const meta = JSON.parse(vol.readFileSync(metas[0], 'utf-8') as string);
@@ -416,7 +432,7 @@ describe('runPull — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', json: true }, '/project');
+    await runPull({ env: 'dev', json: true });
 
     expect(logged).toHaveLength(1);
     const result = JSON.parse(logged[0]);
@@ -440,7 +456,7 @@ describe('runPull — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', json: true }, '/project');
+    await runPull({ env: 'dev', json: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.updated).toContain('Workflow One');
@@ -457,7 +473,7 @@ describe('runPull — --verbose output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev', verbose: true }, '/project');
+    await runPull({ env: 'dev', verbose: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('Workflows pulled:');
@@ -482,7 +498,7 @@ describe('runPull — --verbose output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev', verbose: true }, '/project');
+    await runPull({ env: 'dev', verbose: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('up to date');
@@ -506,7 +522,7 @@ describe('runPull — --verbose output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev', verbose: true }, '/project');
+    await runPull({ env: 'dev', verbose: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('(updated)');
@@ -522,7 +538,7 @@ describe('runPull — --verbose output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).not.toContain('Workflows pulled:');
   });
@@ -537,12 +553,12 @@ describe('runPull — error handling', () => {
       }) as never,
     );
 
-    await expect(runPull({ env: 'dev' }, '/project')).rejects.toThrow(
+    await expect(runPull({ env: 'dev' })).rejects.toThrow(
       'API key for dev is invalid or expired',
     );
 
     const entry = JSON.parse(
-      (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
+      (vol.readFileSync(`${PROJECT_DIR}/.chiral/audit.jsonl`, 'utf-8') as string).trim(),
     );
     expect(entry.result).toBe('failure');
     expect(entry.error).toContain('API key for dev');
@@ -555,7 +571,7 @@ describe('runPull — error handling', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('chiral diff --source dev --target prod');
   });
@@ -575,7 +591,7 @@ describe('runPull — error handling', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('chiral diff --source dev --target prod');
     expect(output.join('\n')).not.toContain('push');
@@ -588,7 +604,7 @@ describe('runPull — error handling', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).not.toContain('Next:');
   });
@@ -612,7 +628,7 @@ describe('runPull — smart Next: hint', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('chiral push --source dev --target prod --dry-run');
   });
@@ -632,7 +648,7 @@ describe('runPull — smart Next: hint', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev', tag: 'production' }, '/project');
+    await runPull({ env: 'dev', tag: 'production' });
 
     expect(output.join('\n')).toContain('--tag production');
     expect(output.join('\n')).toContain('--dry-run');
@@ -647,7 +663,7 @@ describe('runPull — active/inactive counts', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     // ora spinner output is not captured by console.log spy, but the
     // active/inactive label is embedded in the spinner succeed message.
@@ -663,7 +679,7 @@ describe('runPull — active/inactive counts', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', json: true }, '/project');
+    await runPull({ env: 'dev', json: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.active).toBe(1);
@@ -689,7 +705,7 @@ describe('runPull — --name-only output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', nameOnly: true }, '/project');
+    await runPull({ env: 'dev', nameOnly: true });
 
     expect(logged).toContain('Workflow One');
     expect(logged).not.toContain('Workflow Two'); // unchanged
@@ -711,7 +727,7 @@ describe('runPull — --name-only output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', nameOnly: true }, '/project');
+    await runPull({ env: 'dev', nameOnly: true });
 
     expect(logged).toHaveLength(0);
   });
@@ -730,7 +746,7 @@ describe('runPull — --name-only output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', nameOnly: true }, '/project');
+    await runPull({ env: 'dev', nameOnly: true });
 
     expect(logged).toContain('Workflow Two');
   });
@@ -751,7 +767,7 @@ describe('runPull — --exit-code', () => {
       }) as never,
     );
 
-    const err = await runPull({ env: 'dev', exitCode: true }, '/project').catch((e) => e);
+    const err = await runPull({ env: 'dev', exitCode: true }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('ControlledExit');
     expect(err.code).toBe(1);
@@ -769,14 +785,14 @@ describe('runPull — --exit-code', () => {
       }) as never,
     );
 
-    await expect(runPull({ env: 'dev', exitCode: true }, '/project')).resolves.toBeUndefined();
+    await expect(runPull({ env: 'dev', exitCode: true })).resolves.toBeUndefined();
   });
 
   it('does not throw on first pull (no previous snapshot)', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await expect(runPull({ env: 'dev', exitCode: true }, '/project')).resolves.toBeUndefined();
+    await expect(runPull({ env: 'dev', exitCode: true })).resolves.toBeUndefined();
   });
 });
 
@@ -789,7 +805,7 @@ describe('runPull — --id (single workflow)', () => {
       makeClientMock({ listWorkflows, getWorkflow }) as never,
     );
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
     expect(getWorkflow).toHaveBeenCalledWith('wf-1');
     expect(listWorkflows).not.toHaveBeenCalled();
@@ -801,7 +817,7 @@ describe('runPull — --id (single workflow)', () => {
       makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
     );
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
     const snapshots = Object.keys(vol.toJSON() ?? {}).filter(
       (p) => p.includes('/snapshots/') && p.endsWith('.json') && !p.endsWith('meta.json'),
@@ -815,7 +831,7 @@ describe('runPull — --id (single workflow)', () => {
       makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
     );
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
     const metas = Object.keys(vol.toJSON() ?? {}).filter((p) => p.endsWith('meta.json'));
     const meta = JSON.parse(vol.readFileSync(metas[0], 'utf-8') as string);
@@ -831,7 +847,7 @@ describe('runPull — --id (single workflow)', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
     expect(output.join('\n')).toContain('(new)');
   });
@@ -848,7 +864,7 @@ describe('runPull — --id (single workflow)', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
     expect(output.join('\n')).toContain('(updated)');
   });
@@ -862,7 +878,7 @@ describe('runPull — --id (single workflow)', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', id: 'wf-1', json: true }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1', json: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.pulled).toBe(1);
@@ -875,7 +891,7 @@ describe('runPull — --id (single workflow)', () => {
       makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
     );
 
-    const err = await runPull({ env: 'dev', id: 'wf-1', exitCode: true }, '/project').catch((e) => e);
+    const err = await runPull({ env: 'dev', id: 'wf-1', exitCode: true }).catch((e) => e);
     expect(err.name).toBe('ControlledExit');
     expect(err.code).toBe(1);
   });
@@ -887,7 +903,7 @@ describe('runPull — staleness warning', () => {
     // Write a stale audit entry (8 days ago)
     const staleTimestamp = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
     vol.writeFileSync(
-      '/project/.chiral/audit.jsonl',
+      `${PROJECT_DIR}/.chiral/audit.jsonl`,
       JSON.stringify({
         event_id: crypto.randomUUID(),
         event_schema_version: 1,
@@ -908,7 +924,7 @@ describe('runPull — staleness warning', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('last pull from dev was');
     expect(output.join('\n')).toContain('days ago');
@@ -919,7 +935,7 @@ describe('runPull — staleness warning', () => {
     // Write a recent audit entry (1 day ago)
     const recentTimestamp = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     vol.writeFileSync(
-      '/project/.chiral/audit.jsonl',
+      `${PROJECT_DIR}/.chiral/audit.jsonl`,
       JSON.stringify({
         event_id: crypto.randomUUID(),
         event_schema_version: 1,
@@ -940,7 +956,7 @@ describe('runPull — staleness warning', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     expect(output.join('\n')).not.toContain('days ago');
   });
@@ -951,9 +967,9 @@ describe('runPull — fingerprints', () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
-    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/fingerprints.json`, 'utf-8') as string;
     const fp = JSON.parse(raw);
     expect(fp.version).toBe(1);
     expect(fp.envs.dev).toBeDefined();
@@ -971,7 +987,7 @@ describe('runPull — fingerprints', () => {
 
     // Write an existing fingerprints.json with stale versionId
     vol.writeFileSync(
-      '/project/.chiral/fingerprints.json',
+      `${PROJECT_DIR}/.chiral/fingerprints.json`,
       JSON.stringify({
         version: 1,
         envs: {
@@ -992,9 +1008,9 @@ describe('runPull — fingerprints', () => {
       }) as never,
     );
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
-    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/fingerprints.json`, 'utf-8') as string;
     const fp = JSON.parse(raw);
     expect(fp.envs.dev['wf-1'].versionId).toBe('v2');
     expect(fp.envs.dev['wf-2']).toBeDefined();
@@ -1006,9 +1022,9 @@ describe('runPull — fingerprints', () => {
       makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
     );
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
-    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/fingerprints.json`, 'utf-8') as string;
     const fp = JSON.parse(raw);
     expect(fp.envs.dev['wf-1']).toBeDefined();
     expect(fp.envs.dev['wf-1'].name).toBe('Workflow One');
@@ -1024,7 +1040,7 @@ describe('runPull — workflow map auto-heal', () => {
     setupProject();
 
     // Map has 'Workflow One' but n8n now returns 'Workflow One Renamed' for same ID
-    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, JSON.stringify({
       version: 1,
       workflows: {
         'workflow-one': {
@@ -1043,9 +1059,9 @@ describe('runPull — workflow map auto-heal', () => {
       }) as never,
     );
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
-    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
     expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');
@@ -1054,7 +1070,7 @@ describe('runPull — workflow map auto-heal', () => {
   it('does not modify the map when workflow names are unchanged', async () => {
     setupProject();
 
-    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, JSON.stringify({
       version: 1,
       workflows: {
         'workflow-one': { dev: { name: 'Workflow One', id: 'wf-1' } },
@@ -1063,10 +1079,10 @@ describe('runPull — workflow map auto-heal', () => {
 
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     // workflows.json should be unchanged (name matches, no heal needed)
-    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One');
   });
@@ -1074,7 +1090,7 @@ describe('runPull — workflow map auto-heal', () => {
   it('auto-heals map entry name via --id path', async () => {
     setupProject();
 
-    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, JSON.stringify({
       version: 1,
       workflows: {
         'workflow-one': { dev: { name: 'Workflow One', id: 'wf-1' } },
@@ -1086,9 +1102,9 @@ describe('runPull — workflow map auto-heal', () => {
       makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_RENAMED) }) as never,
     );
 
-    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+    await runPull({ env: 'dev', id: 'wf-1' });
 
-    const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string;
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
     expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');
@@ -1103,7 +1119,7 @@ describe('runPull — server-side filter params', () => {
       makeClientMock({ listWorkflows, getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
     );
 
-    await runPull({ env: 'dev', onlyActive: true }, '/project');
+    await runPull({ env: 'dev', onlyActive: true });
 
     expect(listWorkflows).toHaveBeenCalledWith({ active: true, tags: undefined });
   });
@@ -1115,7 +1131,7 @@ describe('runPull — server-side filter params', () => {
       makeClientMock({ listWorkflows, getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
     );
 
-    await runPull({ env: 'dev', tag: 'production' }, '/project');
+    await runPull({ env: 'dev', tag: 'production' });
 
     expect(listWorkflows).toHaveBeenCalledWith({ active: undefined, tags: 'production' });
   });
@@ -1125,13 +1141,13 @@ describe('runPull — output mode validation', () => {
   it('does not throw when only --json is set', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
-    await expect(runPull({ env: 'dev', json: true }, '/project')).resolves.not.toThrow();
+    await expect(runPull({ env: 'dev', json: true })).resolves.not.toThrow();
   });
 
   it('does not throw when only --name-only is set', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
-    await expect(runPull({ env: 'dev', nameOnly: true }, '/project')).resolves.not.toThrow();
+    await expect(runPull({ env: 'dev', nameOnly: true })).resolves.not.toThrow();
   });
 });
 
@@ -1147,7 +1163,7 @@ describe('runPull — git sync runs regardless of output mode', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await expect(runPull({ env: 'dev', json: true }, '/project')).resolves.not.toThrow();
+    await expect(runPull({ env: 'dev', json: true })).resolves.not.toThrow();
 
     // JSON output still produced
     expect(logged).toHaveLength(1);
@@ -1160,7 +1176,7 @@ describe('runPull — git sync runs regardless of output mode', () => {
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     // Command should complete without error; sync doesn't print anything in name-only mode
-    await expect(runPull({ env: 'dev', nameOnly: true }, '/project')).resolves.not.toThrow();
+    await expect(runPull({ env: 'dev', nameOnly: true })).resolves.not.toThrow();
   });
 });
 
@@ -1184,7 +1200,7 @@ describe('runPull — env-specific name detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).toContain('environment-specific');
@@ -1194,7 +1210,7 @@ describe('runPull — env-specific name detection', () => {
 
   it('does not print env-specific warning when workflow is already in workflows.json', async () => {
     setupProject();
-    vol.writeFileSync('/project/.chiral/workflows.json', JSON.stringify({
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, JSON.stringify({
       version: 1,
       workflows: {
         'order-processor': {
@@ -1212,7 +1228,7 @@ describe('runPull — env-specific name detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).not.toContain('environment-specific');
@@ -1225,7 +1241,7 @@ describe('runPull — env-specific name detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPull({ env: 'dev' }, '/project');
+    await runPull({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).not.toContain('environment-specific');
@@ -1243,7 +1259,7 @@ describe('runPull — env-specific name detection', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runPull({ env: 'dev', json: true }, '/project');
+    await runPull({ env: 'dev', json: true });
 
     // Only one line — the JSON object; no warning line
     expect(logged).toHaveLength(1);

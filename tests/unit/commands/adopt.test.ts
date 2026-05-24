@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
 import { UserError } from '../../../src/lib/errors.js';
 
@@ -21,6 +21,13 @@ import { runAdopt } from '../../../src/commands/adopt.js';
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
+
+const GLOBAL_DIR = '/mock-global';
+const PROJECT_DIR = '/project';
+const INDEX = JSON.stringify({
+  version: 1,
+  projects: { 'test-project': { path: PROJECT_DIR, createdAt: '2024-01-01T00:00:00.000Z' } },
+});
 
 const VALID_CONFIG = JSON.stringify({
   version: 1,
@@ -66,43 +73,52 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
+  process.env['CHIRAL_PROJECT'] = 'test-project';
+});
+
+afterEach(() => {
+  delete process.env['CHIRAL_PROJECTS_DIR'];
+  delete process.env['CHIRAL_PROJECT'];
 });
 
 function setupChiralDir() {
   vol.fromJSON({
-    '/project/.chiral/config.json': VALID_CONFIG,
-    '/project/.chiral/audit.jsonl': '',
+    [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
+    [`${PROJECT_DIR}/.chiral/config.json`]: VALID_CONFIG,
+    [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
   });
 }
 
 describe('runAdopt', () => {
   it('throws UserError when git user.email is not configured', async () => {
+    setupChiralDir();
     mockExecSync.mockImplementation(() => { throw new Error('no email'); });
 
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow(UserError);
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow('git config user.email');
+    await expect(runAdopt({ env: 'dev' })).rejects.toThrow(UserError);
+    await expect(runAdopt({ env: 'dev' })).rejects.toThrow('git config user.email');
   });
 
   it('throws UserError when config.json is missing', async () => {
-    vol.fromJSON({});
+    vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: INDEX });
 
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow(UserError);
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow('chiral init');
+    await expect(runAdopt({ env: 'dev' })).rejects.toThrow(UserError);
+    await expect(runAdopt({ env: 'dev' })).rejects.toThrow('chiral environment add');
   });
 
   it('throws UserError when --env is not in config', async () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await expect(runAdopt({ env: 'staging' }, '/project')).rejects.toThrow(UserError);
-    await expect(runAdopt({ env: 'staging' }, '/project')).rejects.toThrow('Unknown environment "staging"');
+    await expect(runAdopt({ env: 'staging' })).rejects.toThrow(UserError);
+    await expect(runAdopt({ env: 'staging' })).rejects.toThrow('Unknown environment "staging"');
   });
 
   it('creates N8nClient with correct env and envName', async () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     expect(MockN8nClient).toHaveBeenCalledWith(
       { url: 'https://dev.n8n.example.com', apiKey: 'test-key' },
@@ -114,7 +130,7 @@ describe('runAdopt', () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const snapshots = Object.keys(vol.toJSON() ?? {}).filter((p) =>
       p.includes('/snapshots/') && p.endsWith('.json') && !p.endsWith('meta.json'),
@@ -127,7 +143,7 @@ describe('runAdopt', () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
@@ -148,7 +164,7 @@ describe('runAdopt', () => {
       }) as never,
     );
 
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow(
+    await expect(runAdopt({ env: 'dev' })).rejects.toThrow(
       'API key for dev is invalid or expired',
     );
 
@@ -174,7 +190,7 @@ describe('runAdopt', () => {
     const output: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
     spy.mockRestore();
 
     expect(output.join('\n')).toContain('My Workflow');
@@ -190,7 +206,7 @@ describe('runAdopt', () => {
       makeClientMock({ getWorkflow }) as never,
     );
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     expect(getWorkflow).toHaveBeenCalledWith('wf-1');
   });
@@ -203,7 +219,7 @@ describe('runAdopt', () => {
       }) as never,
     );
 
-    await expect(runAdopt({ env: 'dev' }, '/project')).resolves.not.toThrow();
+    await expect(runAdopt({ env: 'dev' })).resolves.not.toThrow();
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
@@ -214,7 +230,7 @@ describe('runAdopt', () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fingerprints = JSON.parse(raw);
@@ -227,7 +243,7 @@ describe('runAdopt', () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const entry = JSON.parse(raw).envs.dev['wf-1'];
@@ -251,7 +267,7 @@ describe('runAdopt', () => {
       }) as never,
     );
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const envEntries = JSON.parse(raw).envs.dev;
@@ -268,7 +284,7 @@ describe('runAdopt', () => {
       }) as never,
     );
 
-    await expect(runAdopt({ env: 'dev' }, '/project')).rejects.toThrow();
+    await expect(runAdopt({ env: 'dev' })).rejects.toThrow();
 
     expect(vol.existsSync('/project/.chiral/fingerprints.json')).toBe(false);
   });
@@ -288,7 +304,7 @@ describe('runAdopt — audit workflow_ids', () => {
       }) as never,
     );
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
@@ -305,7 +321,7 @@ describe('runAdopt — audit workflow_ids', () => {
       }) as never,
     );
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
@@ -321,7 +337,7 @@ describe('runAdopt — fingerprints summary output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).toContain('Fingerprints saved');
@@ -354,7 +370,7 @@ describe('runAdopt — env-specific name detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).toContain('environment-specific');
@@ -382,7 +398,7 @@ describe('runAdopt — env-specific name detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).not.toContain('environment-specific');
@@ -395,7 +411,7 @@ describe('runAdopt — env-specific name detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runAdopt({ env: 'dev' }, '/project');
+    await runAdopt({ env: 'dev' });
 
     vi.restoreAllMocks();
     expect(output.join('\n')).not.toContain('environment-specific');

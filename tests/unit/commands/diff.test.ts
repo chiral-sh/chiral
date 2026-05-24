@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
 import { UserError } from '../../../src/lib/errors.js';
 
@@ -22,6 +22,13 @@ import type { WorkflowSummary } from '../../../src/lib/n8n-client.js';
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
+
+const GLOBAL_DIR = '/mock-global';
+const PROJECT_DIR = '/project';
+const INDEX = JSON.stringify({
+  version: 1,
+  projects: { 'test-project': { path: PROJECT_DIR, createdAt: '2024-01-01T00:00:00.000Z' } },
+});
 
 const VALID_CONFIG = JSON.stringify({
   version: 1,
@@ -75,12 +82,20 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
+  process.env['CHIRAL_PROJECT'] = 'test-project';
+});
+
+afterEach(() => {
+  delete process.env['CHIRAL_PROJECTS_DIR'];
+  delete process.env['CHIRAL_PROJECT'];
 });
 
 function setupProject(config = VALID_CONFIG) {
   vol.fromJSON({
-    '/project/.chiral/config.json': config,
-    '/project/.chiral/audit.jsonl': '',
+    [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
+    [`${PROJECT_DIR}/.chiral/config.json`]: config,
+    [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
   });
 }
 
@@ -94,7 +109,7 @@ function setupDivergentFingerprints(
   tgtName = srcName,
 ) {
   vol.writeFileSync(
-    '/project/.chiral/fingerprints.json',
+    `${PROJECT_DIR}/.chiral/fingerprints.json`,
     JSON.stringify({
       version: 1,
       envs: {
@@ -125,39 +140,40 @@ function setupDivergentFingerprints(
 
 describe('runDiff — setup errors', () => {
   it('throws UserError when git user.email is not set', async () => {
+    setupProject();
     mockExecSync.mockImplementation(() => { throw new Error('no email'); });
     await expect(
-      runDiff({ source: 'dev', target: 'prod' }, '/project'),
+      runDiff({ source: 'dev', target: 'prod' }),
     ).rejects.toThrow(UserError);
   });
 
   it('throws UserError when config.json is missing', async () => {
-    vol.fromJSON({});
+    vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: INDEX });
     await expect(
-      runDiff({ source: 'dev', target: 'prod' }, '/project'),
+      runDiff({ source: 'dev', target: 'prod' }),
     ).rejects.toThrow(UserError);
     await expect(
-      runDiff({ source: 'dev', target: 'prod' }, '/project'),
-    ).rejects.toThrow('chiral init');
+      runDiff({ source: 'dev', target: 'prod' }),
+    ).rejects.toThrow('chiral environment add');
   });
 
   it('throws UserError when --source env is not in config', async () => {
     setupProject();
     await expect(
-      runDiff({ source: 'staging', target: 'prod' }, '/project'),
+      runDiff({ source: 'staging', target: 'prod' }),
     ).rejects.toThrow(UserError);
     await expect(
-      runDiff({ source: 'staging', target: 'prod' }, '/project'),
+      runDiff({ source: 'staging', target: 'prod' }),
     ).rejects.toThrow('Unknown environment "staging"');
   });
 
   it('throws UserError when --target env is not in config', async () => {
     setupProject();
     await expect(
-      runDiff({ source: 'dev', target: 'staging' }, '/project'),
+      runDiff({ source: 'dev', target: 'staging' }),
     ).rejects.toThrow(UserError);
     await expect(
-      runDiff({ source: 'dev', target: 'staging' }, '/project'),
+      runDiff({ source: 'dev', target: 'staging' }),
     ).rejects.toThrow('Unknown environment "staging"');
   });
 });
@@ -175,7 +191,7 @@ describe('runDiff — diff symbols', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('+');
     expect(output.join('\n')).toContain('Workflow Two');
@@ -192,7 +208,7 @@ describe('runDiff — diff symbols', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('-');
     expect(output.join('\n')).toContain('Workflow Three');
@@ -209,7 +225,7 @@ describe('runDiff — diff symbols', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('~');
     expect(output.join('\n')).toContain('Workflow One');
@@ -226,7 +242,7 @@ describe('runDiff — diff symbols', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('identical');
     expect(output.join('\n')).not.toContain('+');
@@ -244,7 +260,7 @@ describe('runDiff — diff symbols', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('No workflows found in scope');
   });
@@ -260,7 +276,7 @@ describe('runDiff — diff symbols', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     const joined = output.join('\n');
     // SRC_WF2 not in target → 1 added; TGT_WF3 not in source → 1 removed; SRC_WF1 has different versionId → 1 modified
@@ -283,7 +299,7 @@ describe('runDiff — --show-unchanged', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     // SRC_WF1 / TGT_WF1 are identical — should not appear in output
     expect(output.join('\n')).not.toContain('identical');
@@ -299,7 +315,7 @@ describe('runDiff — --show-unchanged', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod', showUnchanged: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', showUnchanged: true });
 
     expect(output.join('\n')).toContain('Workflow One');
     expect(output.join('\n')).toContain('identical');
@@ -315,7 +331,7 @@ describe('runDiff — --show-unchanged', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod', showUnchanged: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', showUnchanged: true });
 
     expect(output.join('\n')).toContain('Workflow One');
     expect(output.join('\n')).toContain('identical');
@@ -348,7 +364,7 @@ describe('runDiff — name resolution via workflows.json', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     // Should resolve as identical, not as added/removed
     expect(output.join('\n')).toContain('identical');
@@ -381,7 +397,7 @@ describe('runDiff — name resolution via workflows.json', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('~');
     expect(output.join('\n')).toContain('Order Processor');
@@ -401,7 +417,7 @@ describe('runDiff — name resolution via workflows.json', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('identical');
   });
@@ -420,7 +436,7 @@ describe('runDiff — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', json: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', json: true });
 
     expect(logged).toHaveLength(1);
     const result = JSON.parse(logged[0]);
@@ -439,7 +455,7 @@ describe('runDiff — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', json: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', json: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.modified.map((m: { name: string }) => m.name)).toContain('Workflow One');
@@ -458,7 +474,7 @@ describe('runDiff — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', json: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', json: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.modified[0].sourceVersionId).toBe('v1');
@@ -475,7 +491,7 @@ describe('runDiff — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', json: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', json: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.unchanged).toEqual([]);
@@ -491,7 +507,7 @@ describe('runDiff — --json output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', json: true, showUnchanged: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', json: true, showUnchanged: true });
 
     const result = JSON.parse(logged[0]);
     expect(result.unchanged.map((u: { name: string }) => u.name)).toContain('Workflow One');
@@ -512,7 +528,7 @@ describe('runDiff — --name-only output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', nameOnly: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', nameOnly: true });
 
     expect(logged).toContain('Workflow One');   // modified
     expect(logged).toContain('Workflow Two');   // added
@@ -529,7 +545,7 @@ describe('runDiff — --name-only output', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', nameOnly: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', nameOnly: true });
 
     expect(logged).toHaveLength(0);
   });
@@ -547,7 +563,7 @@ describe('runDiff — --tag filter', () => {
       makeClientMock({ listWorkflows: tgtList }),
     );
 
-    await runDiff({ source: 'dev', target: 'prod', tag: 'production' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', tag: 'production' });
 
     expect(srcList).toHaveBeenCalledWith({ tags: 'production' });
     expect(tgtList).toHaveBeenCalledWith({ tags: 'production' });
@@ -567,7 +583,7 @@ describe('runDiff — --tag filter', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', tag: 'production', nameOnly: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', tag: 'production', nameOnly: true });
 
     // Only tagged wf is in scope; untagged should not appear as added
     expect(logged).not.toContain('Untagged');
@@ -588,7 +604,7 @@ describe('runDiff — --pattern filter', () => {
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
     // Pattern matches only "Workflow One"
-    await runDiff({ source: 'dev', target: 'prod', pattern: 'Workflow O*', nameOnly: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', pattern: 'Workflow O*', nameOnly: true });
 
     // Only Workflow One is in scope from source — Workflow Two excluded by pattern
     // TGT_WF3 is in target but not matched by any scoped source → removed
@@ -624,7 +640,7 @@ describe('runDiff — --exit-code', () => {
     );
 
     await expect(
-      runDiff({ source: 'dev', target: 'prod', exitCode: true }, '/project'),
+      runDiff({ source: 'dev', target: 'prod', exitCode: true }),
     ).resolves.toBeUndefined();
   });
 });
@@ -639,7 +655,7 @@ describe('runDiff — audit entries', () => {
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
     );
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     const entry = JSON.parse(
       (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
@@ -657,7 +673,7 @@ describe('runDiff — audit entries', () => {
       makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
     );
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     const entry = JSON.parse(
       (vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string).trim(),
@@ -676,7 +692,7 @@ describe('runDiff — audit entries', () => {
     );
 
     await expect(
-      runDiff({ source: 'dev', target: 'prod' }, '/project'),
+      runDiff({ source: 'dev', target: 'prod' }),
     ).rejects.toThrow('API key for dev is invalid or expired');
 
     const entry = JSON.parse(
@@ -694,7 +710,7 @@ describe('runDiff — fingerprint-based change detection', () => {
     setupProject();
     // Both envs have the SAME contentHash → identical despite versionId mismatch
     vol.writeFileSync(
-      '/project/.chiral/fingerprints.json',
+      `${PROJECT_DIR}/.chiral/fingerprints.json`,
       JSON.stringify({
         version: 1,
         envs: {
@@ -714,7 +730,7 @@ describe('runDiff — fingerprint-based change detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     // Fingerprint fast path detected identical content — no API fetches
     expect(srcGetWorkflow).not.toHaveBeenCalled();
@@ -739,7 +755,7 @@ describe('runDiff — fingerprint-based change detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     // Fallback path triggered — both sides fetched, content differs → modified
     expect(srcGetWorkflow).toHaveBeenCalledWith(SRC_WF1.id);
@@ -764,7 +780,7 @@ describe('runDiff — fingerprint-based change detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     // Content is the same → classified as unchanged (versionId bump was cosmetic)
     expect(output.join('\n')).toContain('identical');
@@ -785,7 +801,7 @@ describe('runDiff — + hint text for added workflows', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     const joined = output.join('\n');
     expect(joined).toContain('will be created');
@@ -816,7 +832,7 @@ describe('runDiff — + hint text for added workflows', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     const joined = output.join('\n');
     expect(joined).toContain('mapped to "Invoice Sync" in prod but not found — does it exist?');
@@ -838,7 +854,7 @@ describe('runDiff — output mode selection', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', json: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', json: true });
 
     // Only one line emitted: the JSON blob
     expect(logged).toHaveLength(1);
@@ -855,7 +871,7 @@ describe('runDiff — output mode selection', () => {
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
 
-    await runDiff({ source: 'dev', target: 'prod', nameOnly: true }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', nameOnly: true });
 
     // Envs are identical → no names emitted, no header text
     expect(logged).toHaveLength(0);
@@ -876,7 +892,7 @@ describe('runDiff — Next: hint', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod' });
 
     expect(output.join('\n')).toContain('chiral push --source dev --target prod --dry-run');
   });
@@ -895,7 +911,7 @@ describe('runDiff — Next: hint', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runDiff({ source: 'dev', target: 'prod', tag: 'production' }, '/project');
+    await runDiff({ source: 'dev', target: 'prod', tag: 'production' });
 
     expect(output.join('\n')).toContain('--tag production');
     expect(output.join('\n')).toContain('--dry-run');

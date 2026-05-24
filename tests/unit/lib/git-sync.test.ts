@@ -5,7 +5,7 @@ import type { Config } from '../../../src/lib/config.js';
 const { mockAdd, mockStatus, mockCommit, mockPush, mockEnv, mockBranchLocal, mockExistsSync } = vi.hoisted(() => {
   const mockPush = vi.fn();
   // env() returns a chainable object with push — simulates simple-git's .env().push() chain
-  const mockEnv = vi.fn(() => ({ push: mockPush }));
+  const mockEnv = vi.fn((_env: Record<string, string | undefined>) => ({ push: mockPush }));
   return {
     mockAdd: vi.fn(),
     mockStatus: vi.fn(),
@@ -137,7 +137,7 @@ describe('syncToRemote', () => {
     };
     const config = makeConfig({ enabled: true, remote: 'origin', branch: 'main' });
     await syncToRemote('/project/.chiral', config, 'msg');
-    const envArg = mockEnv.mock.calls[0]![0] as Record<string, string | undefined>;
+    const envArg = mockEnv.mock.calls[0]![0];
     expect(envArg['GIT_ASKPASS']).toBeUndefined();
     expect(envArg['VSCODE_GIT_ASKPASS_NODE']).toBeUndefined();
     expect(envArg['VSCODE_GIT_ASKPASS_MAIN']).toBeUndefined();
