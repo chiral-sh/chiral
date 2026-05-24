@@ -978,11 +978,12 @@ describe('runPull — fingerprints', () => {
     const fp = JSON.parse(raw);
     expect(fp.version).toBe(1);
     expect(fp.envs.dev).toBeDefined();
-    expect(fp.envs.dev['Workflow One']).toBeDefined();
-    expect(fp.envs.dev['Workflow Two']).toBeDefined();
-    expect(fp.envs.dev['Workflow One'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(fp.envs.dev['Workflow One'].structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(fp.envs.dev['Workflow One'].versionId).toBe('v1');
+    expect(fp.envs.dev['wf-1']).toBeDefined();
+    expect(fp.envs.dev['wf-2']).toBeDefined();
+    expect(fp.envs.dev['wf-1'].name).toBe('Workflow One');
+    expect(fp.envs.dev['wf-1'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(fp.envs.dev['wf-1'].structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(fp.envs.dev['wf-1'].versionId).toBe('v1');
   });
 
   it('updates fingerprint entry when a workflow is pulled with a new versionId', async () => {
@@ -996,7 +997,7 @@ describe('runPull — fingerprints', () => {
         version: 1,
         envs: {
           dev: {
-            'Workflow One': { versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
+            'wf-1': { name: 'Workflow One', versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
           },
         },
       }),
@@ -1016,8 +1017,8 @@ describe('runPull — fingerprints', () => {
 
     const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
-    expect(fp.envs.dev['Workflow One'].versionId).toBe('v2');
-    expect(fp.envs.dev['Workflow Two']).toBeDefined();
+    expect(fp.envs.dev['wf-1'].versionId).toBe('v2');
+    expect(fp.envs.dev['wf-2']).toBeDefined();
   });
 
   it('writes fingerprint for the single workflow when using --id', async () => {
@@ -1030,11 +1031,88 @@ describe('runPull — fingerprints', () => {
 
     const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
-    expect(fp.envs.dev['Workflow One']).toBeDefined();
-    expect(fp.envs.dev['Workflow One'].versionId).toBe('v1');
-    expect(fp.envs.dev['Workflow One'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(fp.envs.dev['wf-1']).toBeDefined();
+    expect(fp.envs.dev['wf-1'].name).toBe('Workflow One');
+    expect(fp.envs.dev['wf-1'].versionId).toBe('v1');
+    expect(fp.envs.dev['wf-1'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     // Only one entry — the --id workflow; WF2 is not in this pull
     expect(Object.keys(fp.envs.dev)).toHaveLength(1);
+  });
+});
+
+describe('runPull — workflow map auto-heal', () => {
+  it('updates map entry name when a workflow is renamed in n8n', async () => {
+    setupProject();
+
+    // Map has 'Workflow One' but n8n now returns 'Workflow One Renamed' for same ID
+    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+      version: 1,
+      workflows: {
+        'workflow-one': {
+          dev: { name: 'Workflow One', id: 'wf-1' },
+        },
+      },
+    }));
+
+    const WF1_RENAMED = { ...WF1, name: 'Workflow One Renamed' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_RENAMED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_RENAMED : WF2),
+        ),
+      }) as never,
+    );
+
+    await runPull({ env: 'dev' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const map = JSON.parse(raw);
+    expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
+    expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');
+  });
+
+  it('does not modify the map when workflow names are unchanged', async () => {
+    setupProject();
+
+    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+      version: 1,
+      workflows: {
+        'workflow-one': { dev: { name: 'Workflow One', id: 'wf-1' } },
+      },
+    }));
+
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    await runPull({ env: 'dev' }, '/project');
+
+    // workflows.json should be unchanged (name matches, no heal needed)
+    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const map = JSON.parse(raw);
+    expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One');
+  });
+
+  it('auto-heals map entry name via --id path', async () => {
+    setupProject();
+
+    vol.writeFileSync('/project/.flightdeck/workflows.json', JSON.stringify({
+      version: 1,
+      workflows: {
+        'workflow-one': { dev: { name: 'Workflow One', id: 'wf-1' } },
+      },
+    }));
+
+    const WF1_RENAMED = { ...WF1, name: 'Workflow One Renamed' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_RENAMED) }) as never,
+    );
+
+    await runPull({ env: 'dev', id: 'wf-1' }, '/project');
+
+    const raw = vol.readFileSync('/project/.flightdeck/workflows.json', 'utf-8') as string;
+    const map = JSON.parse(raw);
+    expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
+    expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');
   });
 });
 

@@ -13,6 +13,12 @@ const EnvironmentSchema = z.object({
   apiKey: z.string().min(1),
 });
 
+export const GitSyncSchema = z.object({
+  enabled: z.boolean(),
+  remote: z.string().min(1),
+  branch: z.string().min(1).default('main'),
+});
+
 export const ConfigSchema = z.object({
   version: z.literal(1),
   project: z.string().min(1),
@@ -22,10 +28,12 @@ export const ConfigSchema = z.object({
       message: 'At least one environment is required',
     }),
   licenseKey: z.string().optional(),
+  gitSync: GitSyncSchema.optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type Environment = z.infer<typeof EnvironmentSchema>;
+export type GitSync = z.infer<typeof GitSyncSchema>;
 
 function findConfigPath(startDir: string): string | null {
   let current = startDir;

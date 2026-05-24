@@ -5,9 +5,17 @@ import { Command } from 'commander';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
-import { loadWorkflowMap, resolveTargetName } from '../state/workflows.js';
+import {
+  loadWorkflowMap,
+  writeWorkflowMap,
+  resolveTargetName,
+  findLogicalByEnvAndName,
+  deriveSafeLogicalName,
+  upsertEnvEntry,
+} from '../state/workflows.js';
 import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
 import {
   findLatestDeploymentForEnv,
@@ -335,7 +343,7 @@ export async function runPush(
     // Fingerprint path: compute source hash from snapshot (no API call needed),
     // compare against stored target hash if available
     const srcHash = computeContentHash(wf as Record<string, unknown>);
-    const tgtEntry = fingerprints.envs[options.target]?.[resolvedName];
+    const tgtEntry = fingerprints.envs[options.target]?.[targetMatch.id];
     if (tgtEntry && srcHash === tgtEntry.contentHash) {
       return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
     }
@@ -445,8 +453,12 @@ export async function runPush(
 
   // Changeset
   for (const c of toCreate) {
+    const wasMapped = c.resolvedName !== c.workflow.name;
+    const createNote = wasMapped
+      ? `will be created as "${c.resolvedName}" — run: flightdeck workflow map --validate to check`
+      : 'will be created';
     console.log(
-      `  ${chalk.green('+')} ${c.workflow.name}  ${chalk.dim('(will be created)')}`,
+      `  ${chalk.green('+')} ${c.workflow.name}  ${chalk.dim(`(${createNote})`)}`,
     );
   }
   for (const c of toUpdate) {
@@ -611,6 +623,7 @@ export async function runPush(
   // ── Apply changes ──────────────────────────────────────────────────────
   console.log();
   const results = { created: [] as string[], updated: [] as string[], skipped: [] as string[], failed: [] as Array<{ name: string; error: string }> };
+  let mapDirty = false;
 
   for (const c of classified) {
     if (c.action === 'skipped') {
@@ -651,14 +664,27 @@ export async function runPush(
           await targetClient.updateWorkflow(createResult.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
         }
 
-        fingerprints.envs[options.target]![c.resolvedName] = {
+        fingerprints.envs[options.target]![createResult.id] = {
+          name: c.resolvedName,
           versionId: createResult.versionId,
           contentHash: computeContentHash(sourceWorkflow),
           structureHash: computeStructureHash(sourceWorkflow),
           updatedAt: new Date().toISOString(),
         };
         writeFingerprints(flightdeckDir, fingerprints);
-        console.log(`  ${chalk.green('✓')} Created  ${c.workflow.name}`);
+
+        // Auto-register workflow map entry with IDs from both envs
+        {
+          const existing = findLogicalByEnvAndName(workflowMap, options.source, c.workflow.name);
+          const logicalName = existing ?? deriveSafeLogicalName(workflowMap, c.workflow.name);
+          upsertEnvEntry(workflowMap, logicalName, options.source, { name: c.workflow.name, id: c.workflow.id });
+          upsertEnvEntry(workflowMap, logicalName, options.target, { name: c.resolvedName, id: createResult.id });
+          mapDirty = true;
+        }
+
+        const mappedNote = c.resolvedName !== c.workflow.name
+          ? ` ${chalk.dim(`(mapped from "${c.workflow.name}")`)}` : '';
+        console.log(`  ${chalk.green('✓')} Created  ${c.resolvedName}${mappedNote}`);
         results.created.push(c.workflow.name);
       } else if (c.action === 'would-update' && targetWorkflow) {
         // Warn and confirm for active workflows with ongoing executions
@@ -691,13 +717,23 @@ export async function runPush(
 
         // Update
         const updateResult = await targetClient.updateWorkflow(targetWorkflow.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
-        fingerprints.envs[options.target]![c.resolvedName] = {
+        fingerprints.envs[options.target]![targetWorkflow.id] = {
+          name: c.resolvedName,
           versionId: updateResult.versionId,
           contentHash: computeContentHash(sourceWorkflow),
           structureHash: computeStructureHash(sourceWorkflow),
           updatedAt: new Date().toISOString(),
         };
         writeFingerprints(flightdeckDir, fingerprints);
+
+        // Auto-register workflow map entry with IDs from both envs
+        {
+          const existing = findLogicalByEnvAndName(workflowMap, options.source, c.workflow.name);
+          const logicalName = existing ?? deriveSafeLogicalName(workflowMap, c.workflow.name);
+          upsertEnvEntry(workflowMap, logicalName, options.source, { name: c.workflow.name, id: c.workflow.id });
+          upsertEnvEntry(workflowMap, logicalName, options.target, { name: c.resolvedName, id: targetWorkflow.id });
+          mapDirty = true;
+        }
 
         // Reactivate if was active and --no-activate not set
         if (targetWorkflow.active && !options.noActivate) {
@@ -725,6 +761,9 @@ export async function runPush(
       results.failed.push({ name: c.workflow.name, error: msg });
     }
   }
+
+  // ── Persist workflow map if any entries were added/updated ────────────
+  if (mapDirty) writeWorkflowMap(flightdeckDir, workflowMap);
 
   // ── Audit log entry ────────────────────────────────────────────────────
   const actor = getGitActor();
@@ -764,6 +803,21 @@ export async function runPush(
   console.log();
   console.log(`  ${chalk.dim('Next:')} flightdeck pull --env ${options.target}`);
   console.log();
+
+  // ── Git sync ───────────────────────────────────────────────────────────────
+  if (!isJson && results.failed.length === 0) {
+    const commitMsg = `chore(flightdeck): push ${options.source}→${options.target}`;
+    const syncResult = await syncToRemote(flightdeckDir, config, commitMsg);
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        if (syncResult.message) logSyncError(syncResult.message);
+      }
+      console.log();
+    }
+  }
 
   if (results.failed.length > 0) {
     throw new ControlledExit(1);

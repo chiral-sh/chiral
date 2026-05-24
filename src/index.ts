@@ -9,6 +9,7 @@ import { configureCommand } from './commands/configure.js';
 import { pullCommand } from './commands/pull.js';
 import { diffCommand } from './commands/diff.js';
 import { pushCommand } from './commands/push.js';
+import { workflowCommand } from './commands/workflow.js';
 
 const program = new Command();
 
@@ -23,6 +24,7 @@ program.addCommand(adoptCommand);
 program.addCommand(pullCommand);
 program.addCommand(diffCommand);
 program.addCommand(pushCommand);
+program.addCommand(workflowCommand);
 
 try {
   await program.parseAsync(process.argv);

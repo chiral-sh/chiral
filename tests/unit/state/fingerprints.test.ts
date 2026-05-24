@@ -292,7 +292,8 @@ describe('loadFingerprints', () => {
       version: 1,
       envs: {
         dev: {
-          'Order Processor': {
+          'wf-1': {
+            name: 'Order Processor',
             versionId: 'v-abc',
             contentHash: 'sha256:aaa',
             structureHash: 'sha256:zzz',
@@ -303,7 +304,8 @@ describe('loadFingerprints', () => {
     };
     vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(data) });
     const result = loadFingerprints(FLIGHTDECK_DIR);
-    expect(result.envs['dev']?.['Order Processor']?.versionId).toBe('v-abc');
+    expect(result.envs['dev']?.['wf-1']?.versionId).toBe('v-abc');
+    expect(result.envs['dev']?.['wf-1']?.name).toBe('Order Processor');
   });
 
   it('throws UserError when file contains invalid JSON', () => {
@@ -311,9 +313,10 @@ describe('loadFingerprints', () => {
     expect(() => loadFingerprints(FLIGHTDECK_DIR)).toThrow('valid JSON');
   });
 
-  it('throws UserError when file has wrong schema', () => {
+  it('returns empty envs when file has wrong schema', () => {
     vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify({ version: 99 }) });
-    expect(() => loadFingerprints(FLIGHTDECK_DIR)).toThrow('invalid structure');
+    const result = loadFingerprints(FLIGHTDECK_DIR);
+    expect(result).toEqual({ version: 1, envs: {} });
   });
 });
 
@@ -338,6 +341,7 @@ describe('upsertFingerprintEntry', () => {
   beforeEach(() => vol.reset());
 
   const entry = {
+    name: 'Order Processor',
     versionId: 'v-new',
     contentHash: 'sha256:ccc',
     structureHash: 'sha256:sss',
@@ -346,17 +350,18 @@ describe('upsertFingerprintEntry', () => {
 
   it('creates a new entry when fingerprints.json does not exist', () => {
     vol.fromJSON({ [`${FLIGHTDECK_DIR}/.keep`]: '' });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'Order Processor', entry);
+    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
     const result = loadFingerprints(FLIGHTDECK_DIR);
-    expect(result.envs['dev']?.['Order Processor']).toEqual(entry);
+    expect(result.envs['dev']?.['wf-1']).toEqual(entry);
   });
 
-  it('overwrites an existing entry for the same env + workflow name', () => {
+  it('overwrites an existing entry for the same env + workflow id', () => {
     const existing = {
       version: 1,
       envs: {
         dev: {
-          'Order Processor': {
+          'wf-1': {
+            name: 'Order Processor',
             versionId: 'v-old',
             contentHash: 'sha256:aaa',
             structureHash: 'sha256:zzz',
@@ -366,9 +371,9 @@ describe('upsertFingerprintEntry', () => {
       },
     };
     vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(existing) });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'Order Processor', entry);
+    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
     const result = loadFingerprints(FLIGHTDECK_DIR);
-    expect(result.envs['dev']?.['Order Processor']?.versionId).toBe('v-new');
+    expect(result.envs['dev']?.['wf-1']?.versionId).toBe('v-new');
   });
 
   it('does not affect entries for other envs', () => {
@@ -376,7 +381,8 @@ describe('upsertFingerprintEntry', () => {
       version: 1,
       envs: {
         staging: {
-          'Order Processor': {
+          'wf-1': {
+            name: 'Order Processor',
             versionId: 'v-staging',
             contentHash: 'sha256:stg',
             structureHash: 'sha256:zzz',
@@ -386,10 +392,10 @@ describe('upsertFingerprintEntry', () => {
       },
     };
     vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(existing) });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'Order Processor', entry);
+    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
     const result = loadFingerprints(FLIGHTDECK_DIR);
-    expect(result.envs['staging']?.['Order Processor']?.versionId).toBe('v-staging');
-    expect(result.envs['dev']?.['Order Processor']?.versionId).toBe('v-new');
+    expect(result.envs['staging']?.['wf-1']?.versionId).toBe('v-staging');
+    expect(result.envs['dev']?.['wf-1']?.versionId).toBe('v-new');
   });
 
   it('does not affect other workflow entries in the same env', () => {
@@ -397,7 +403,8 @@ describe('upsertFingerprintEntry', () => {
       version: 1,
       envs: {
         dev: {
-          'Other Workflow': {
+          'wf-99': {
+            name: 'Other Workflow',
             versionId: 'v-other',
             contentHash: 'sha256:other',
             structureHash: 'sha256:oth',
@@ -407,8 +414,8 @@ describe('upsertFingerprintEntry', () => {
       },
     };
     vol.fromJSON({ [`${FLIGHTDECK_DIR}/fingerprints.json`]: JSON.stringify(existing) });
-    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'Order Processor', entry);
+    upsertFingerprintEntry(FLIGHTDECK_DIR, 'dev', 'wf-1', entry);
     const result = loadFingerprints(FLIGHTDECK_DIR);
-    expect(result.envs['dev']?.['Other Workflow']?.versionId).toBe('v-other');
+    expect(result.envs['dev']?.['wf-99']?.versionId).toBe('v-other');
   });
 });

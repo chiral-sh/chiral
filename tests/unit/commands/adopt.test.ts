@@ -220,7 +220,7 @@ describe('runAdopt', () => {
     const fingerprints = JSON.parse(raw);
     expect(fingerprints.version).toBe(1);
     expect(fingerprints.envs.dev).toBeDefined();
-    expect(fingerprints.envs.dev['My Workflow']).toBeDefined();
+    expect(fingerprints.envs.dev['wf-1']).toBeDefined();
   });
 
   it('writes all three fingerprint fields for each workflow', async () => {
@@ -230,7 +230,8 @@ describe('runAdopt', () => {
     await runAdopt({ env: 'dev' }, '/project');
 
     const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
-    const entry = JSON.parse(raw).envs.dev['My Workflow'];
+    const entry = JSON.parse(raw).envs.dev['wf-1'];
+    expect(entry.name).toBe('My Workflow');
     expect(entry.versionId).toBe('v1');
     expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(entry.structureHash).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -255,8 +256,8 @@ describe('runAdopt', () => {
     const raw = vol.readFileSync('/project/.flightdeck/fingerprints.json', 'utf-8') as string;
     const envEntries = JSON.parse(raw).envs.dev;
     expect(Object.keys(envEntries)).toHaveLength(2);
-    expect(envEntries['My Workflow']).toBeDefined();
-    expect(envEntries['Second Workflow']).toBeDefined();
+    expect(envEntries['wf-1']).toBeDefined();
+    expect(envEntries['wf-2']).toBeDefined();
   });
 
   it('does not write fingerprints.json when the API call fails', async () => {

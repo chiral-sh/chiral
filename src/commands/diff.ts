@@ -91,8 +91,8 @@ async function isContentUnchanged(
   if (src.versionId === tgt.versionId) return true;
 
   // Fingerprint path: both entries present — compare content hashes
-  const srcEntry = ctx.fingerprints.envs[sourceEnv]?.[src.name];
-  const tgtEntry = ctx.fingerprints.envs[targetEnv]?.[tgt.name];
+  const srcEntry = ctx.fingerprints.envs[sourceEnv]?.[src.id];
+  const tgtEntry = ctx.fingerprints.envs[targetEnv]?.[tgt.id];
 
   if (srcEntry && tgtEntry) {
     return srcEntry.contentHash === tgtEntry.contentHash;
@@ -112,7 +112,8 @@ async function isContentUnchanged(
   if (!ctx.fingerprints.envs[targetEnv]) ctx.fingerprints.envs[targetEnv] = {};
 
   if (!srcEntry && srcFull) {
-    ctx.fingerprints.envs[sourceEnv]![src.name] = {
+    ctx.fingerprints.envs[sourceEnv]![src.id] = {
+      name: src.name,
       versionId: src.versionId,
       contentHash: srcHash,
       structureHash: computeStructureHash(srcFull as Record<string, unknown>),
@@ -120,7 +121,8 @@ async function isContentUnchanged(
     };
   }
   if (!tgtEntry && tgtFull) {
-    ctx.fingerprints.envs[targetEnv]![tgt.name] = {
+    ctx.fingerprints.envs[targetEnv]![tgt.id] = {
+      name: tgt.name,
       versionId: tgt.versionId,
       contentHash: tgtHash,
       structureHash: computeStructureHash(tgtFull as Record<string, unknown>),
@@ -152,7 +154,11 @@ async function computeDiff(
     const tgt = targetByName.get(resolvedName);
 
     if (!tgt) {
-      added.push({ name: src.name, sourceName: src.name, sourceId: src.id, hint: 'wrong name?' });
+      const wasMapped = resolvedName !== src.name;
+      const hint = wasMapped
+        ? `mapped to "${resolvedName}" in ${targetEnv} but not found — does it exist?`
+        : 'wrong name?';
+      added.push({ name: src.name, sourceName: src.name, sourceId: src.id, hint });
     } else {
       matchedTargetIds.add(tgt.id);
       if (await isContentUnchanged(src, tgt, sourceEnv, targetEnv, ctx)) {

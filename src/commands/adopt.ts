@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import { generateDeploymentId, writeSnapshot, writeSnapshotMeta } from '../state/snapshots.js';
@@ -93,7 +94,8 @@ export async function runAdopt(
     const fingerprints = loadFingerprints(flightdeckDir);
     if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
     for (const workflow of workflows) {
-      fingerprints.envs[options.env]![workflow.name] = {
+      fingerprints.envs[options.env]![workflow.id] = {
+        name: workflow.name,
         versionId: workflow.versionId,
         contentHash: computeContentHash(workflow),
         structureHash: computeStructureHash(workflow),
@@ -117,6 +119,19 @@ export async function runAdopt(
     console.log(`\n  ${chalk.dim('Next:')} flightdeck pull --env ${options.env}\n`);
 
     writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+
+    const syncResult = await syncToRemote(
+      flightdeckDir, config, `chore(flightdeck): adopt ${options.env}`,
+    );
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        if (syncResult.message) logSyncError(syncResult.message);
+      }
+      console.log();
+    }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
