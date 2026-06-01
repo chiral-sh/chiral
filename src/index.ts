@@ -11,6 +11,7 @@ import { diffCommand } from './commands/diff.js';
 import { pushCommand } from './commands/push.js';
 import { workflowCommand } from './commands/workflow.js';
 import { credentialCommand } from './commands/credential.js';
+import { teamCommand } from './commands/team.js';
 import { useCommand } from './commands/use.js';
 import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
@@ -35,6 +36,7 @@ program.addCommand(diffCommand);
 program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
 program.addCommand(credentialCommand);
+program.addCommand(teamCommand);
 
 // Global protection against Commander eagerly eating flags as option values.
 // Catches cases like `--remote --solo` where Commander assigns '--solo' as the
