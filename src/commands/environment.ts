@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import {
   writeConfig,
+  updateConfigExampleEnvs,
   readProjectNameFromExample,
   loadConfigAndDir,
   type Config,
@@ -86,7 +87,7 @@ function printEnvTable(
   console.log(bar('└', '┴', '┘'));
 }
 
-// ── Load existing config (partial-OK — creates blank if missing) ───────────────
+// ── Load existing config (partial-OK - creates blank if missing) ───────────────
 
 interface LoadedState {
   project: string;
@@ -119,7 +120,7 @@ function loadState(): LoadedState {
         gitSync: config.gitSync,
       };
     } catch {
-      // config.json exists but is invalid — fall through to example
+      // config.json exists but is invalid - fall through to example
     }
   }
 
@@ -189,7 +190,7 @@ export async function runEnvironmentAdd(
     try {
       const client = new N8nClient({ url: normalizedUrl, apiKey: keyInput }, name);
       ({ workflowCount } = await client.testConnection());
-      spinner.succeed(chalk.green('  Connected') + chalk.dim(` — ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
+      spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
       status = 'connected';
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -206,6 +207,10 @@ export async function runEnvironmentAdd(
 
   state.environments[name] = { url: normalizedUrl, apiKey: keyInput };
   saveState(state);
+
+  updateConfigExampleEnvs(state.chiralDir, (envs) => {
+    envs[name] = { url: normalizedUrl, apiKey: `YOUR_${name.toUpperCase()}_API_KEY` };
+  });
 
   const results: EnvResult[] = [{ name, url: normalizedUrl, workflowCount, status }];
   printEnvTable(state.project, state.environments, results);
@@ -235,7 +240,7 @@ export async function runEnvironmentConfigure(
     validate: validateUrl,
   });
 
-  console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} — Enter to keep`));
+  console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
   const keyInput = await password({ message: '  API key:', mask: '•' });
   const apiKey = keyInput || existing.apiKey;
 
@@ -248,7 +253,7 @@ export async function runEnvironmentConfigure(
     try {
       const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
       ({ workflowCount } = await client.testConnection());
-      spinner.succeed(chalk.green('  Connected') + chalk.dim(` — ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
+      spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
       status = 'connected';
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -266,6 +271,14 @@ export async function runEnvironmentConfigure(
   state.environments[envName] = { url: normalizedUrl, apiKey };
   saveState(state);
 
+  updateConfigExampleEnvs(state.chiralDir, (envs) => {
+    const existingKey = envs[envName]?.apiKey as string | undefined;
+    envs[envName] = { 
+      url: normalizedUrl, 
+      apiKey: existingKey || `YOUR_${envName.toUpperCase()}_API_KEY` 
+    };
+  });
+
   const results: EnvResult[] = [{ name: envName, url: normalizedUrl, workflowCount, status }];
   printEnvTable(state.project, state.environments, results);
   console.log(`\n  ${chalk.dim('Next:')} chiral adopt --env ${envName}\n`);
@@ -278,7 +291,7 @@ export async function runEnvironmentList(): Promise<void> {
 
   if (Object.keys(state.environments).length === 0) {
     console.log(
-      `\n  ${chalk.bold(state.project)} — no environments configured.\n` +
+      `\n  ${chalk.bold(state.project)} - no environments configured.\n` +
       `  Run 'chiral environment add <name>' to add one.\n`,
     );
     return;
@@ -318,7 +331,7 @@ export async function runEnvironmentRename(oldName: string, newName: string): Pr
       writeFileSync(filePath + '.tmp', JSON.stringify(raw, null, 2) + '\n', 'utf-8');
       renameSync(filePath + '.tmp', filePath);
     } catch {
-      // best-effort — leave the file unchanged if we can't parse it
+      // best-effort - leave the file unchanged if we can't parse it
     }
   };
 
@@ -332,6 +345,15 @@ export async function runEnvironmentRename(oldName: string, newName: string): Pr
   delete state.environments[oldName];
   state.environments[newName] = envData;
   saveState(state);
+
+  updateConfigExampleEnvs(state.chiralDir, (envs) => {
+    if (oldName in envs) {
+      const existingKey = envs[oldName]?.apiKey as string | undefined;
+      const apiKey = existingKey?.replace(oldName.toUpperCase(), newName.toUpperCase()) || `YOUR_${newName.toUpperCase()}_API_KEY`;
+      envs[newName] = { ...envs[oldName], apiKey };
+      delete envs[oldName];
+    }
+  });
 
   console.log(`\n  ${chalk.green('✓')}  Renamed environment ${chalk.cyan(oldName)} → ${chalk.cyan(newName)}\n`);
 }
@@ -374,6 +396,10 @@ export async function runEnvironmentDelete(
 
   delete state.environments[envName];
   saveState(state);
+
+  updateConfigExampleEnvs(state.chiralDir, (envs) => {
+    delete envs[envName];
+  });
 
   console.log(`\n  ${chalk.green('✓')}  Deleted environment ${chalk.cyan(envName)}\n`);
 }
