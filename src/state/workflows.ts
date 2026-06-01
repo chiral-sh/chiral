@@ -17,11 +17,18 @@ export const WorkflowsSchema = z.object({
 
 export type WorkflowMap = z.infer<typeof WorkflowsSchema>;
 
-export function deriveLogicalName(workflowName: string): string {
+const BUILTIN_ENV_TAGS = 'dev|development|staging|stg|prod|production|test|qa|uat|local|sandbox';
+
+export function deriveLogicalName(workflowName: string, knownEnvs: string[] = []): string {
+  const extra = knownEnvs.map((e) => e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const tags = extra ? `${BUILTIN_ENV_TAGS}|${extra}` : BUILTIN_ENV_TAGS;
+  const t = `(${tags})`;
   return workflowName
     .toLowerCase()
-    .replace(/\[(dev|staging|prod|stg|test|qa|uat)\]/gi, '')
-    .replace(/_(dev|staging|prod|stg|test|qa|uat)$/i, '')
+    .replace(new RegExp(`\\[${t}\\]`, 'gi'), '')        // [DEV], [PROD]
+    .replace(new RegExp(`\\(${t}\\)`, 'gi'), '')        // (dev), (prod)
+    .replace(new RegExp(`\\s*[-–—]\\s*${t}$`, 'i'), '') // " - DEV", " — prod"
+    .replace(new RegExp(`[_-]${t}$`, 'i'), '')          // _dev, -staging
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
@@ -42,7 +49,7 @@ export function loadWorkflowMap(chiralDir: string): WorkflowMap {
   try {
     raw = JSON.parse(readFileSync(path, 'utf-8'));
   } catch {
-    throw new UserError('workflows.json is not valid JSON — fix it before running diff');
+    throw new UserError('workflows.json is not valid JSON - fix it before running diff');
   }
   const result = WorkflowsSchema.safeParse(raw);
   if (!result.success) {
