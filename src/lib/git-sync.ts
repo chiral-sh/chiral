@@ -14,12 +14,13 @@ export interface SyncResult {
 }
 
 // Non-secret files that belong to the team - config.json is always excluded
-const STAGED_RELATIVE: string[] = [
+export const STAGED_RELATIVE: string[] = [
   'credentials.json',
   'workflows.json',
   'fingerprints.json',
   'audit.jsonl',
   'config.example.json',
+  'team.json',
   'locks',
   'snapshots',
 ];

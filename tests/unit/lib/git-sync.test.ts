@@ -32,7 +32,7 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, existsSync: mockExistsSync };
 });
 
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../../../src/lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError, STAGED_RELATIVE } from '../../../src/lib/git-sync.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +57,16 @@ beforeEach(() => {
 });
 
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+describe('STAGED_RELATIVE', () => {
+  it('includes team.json', () => {
+    expect(STAGED_RELATIVE).toContain('team.json');
+  });
+
+  it('does not include config.json', () => {
+    expect(STAGED_RELATIVE).not.toContain('config.json');
+  });
+});
 
 describe('syncToRemote', () => {
   it('skips when gitSync is not configured', async () => {
@@ -99,6 +109,14 @@ describe('syncToRemote', () => {
     expect(result.nothingToCommit).toBe(true);
     expect(mockCommit).not.toHaveBeenCalled();
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('stages team.json alongside credentials.json', async () => {
+    const config = makeConfig({ enabled: true, remote: 'origin', branch: 'main' });
+    await syncToRemote('/project/.chiral', config, 'msg');
+    const stagedPaths: string[] = mockAdd.mock.calls[0][0] as string[];
+    expect(stagedPaths.some((p) => p.includes('team.json'))).toBe(true);
+    expect(stagedPaths.some((p) => p.includes('credentials.json'))).toBe(true);
   });
 
   it('skips non-existent files when staging', async () => {
