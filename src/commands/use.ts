@@ -11,7 +11,7 @@ import {
 
 // ── Run function ───────────────────────────────────────────────────────────────
 
-export async function runUse(projectName?: string): Promise<void> {
+export async function runUse(projectName?: string, options: { json?: boolean } = {}): Promise<void> {
   pruneDeadSessions();
 
   const projects = listProjects();
@@ -19,11 +19,17 @@ export async function runUse(projectName?: string): Promise<void> {
     throw new UserError("No projects found. Run 'chiral init <name>' to create one.");
   }
 
-  // No argument — show project list with current selection marked
+  // No argument - show project list with current selection marked
   if (!projectName) {
     const ppid = process.ppid;
     const session = ppid ? readSession(ppid) : null;
     const current = session?.project ?? (projects.length === 1 ? projects[0]!.name : null);
+
+    if (options.json) {
+      const currentPath = current ? getProjectPath(current) : null;
+      console.log(JSON.stringify({ status: 'ok', data: { project: current ?? null, path: currentPath ?? null } }));
+      return;
+    }
 
     console.log('\n  Projects:\n');
     for (const p of projects) {
@@ -55,10 +61,15 @@ export async function runUse(projectName?: string): Promise<void> {
 
   const ppid = process.ppid;
   if (!ppid) {
-    throw new UserError('Cannot determine parent process ID — session scoping is unavailable.');
+    throw new UserError('Cannot determine parent process ID - session scoping is unavailable.');
   }
 
   writeSession(ppid, match.name);
+
+  if (options.json) {
+    console.log(JSON.stringify({ status: 'ok', data: { project: match.name, path: projectPath } }));
+    return;
+  }
 
   console.log(
     `\n  ${chalk.green('✓')}  Using project ${chalk.bold(match.name)} ${chalk.dim('(for this terminal session)')}\n`,
@@ -82,6 +93,7 @@ Examples:
     CHIRAL_PROJECT=my-n8n chiral pull --env dev
 `,
   )
-  .action(async (nameArg: string | undefined) => {
-    await runUse(nameArg);
+  .option('--json', 'Output result as JSON')
+  .action(async (nameArg: string | undefined, options: { json?: boolean }) => {
+    await runUse(nameArg, options);
   });
