@@ -7,7 +7,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import {
-loadWorkflowMapRequired,
+  loadWorkflowMapRequired,
   writeWorkflowMap,
   upsertEnvEntry,
   deriveLogicalName,
@@ -28,7 +28,7 @@ function getGitActor(): string {
     return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     throw new UserError(
-      'git config user.email is not set — configure it before running chiral',
+      'git config user.email is not set - configure it before running chiral',
     );
   }
 }
@@ -88,7 +88,7 @@ function parseWorkflowMapArgs(args: string[]): ParsedArgs {
       plainCount++;
       if (plainCount === 1) logicalName = arg;
       else if (plainCount === 2) uniformName = arg;
-      else throw new UserError(`Unexpected argument "${arg}" — did you mean <env>=<name>?`);
+      else throw new UserError(`Unexpected argument "${arg}" - did you mean <env>=<name>?`);
     }
   }
 
@@ -205,7 +205,7 @@ export async function runWorkflowMap(
       throw new UserError('Logical name is required in non-interactive mode');
     }
 
-    // Build initial entries (name only — IDs filled in by --validate or future push)
+    // Build initial entries (name only - IDs filled in by --validate or future push)
     const envNames: Record<string, WorkflowEntry> = {};
     for (const [env, name] of Object.entries(perEnvNames)) {
       envNames[env] = { name };
@@ -249,8 +249,8 @@ export async function runWorkflowMap(
         }
       }
       if (hasError) {
-        console.log(`\n  ${chalk.red('✗')} Cannot save — 1 workflow not found. Create it first, or check the name.\n`);
-        throw new UserError('Validation failed — aborting without writing.');
+        console.log(`\n  ${chalk.red('✗')} Cannot save - 1 workflow not found. Create it first, or check the name.\n`);
+        throw new UserError('Validation failed - aborting without writing.');
       }
     }
 
@@ -264,7 +264,7 @@ export async function runWorkflowMap(
           dry_run: true,
         }, null, 2));
       } else {
-        console.log('\n  Dry run — would write:');
+        console.log('\n  Dry run - would write:');
         console.log(`    ${chalk.bold(logicalName)}`);
         for (const [env, entry] of Object.entries(envNames)) {
           console.log(`      ${chalk.cyan(env)} → ${entry.name}`);
@@ -367,7 +367,7 @@ export async function runWorkflowMap(
     const firstEnv = envs[0] ?? 'dev';
     const secondEnv = envs[1] ?? 'prod';
     console.log(
-      `  No snapshots found — chiral doesn't know what workflows exist yet.\n\n` +
+      `  No snapshots found - chiral doesn't know what workflows exist yet.\n\n` +
       `  ${chalk.dim('Run this first to discover your workflows:')}\n` +
       `    chiral adopt --env ${firstEnv}\n\n` +
       `  ${chalk.dim('Or map a workflow manually without snapshots:')}\n` +
@@ -388,7 +388,7 @@ export async function runWorkflowMap(
           const workflows = await client.listWorkflows();
           envWorkflowsCache.set(env, workflows.map((w) => ({ name: w.name, id: w.id })));
         } catch {
-          // env unreachable — will fall back to plain input for this env
+          // env unreachable - will fall back to plain input for this env
         }
       }
     }
@@ -401,10 +401,10 @@ export async function runWorkflowMap(
       if (isAlreadyMapped(map, sourceEnv, wfName)) continue;
       if (!options.json) console.log(`  Unmapped workflow: "${chalk.bold(wfName)}"  ${chalk.dim(`from ${sourceEnv}`)}`);
 
-      const suggested = deriveLogicalName(wfName);
+      const suggested = deriveLogicalName(wfName, envs);
       const targetLogical = logicalName ?? await input({
-        message: `  Logical name (e.g. ${suggested}, Enter to skip):`,
-        default: '',
+        message: `  Logical name (clear to skip):`,
+        default: suggested,
       });
 
       if (!targetLogical.trim()) {
@@ -412,7 +412,6 @@ export async function runWorkflowMap(
         continue;
       }
 
-      const rawDefaults: Record<string, string> = { [sourceEnv]: wfName };
       const baseCache = options.validate ? envWorkflowsCache : snapshotWorkflowsCache;
       const filteredCache = new Map(
         Array.from(baseCache.entries()).map(([env, workflows]) => [
@@ -420,11 +419,12 @@ export async function runWorkflowMap(
           workflows.filter((w) => !isAlreadyMapped(map, env, w.name)),
         ]),
       );
-      const { names: rawNames, selectedIds: validatedIds } = await promptEnvNames(
+      const { names: promptedNames, selectedIds: validatedIds } = await promptEnvNames(
         envs,
-        rawDefaults,
+        { [sourceEnv]: wfName },
         filteredCache,
       );
+      const rawNames: Record<string, string> = { ...promptedNames };
 
       if (Object.keys(rawNames).length === 0) {
         console.log(chalk.dim('  Nothing saved for this workflow.\n'));
@@ -547,7 +547,7 @@ async function runWorkflowPrune(
   console.log();
 
   if (dryRun) {
-    console.log(chalk.dim('  Dry run — nothing removed.\n'));
+    console.log(chalk.dim('  Dry run - nothing removed.\n'));
     return;
   }
 
@@ -610,7 +610,7 @@ interface IncompleteResult {
   issues: IncompleteIssue[];
 }
 
-// ── Collect helpers (pure — no rendering side effects) ────────────────────────
+// ── Collect helpers (pure - no rendering side effects) ────────────────────────
 
 function collectUnmapped(
   chiralDir: string,
@@ -735,7 +735,7 @@ function renderUnmappedHuman(results: UnmappedResult[], envList: string[]): void
   console.log(
     chalk.dim(
       `  Run 'chiral workflow match --source ${sourceEnv} --target ${targetEnv}' to auto-detect matches.\n` +
-        `  Or map manually: chiral workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
+      `  Or map manually: chiral workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
     ),
   );
 }
@@ -795,7 +795,7 @@ export async function runWorkflowList(
   try {
     configResult = loadConfigAndDir();
   } catch {
-    // ok — fall back to deriving env list from workflows.json
+    // ok - fall back to deriving env list from workflows.json
   }
 
   let envList: string[];
@@ -855,7 +855,7 @@ export async function runWorkflowList(
         JSON.stringify({ version: map.version, workflows: Object.fromEntries(entries) }, null, 2),
       );
     } else {
-      // Raw blob — backward compat
+      // Raw blob - backward compat
       console.log(JSON.stringify(map, null, 2));
     }
     return;
@@ -961,7 +961,7 @@ const workflowMapCmd = new Command('map')
     'after',
     `
 Examples:
-  Interactive — discover and map unmapped workflows:
+  Interactive - discover and map unmapped workflows:
     chiral workflow map
 
   Map with per-environment names:

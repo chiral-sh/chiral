@@ -4,10 +4,10 @@
 
 ## Type
 
-- [ ] `feat` — new user-facing behaviour
-- [ ] `fix` — corrects wrong behaviour
-- [ ] `refactor` — no behaviour change
-- [ ] `test` — test-only change
+- [ ] `feat` - new user-facing behaviour
+- [ ] `fix` - corrects wrong behaviour
+- [ ] `refactor` - no behaviour change
+- [ ] `test` - test-only change
 - [ ] `chore` / `docs`
 
 ## Checklist

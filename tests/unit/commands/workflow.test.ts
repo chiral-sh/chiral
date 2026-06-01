@@ -203,7 +203,7 @@ describe('runWorkflowMap', () => {
     // input prompt 1: logical name → "webhook-caller"
     // search prompt 1: name in dev (from snapshot) → "webhook caller - dev"
     // search prompt 2: name in staging (from snapshot) → "first workflow"
-    // Second unmapped: "first workflow" from staging — already mapped, so no more prompts
+    // Second unmapped: "first workflow" from staging - already mapped, so no more prompts
     mockInput.mockResolvedValueOnce('webhook-caller');
     mockSearch
       .mockResolvedValueOnce('webhook caller - dev')  // name in dev
@@ -217,7 +217,7 @@ describe('runWorkflowMap', () => {
     // Diagnostic: if no unmapped workflows were found, show what was logged
     expect(logLines.join('\n'), `console.log output:\n${logLines.join('\n')}`).toContain('Unmapped');
 
-    // search should have been called exactly 2 times (dev + staging) — not 4+ (which would mean "first workflow" was re-prompted)
+    // search should have been called exactly 2 times (dev + staging) - not 4+ (which would mean "first workflow" was re-prompted)
     expect(mockInput).toHaveBeenCalledTimes(1);  // logical name only
     expect(mockSearch).toHaveBeenCalledTimes(2);
 

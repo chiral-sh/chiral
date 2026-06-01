@@ -61,7 +61,7 @@ export async function runAdopt(
     spinner1.succeed(
       chalk.green('  Connected') +
       chalk.dim(
-        ` — ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
+        ` - ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
       ),
     );
 
@@ -162,7 +162,7 @@ export async function runAdopt(
     try {
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
-      // best-effort — don't mask the original error
+      // best-effort - don't mask the original error
     }
     throw err;
   }

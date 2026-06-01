@@ -4,7 +4,7 @@ import type { Config } from '../../../src/lib/config.js';
 // Use vi.hoisted so these are available inside vi.mock factory closures
 const { mockAdd, mockStatus, mockCommit, mockPush, mockEnv, mockBranchLocal, mockExistsSync } = vi.hoisted(() => {
   const mockPush = vi.fn();
-  // env() returns a chainable object with push — simulates simple-git's .env().push() chain
+  // env() returns a chainable object with push - simulates simple-git's .env().push() chain
   const mockEnv = vi.fn((_env: Record<string, string | undefined>) => ({ push: mockPush }));
   return {
     mockAdd: vi.fn(),
