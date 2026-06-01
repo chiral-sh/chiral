@@ -34,6 +34,7 @@ interface ModifiedEntry {
   sourceId: string;
   sourceVersionId: string;
   targetVersionId: string;
+  changeKind: 'structural' | 'configuration';
 }
 
 interface UnchangedEntry {
@@ -54,32 +55,36 @@ interface FingerprintContext {
   chiralDir: string;
 }
 
-async function isContentUnchanged(
+async function classifyChange(
   src: WorkflowSummary,
   tgt: WorkflowSummary,
   sourceEnv: string,
   targetEnv: string,
   ctx: FingerprintContext,
-): Promise<boolean> {
+): Promise<'unchanged' | 'structural' | 'configuration'> {
   // Fast path: identical versionId means definitely the same
-  if (src.versionId === tgt.versionId) return true;
+  if (src.versionId === tgt.versionId) return 'unchanged';
 
-  // Fingerprint path: both entries present — compare content hashes
+  // Fingerprint path: both entries present - compare content and structure hashes
   const srcEntry = ctx.fingerprints.envs[sourceEnv]?.[src.id];
   const tgtEntry = ctx.fingerprints.envs[targetEnv]?.[tgt.id];
 
   if (srcEntry && tgtEntry) {
-    return srcEntry.contentHash === tgtEntry.contentHash;
+    if (srcEntry.contentHash === tgtEntry.contentHash) return 'unchanged';
+    if (srcEntry.structureHash !== tgtEntry.structureHash) return 'structural';
+    return 'configuration';
   }
 
-  // Fallback: fetch full content for whichever side is missing, compute + cache hash
+  // Fallback: fetch full content for whichever side is missing, compute + cache hashes
   const [srcFull, tgtFull] = await Promise.all([
     srcEntry ? Promise.resolve(null) : ctx.sourceClient.getWorkflow(src.id),
     tgtEntry ? Promise.resolve(null) : ctx.targetClient.getWorkflow(tgt.id),
   ]);
 
-  const srcHash = srcEntry?.contentHash ?? computeContentHash(srcFull as Record<string, unknown>);
-  const tgtHash = tgtEntry?.contentHash ?? computeContentHash(tgtFull as Record<string, unknown>);
+  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcFull as Record<string, unknown>);
+  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtFull as Record<string, unknown>);
+  const srcStructureHash = srcEntry?.structureHash ?? computeStructureHash(srcFull as Record<string, unknown>);
+  const tgtStructureHash = tgtEntry?.structureHash ?? computeStructureHash(tgtFull as Record<string, unknown>);
   const now = new Date().toISOString();
 
   if (!ctx.fingerprints.envs[sourceEnv]) ctx.fingerprints.envs[sourceEnv] = {};
@@ -89,8 +94,8 @@ async function isContentUnchanged(
     ctx.fingerprints.envs[sourceEnv]![src.id] = {
       name: src.name,
       versionId: src.versionId,
-      contentHash: srcHash,
-      structureHash: computeStructureHash(srcFull as Record<string, unknown>),
+      contentHash: srcContentHash,
+      structureHash: srcStructureHash,
       updatedAt: now,
     };
   }
@@ -98,14 +103,16 @@ async function isContentUnchanged(
     ctx.fingerprints.envs[targetEnv]![tgt.id] = {
       name: tgt.name,
       versionId: tgt.versionId,
-      contentHash: tgtHash,
-      structureHash: computeStructureHash(tgtFull as Record<string, unknown>),
+      contentHash: tgtContentHash,
+      structureHash: tgtStructureHash,
       updatedAt: now,
     };
   }
 
   writeFingerprints(ctx.chiralDir, ctx.fingerprints);
-  return srcHash === tgtHash;
+  if (srcContentHash === tgtContentHash) return 'unchanged';
+  if (srcStructureHash !== tgtStructureHash) return 'structural';
+  return 'configuration';
 }
 
 async function computeDiff(
@@ -130,12 +137,13 @@ async function computeDiff(
     if (!tgt) {
       const wasMapped = resolvedName !== src.name;
       const hint = wasMapped
-        ? `mapped to "${resolvedName}" in ${targetEnv} but not found — does it exist?`
+        ? `mapped to "${resolvedName}" in ${targetEnv} but not found - does it exist?`
         : 'wrong name?';
       added.push({ name: src.name, sourceName: src.name, sourceId: src.id, hint });
     } else {
       matchedTargetIds.add(tgt.id);
-      if (await isContentUnchanged(src, tgt, sourceEnv, targetEnv, ctx)) {
+      const kind = await classifyChange(src, tgt, sourceEnv, targetEnv, ctx);
+      if (kind === 'unchanged') {
         unchanged.push({ name: src.name });
       } else {
         modified.push({
@@ -144,6 +152,7 @@ async function computeDiff(
           sourceId: src.id,
           sourceVersionId: src.versionId,
           targetVersionId: tgt.versionId,
+          changeKind: kind,
         });
       }
     }
@@ -271,10 +280,11 @@ export async function runDiff(
           target: options.target,
           added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
           removed: diff.removed.map(({ name }) => ({ name })),
-          modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId }) => ({
+          modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind }) => ({
             name: targetName,
             sourceVersionId,
             targetVersionId,
+            changeKind,
           })),
           unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
         }),
@@ -282,16 +292,15 @@ export async function runDiff(
     } else {
       console.log();
       if (!hasDiff && diff.unchanged.length === 0) {
-        console.log(`  ${chalk.yellow('⚠')} No workflows found in scope — is this expected?`);
+        console.log(`  ${chalk.yellow('⚠')} No workflows found in scope - is this expected?`);
         console.log(
           chalk.dim(`\n  Check that both API keys have permission to list workflows.`),
         );
       } else if (!hasDiff) {
         console.log(
-          `  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are identical — no differences found`,
+          `  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are identical - no differences found`,
         );
         if (options.showUnchanged) {
-          console.log();
           for (const w of diff.unchanged) {
             console.log(`      ${w.name}    ${chalk.dim('(identical)')}`);
           }
@@ -299,7 +308,7 @@ export async function runDiff(
       } else {
         for (const w of diff.added) {
           const hintText = w.hint === 'wrong name?'
-            ? 'will be created — wrong name? run: chiral workflow map'
+            ? 'will be created - wrong name? run: chiral workflow map'
             : w.hint;
           console.log(
             `  ${chalk.green('+')} ${w.name}    ${chalk.dim(`(${hintText})`)}`,
@@ -311,8 +320,9 @@ export async function runDiff(
           );
         }
         for (const w of diff.modified) {
+          const kindLabel = w.changeKind === 'structural' ? 'logic changed' : 'configuration changed';
           console.log(
-            `  ${chalk.yellow('~')} ${w.targetName}    ${chalk.dim('(modified)')}`,
+            `  ${chalk.yellow('~')} ${w.targetName}    ${chalk.dim(`(${kindLabel})`)}`,
           );
         }
         if (options.showUnchanged) {
@@ -352,7 +362,7 @@ export async function runDiff(
     try {
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
-      // best-effort — don't mask the original error
+      // best-effort - don't mask the original error
     }
     throw err;
   }
@@ -365,7 +375,7 @@ export const diffCommand = new Command('diff')
   .option('--tag <tag>', 'Filter to workflows with this tag (applied to both environments)')
   .option('--pattern <glob>', 'Glob pattern matched against source workflow names (e.g. "Customer *")')
   .option('--show-unchanged', 'Include identical workflows in output')
-  .addOption(new Option('--name-only', 'Print only differing workflow names, one per line — suitable for piping').conflicts('json'))
+  .addOption(new Option('--name-only', 'Print only differing workflow names, one per line - suitable for piping').conflicts('json'))
   .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
   .option('--exit-code', 'Exit 1 if any differences found, 0 if environments are identical (CI use)')
   .addHelpText(
