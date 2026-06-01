@@ -124,7 +124,7 @@ function setupPreviousSnapshot(env = 'dev') {
   });
 }
 
-describe('runPull — setup errors', () => {
+describe('runPull - setup errors', () => {
   it('throws UserError when git user.email is not set', async () => {
     setupProject();
     mockExecSync.mockImplementation(() => { throw new Error('no email'); });
@@ -146,7 +146,7 @@ describe('runPull — setup errors', () => {
   });
 });
 
-describe('runPull — first pull (no previous snapshot)', () => {
+describe('runPull - first pull (no previous snapshot)', () => {
   it('writes snapshot files for all fetched workflows', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -189,7 +189,7 @@ describe('runPull — first pull (no previous snapshot)', () => {
   });
 });
 
-describe('runPull — zero workflows', () => {
+describe('runPull - zero workflows', () => {
   it('shows a warning instead of success when no workflows found on first pull', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() =>
@@ -212,7 +212,7 @@ describe('runPull — zero workflows', () => {
 
   it('shows a warning instead of success when no workflows found on repeat pull', async () => {
     setupProject();
-    setupPreviousSnapshot(); // WF1 v1 + WF2 v1 previously — but n8n now returns nothing
+    setupPreviousSnapshot(); // WF1 v1 + WF2 v1 previously - but n8n now returns nothing
 
     MockN8nClient.mockImplementation(() =>
       makeClientMock({
@@ -265,7 +265,7 @@ describe('runPull — zero workflows', () => {
   });
 });
 
-describe('runPull — delta against previous snapshot', () => {
+describe('runPull - delta against previous snapshot', () => {
   it('detects a new workflow not in previous snapshot', async () => {
     setupProject();
     setupPreviousSnapshot();
@@ -312,6 +312,52 @@ describe('runPull — delta against previous snapshot', () => {
     expect(output.join('\n')).toContain('(updated)');
   });
 
+  it('detects a renamed workflow even when versionId is unchanged', async () => {
+    setupProject();
+    setupPreviousSnapshot(); // WF1 name = 'Workflow One', versionId v1
+
+    const WF1_RENAMED = { ...WF1, name: 'Workflow One Renamed' }; // same versionId v1
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_RENAMED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_RENAMED : WF2),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    expect(output.join('\n')).toContain('Workflow One Renamed');
+    expect(output.join('\n')).toContain('~');
+  });
+
+  it('detects a description change even when versionId is unchanged', async () => {
+    setupProject();
+    setupPreviousSnapshot(); // WF1 has no description, versionId v1
+
+    const WF1_REDESCRIBED = { ...WF1, description: 'New description' }; // same versionId v1
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_REDESCRIBED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_REDESCRIBED : WF2),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    expect(output.join('\n')).toContain('Workflow One');
+    expect(output.join('\n')).toContain('~');
+  });
+
   it('detects a deleted workflow no longer in n8n', async () => {
     setupProject();
     setupPreviousSnapshot(); // WF1 + WF2 in previous
@@ -356,7 +402,7 @@ describe('runPull — delta against previous snapshot', () => {
   });
 });
 
-describe('runPull — filters', () => {
+describe('runPull - filters', () => {
   it('only pulls workflows matching the given tag', async () => {
     setupProject();
     const getWorkflow = vi.fn().mockResolvedValue(WF1);
@@ -369,7 +415,7 @@ describe('runPull — filters', () => {
 
     await runPull({ env: 'dev', tag: 'production' });
 
-    // WF1 has tag 'production', WF2 does not — only WF1 should be fetched
+    // WF1 has tag 'production', WF2 does not - only WF1 should be fetched
     expect(getWorkflow).toHaveBeenCalledWith('wf-1');
     expect(getWorkflow).not.toHaveBeenCalledWith('wf-2');
   });
@@ -424,7 +470,7 @@ describe('runPull — filters', () => {
   });
 });
 
-describe('runPull — --json output', () => {
+describe('runPull - --json output', () => {
   it('emits a JSON object to stdout and no human text', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -465,7 +511,7 @@ describe('runPull — --json output', () => {
   });
 });
 
-describe('runPull — --verbose output', () => {
+describe('runPull - --verbose output', () => {
   it('lists every pulled workflow with name and active status on first pull', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -544,7 +590,7 @@ describe('runPull — --verbose output', () => {
   });
 });
 
-describe('runPull — error handling', () => {
+describe('runPull - error handling', () => {
   it('writes a failure audit entry and re-throws on API error', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() =>
@@ -610,7 +656,7 @@ describe('runPull — error handling', () => {
   });
 });
 
-describe('runPull — smart Next: hint', () => {
+describe('runPull - smart Next: hint', () => {
   it('suggests push --dry-run when changes are found', async () => {
     setupProject();
     setupPreviousSnapshot();
@@ -655,7 +701,7 @@ describe('runPull — smart Next: hint', () => {
   });
 });
 
-describe('runPull — active/inactive counts', () => {
+describe('runPull - active/inactive counts', () => {
   it('shows active and inactive counts in fetch line', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never); // WF1 active, WF2 inactive
@@ -687,7 +733,7 @@ describe('runPull — active/inactive counts', () => {
   });
 });
 
-describe('runPull — --name-only output', () => {
+describe('runPull - --name-only output', () => {
   it('prints only changed workflow names, one per line', async () => {
     setupProject();
     setupPreviousSnapshot();
@@ -752,7 +798,7 @@ describe('runPull — --name-only output', () => {
   });
 });
 
-describe('runPull — --exit-code', () => {
+describe('runPull - --exit-code', () => {
   it('throws ControlledExit(1) when changes are found', async () => {
     setupProject();
     setupPreviousSnapshot();
@@ -796,7 +842,7 @@ describe('runPull — --exit-code', () => {
   });
 });
 
-describe('runPull — --id (single workflow)', () => {
+describe('runPull - --id (single workflow)', () => {
   it('fetches single workflow by id without calling listWorkflows', async () => {
     setupProject();
     const getWorkflow = vi.fn().mockResolvedValue(WF1);
@@ -897,7 +943,7 @@ describe('runPull — --id (single workflow)', () => {
   });
 });
 
-describe('runPull — staleness warning', () => {
+describe('runPull - staleness warning', () => {
   it('prints a dim note when last pull was more than 7 days ago', async () => {
     setupProject();
     // Write a stale audit entry (8 days ago)
@@ -962,7 +1008,7 @@ describe('runPull — staleness warning', () => {
   });
 });
 
-describe('runPull — fingerprints', () => {
+describe('runPull - fingerprints', () => {
   it('writes fingerprints.json with one entry per pulled workflow on first pull', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -1030,12 +1076,12 @@ describe('runPull — fingerprints', () => {
     expect(fp.envs.dev['wf-1'].name).toBe('Workflow One');
     expect(fp.envs.dev['wf-1'].versionId).toBe('v1');
     expect(fp.envs.dev['wf-1'].contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    // Only one entry — the --id workflow; WF2 is not in this pull
+    // Only one entry - the --id workflow; WF2 is not in this pull
     expect(Object.keys(fp.envs.dev)).toHaveLength(1);
   });
 });
 
-describe('runPull — workflow map auto-heal', () => {
+describe('runPull - workflow map auto-heal', () => {
   it('updates map entry name when a workflow is renamed in n8n', async () => {
     setupProject();
 
@@ -1111,7 +1157,7 @@ describe('runPull — workflow map auto-heal', () => {
   });
 });
 
-describe('runPull — server-side filter params', () => {
+describe('runPull - server-side filter params', () => {
   it('calls listWorkflows with active=true when --only-active is set', async () => {
     setupProject();
     const listWorkflows = vi.fn().mockResolvedValue([WF1]);
@@ -1137,7 +1183,7 @@ describe('runPull — server-side filter params', () => {
   });
 });
 
-describe('runPull — output mode validation', () => {
+describe('runPull - output mode validation', () => {
   it('does not throw when only --json is set', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -1151,14 +1197,14 @@ describe('runPull — output mode validation', () => {
   });
 });
 
-describe('runPull — git sync runs regardless of output mode', () => {
+describe('runPull - git sync runs regardless of output mode', () => {
   it('calls syncToRemote when --json mode', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
 
     // We verify sync by checking that the audit entry is written (sync is the last step);
     // the simplest proxy is ensuring the command completes without error and the audit
-    // entry exists — sync is synchronous side-effect we cannot easily intercept without
+    // entry exists - sync is synchronous side-effect we cannot easily intercept without
     // mocking simple-git. Instead verify the command resolves (sync always runs).
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -1180,7 +1226,7 @@ describe('runPull — git sync runs regardless of output mode', () => {
   });
 });
 
-describe('runPull — env-specific name detection', () => {
+describe('runPull - env-specific name detection', () => {
   const WF_ENV = {
     ...WF1,
     id: 'wf-env',
@@ -1261,7 +1307,7 @@ describe('runPull — env-specific name detection', () => {
 
     await runPull({ env: 'dev', json: true });
 
-    // Only one line — the JSON object; no warning line
+    // Only one line - the JSON object; no warning line
     expect(logged).toHaveLength(1);
     expect(() => JSON.parse(logged[0])).not.toThrow();
   });

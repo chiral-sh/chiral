@@ -77,7 +77,10 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
     const prev = prevById.get(wf.id);
     if (!prev) {
       added.push(wf);
-    } else if ((prev as Record<string, unknown>).versionId !== wf.versionId) {
+    } else if (
+      (prev as Record<string, unknown>).versionId !== wf.versionId ||
+      computeContentHash(prev as Record<string, unknown>) !== computeContentHash(wf)
+    ) {
       updated.push(wf);
     } else {
       unchanged++;
@@ -209,6 +212,11 @@ export async function runPull(
       const isUpdated = !!prevEntry && (prevEntry as Record<string, unknown>).versionId !== workflow.versionId;
       const hasChanges = isNew || isUpdated;
 
+      // Capture old fingerprint before it gets overwritten by upsertFingerprintEntry
+      const prevFpEntry = isUpdated
+        ? loadFingerprints(chiralDir).envs[options.env]?.[workflow.id]
+        : undefined;
+
       const deploymentId = generateDeploymentId();
       const snapshotTimestamp = new Date().toISOString();
       writeSnapshot(chiralDir, deploymentId, workflow);
@@ -259,7 +267,17 @@ export async function runPull(
         if (isNew) {
           console.log(`  ${chalk.green('+')} ${workflow.name}  ${chalk.dim('(new)')}`);
         } else if (isUpdated) {
-          console.log(`  ${chalk.yellow('~')} ${workflow.name}  ${chalk.dim('(updated)')}`);
+          let updateLabel: string;
+          if (!prevFpEntry) {
+            updateLabel = 'updated';
+          } else if (prevFpEntry.name !== workflow.name) {
+            updateLabel = `renamed from "${prevFpEntry.name}"`;
+          } else if (prevFpEntry.structureHash !== computeStructureHash(workflow)) {
+            updateLabel = 'logic changed';
+          } else {
+            updateLabel = 'configuration changed';
+          }
+          console.log(`  ${chalk.yellow('~')} ${workflow.name}  ${chalk.dim(`(${updateLabel})`)}`);
         } else {
           console.log(`  ${chalk.green('✓')} ${workflow.name} up to date`);
         }
@@ -339,7 +357,7 @@ export async function runPull(
         : '';
     if (spinner1) {
       spinner1.succeed(
-        chalk.green(`  Fetched ${plural(workflows.length, 'workflow')} — ${activeLabel}`) + filteredNote,
+        chalk.green(`  Fetched ${plural(workflows.length, 'workflow')} - ${activeLabel}`) + filteredNote,
       );
     }
 
@@ -374,12 +392,12 @@ export async function runPull(
     };
 
     if (!isFirstPull && totalChanges === 0) {
-      // nothing changed — write snapshot silently
+      // nothing changed - write snapshot silently
       for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
       writeSnapshotMeta(chiralDir, deploymentId, meta);
 
       if (outputMode === 'name-only') {
-        // nothing changed — no output
+        // nothing changed - no output
       } else if (outputMode === 'json') {
         console.log(
           JSON.stringify({
@@ -397,14 +415,14 @@ export async function runPull(
       } else {
         if (workflows.length === 0) {
           console.log(
-            `\n  ${chalk.yellow('⚠')} No workflows found in ${chalk.cyan(options.env)} — is this expected?`,
+            `\n  ${chalk.yellow('⚠')} No workflows found in ${chalk.cyan(options.env)} - is this expected?`,
           );
           console.log(
             chalk.dim(`\n  Check that your API key has permission to list workflows in this environment.`),
           );
         } else {
           console.log(
-            `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date — no changes since last pull`,
+            `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date - no changes since last pull`,
           );
           if (options.verbose) printWorkflowList(workflows);
           warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
@@ -414,7 +432,7 @@ export async function runPull(
         console.log();
       }
     } else {
-      // first pull or changes found — show snapshot spinner
+      // first pull or changes found - show snapshot spinner
       const spinner3 = outputMode === 'human'
         ? ora({ text: '  Writing snapshot…', color: 'cyan' }).start()
         : null;
@@ -428,7 +446,7 @@ export async function runPull(
       }
 
       if (outputMode === 'name-only') {
-        // print only names of changed workflows — no other output
+        // print only names of changed workflows - no other output
         for (const wf of (delta?.added ?? [])) console.log(wf.name);
         for (const wf of (delta?.updated ?? [])) console.log(wf.name);
         for (const wf of (delta?.deleted ?? [])) console.log(wf.name);
@@ -449,22 +467,34 @@ export async function runPull(
       } else {
         if (isFirstPull && workflows.length === 0) {
           console.log(
-            `\n  ${chalk.yellow('⚠')} No workflows found in ${chalk.cyan(options.env)} — is this expected?`,
+            `\n  ${chalk.yellow('⚠')} No workflows found in ${chalk.cyan(options.env)} - is this expected?`,
           );
           console.log(
             chalk.dim(`\n  Check that your API key has permission to list workflows in this environment.`),
           );
         } else if (isFirstPull) {
           console.log(
-            `\n  ${chalk.dim('First pull — baseline saved. Run again after making changes in n8n to see a delta.')}`,
+            `\n  ${chalk.dim('First pull - baseline saved. Run again after making changes in n8n to see a delta.')}`,
           );
         } else {
+          const prevFp = loadFingerprints(chiralDir);
           console.log();
           for (const wf of delta!.added) {
             console.log(`  ${chalk.green('+')} ${wf.name}  ${chalk.dim('(new)')}`);
           }
           for (const wf of delta!.updated) {
-            console.log(`  ${chalk.yellow('~')} ${wf.name}  ${chalk.dim('(updated)')}`);
+            const prevEntry = prevFp.envs[options.env]?.[wf.id];
+            let updateLabel: string;
+            if (!prevEntry) {
+              updateLabel = 'updated';
+            } else if (prevEntry.name !== wf.name) {
+              updateLabel = `renamed from "${prevEntry.name}"`;
+            } else if (prevEntry.structureHash !== computeStructureHash(wf)) {
+              updateLabel = 'logic changed';
+            } else {
+              updateLabel = 'configuration changed';
+            }
+            console.log(`  ${chalk.yellow('~')} ${wf.name}  ${chalk.dim(`(${updateLabel})`)}`);
           }
           for (const wf of delta!.deleted) {
             console.log(`  ${chalk.yellow('⚠')} ${wf.name}  ${chalk.dim('(removed from n8n)')}`);
@@ -489,7 +519,7 @@ export async function runPull(
       }
     }
 
-    // Batch-update fingerprints for every pulled workflow — runs for both the
+    // Batch-update fingerprints for every pulled workflow - runs for both the
     // "no changes" and "first pull / changes found" branches.
     if (workflows.length > 0) {
       const fp = loadFingerprints(chiralDir);
@@ -542,7 +572,7 @@ export async function runPull(
     try {
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
-      // best-effort — don't mask the original error
+      // best-effort - don't mask the original error
     }
     throw err;
   }
@@ -558,7 +588,7 @@ export const pullCommand = new Command('pull')
   .option('--verbose', 'List every pulled workflow with its active/inactive status')
   .addOption(new Option('--only-active', 'Only pull currently active workflows').conflicts('id'))
   .addOption(new Option('--id <workflow-id>', 'Pull a single workflow by its n8n ID').conflicts(['tag', 'pattern', 'onlyActive']))
-  .addOption(new Option('--name-only', 'Print only changed workflow names, one per line — suitable for piping').conflicts('json'))
+  .addOption(new Option('--name-only', 'Print only changed workflow names, one per line - suitable for piping').conflicts('json'))
   .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
   .option('--exit-code', 'Exit 1 if changes were detected, 0 if everything was already up to date (CI use)')
   .addHelpText(
