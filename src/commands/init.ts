@@ -18,6 +18,7 @@ import { createChiralDirectory } from '../state/init.js';
 export interface InitOptions {
   project?: string;
   noGit?: boolean;
+  json?: boolean;
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
@@ -35,7 +36,7 @@ function runGitInit(dir: string): void {
   try {
     execSync('git init', { cwd: dir, stdio: 'pipe' });
   } catch {
-    // non-fatal — user can run git init themselves
+    // non-fatal - user can run git init themselves
   }
 }
 
@@ -60,7 +61,7 @@ export async function runInit(options: InitOptions): Promise<void> {
     throw new UserError(`Invalid project name: "${projectName}"`);
   }
 
-  // Free tier: enforce 1-project limit (no license check yet — placeholder)
+  // Free tier: enforce 1-project limit (no license check yet - placeholder)
   // TODO: re-enable once paid tier / license gate is wired up (see CLAUDE.md Phase 5)
   // const projectCount = getProjectCount();
   // if (projectCount >= 1) {
@@ -104,8 +105,13 @@ export async function runInit(options: InitOptions): Promise<void> {
   }
 
   // ── Output ─────────────────────────────────────────────────────────────────
+  if (options.json) {
+    console.log(JSON.stringify({ status: 'ok', data: { project: projectName, path: projectDir, created: true } }));
+    return;
+  }
+
   const file = (path: string, note?: string) =>
-    `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('— ' + note) : ''}`;
+    `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('- ' + note) : ''}`;
 
   console.log(`\n  ${chalk.bold(projectName)}\n`);
   console.log(file(`${projectDir}/.chiral/config.example.json`, 'fill in your environments here'));
@@ -127,6 +133,7 @@ export const initCommand = new Command('init')
   .argument('[name]', 'Project name (skips interactive prompt)')
   .option('--project <name>', 'Project name (alternative to positional argument)')
   .option('--no-git', 'Skip automatic git init inside the project folder')
+  .option('--json', 'Output result as JSON')
   .addHelpText(
     'after',
     `
@@ -141,7 +148,7 @@ Examples:
     chiral init my-n8n --no-git
 `,
   )
-  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean }) => {
+  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean }) => {
     const resolvedName = nameArg ?? options.project;
-    await runInit({ project: resolvedName, noGit: options.noGit });
+    await runInit({ project: resolvedName, noGit: options.noGit, json: options.json });
   });

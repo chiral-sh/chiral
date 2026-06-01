@@ -50,7 +50,7 @@ export function loadConfigAndDir(resolved?: ResolvedProject): ConfigWithDir {
   try {
     raw = JSON.parse(readFileSync(configPath, 'utf-8'));
   } catch {
-    throw new UserError(`Could not read ${configPath} — is it valid JSON?`);
+    throw new UserError(`Could not read ${configPath} - is it valid JSON?`);
   }
 
   const result = ConfigSchema.safeParse(raw);
@@ -87,6 +87,83 @@ export function writeConfig(chiralDir: string, config: Config): void {
   } catch {
     throw new UserError('Could not write .chiral/config.json');
   }
+}
+
+export function updateConfigExampleEnvs(
+  chiralDir: string,
+  updateFn: (envs: Record<string, Record<string, unknown>>) => void,
+): void {
+  const examplePath = join(chiralDir, 'config.example.json');
+  if (!existsSync(examplePath)) return;
+  try {
+    const raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
+    if (!raw.environments || typeof raw.environments !== 'object') {
+      raw.environments = {};
+    }
+    const envs = raw.environments as Record<string, Record<string, unknown>>;
+    updateFn(envs);
+    writeFileSync(examplePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  } catch {
+    // silently fail
+  }
+}
+
+// ── parseConfigExample ────────────────────────────────────────────────────────
+
+export interface ParsedConfigExampleEnv {
+  /** Pre-filled URL from the example, or undefined if it looks like a placeholder */
+  url: string | undefined;
+}
+
+export interface ParsedConfigExample {
+  /** Project name from the example file */
+  project: string;
+  /** Ordered map of env name → optional pre-filled URL */
+  envs: Record<string, ParsedConfigExampleEnv>;
+  /** Verbatim gitSync block if present */
+  gitSync?: unknown;
+}
+
+const PLACEHOLDER_URL_PATTERNS = ['your-domain', 'example.com', 'localhost'];
+
+function isPlaceholderUrl(url: unknown): boolean {
+  if (typeof url !== 'string') return true;
+  return PLACEHOLDER_URL_PATTERNS.some((p) => url.includes(p));
+}
+
+function isPlaceholderApiKey(apiKey: unknown): boolean {
+  if (typeof apiKey !== 'string') return true;
+  return apiKey.startsWith('YOUR_');
+}
+
+export function parseConfigExample(chiralDir: string): ParsedConfigExample {
+  const examplePath = join(chiralDir, 'config.example.json');
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    throw new UserError(
+      'Found .chiral/ but config.example.json is missing or invalid. Ask a teammate to share it.',
+    );
+  }
+
+  const project = typeof raw['project'] === 'string' && raw['project'] ? raw['project'] : 'my-project';
+  const rawEnvs = (raw['environments'] ?? {}) as Record<string, Record<string, unknown>>;
+
+  const envs: Record<string, ParsedConfigExampleEnv> = {};
+  for (const [name, envObj] of Object.entries(rawEnvs)) {
+    const url = envObj['url'];
+    const apiKey = envObj['apiKey'];
+    // Suppress URL pre-fill if URL or apiKey looks like a placeholder
+    const prefilledUrl = (!isPlaceholderUrl(url) && !isPlaceholderApiKey(apiKey)) ? (url as string) : undefined;
+    envs[name] = { url: prefilledUrl };
+  }
+
+  return {
+    project,
+    envs,
+    gitSync: raw['gitSync'],
+  };
 }
 
 export function readProjectNameFromExample(chiralDir: string): string {
