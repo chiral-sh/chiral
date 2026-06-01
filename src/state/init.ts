@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitSync } from '../lib/config.js';
+import { writeTeam } from './team.js';
 
 const CREDENTIALS_TEMPLATE = {
   version: 1 as const,
@@ -16,6 +17,7 @@ export function createChiralDirectory(
   chiralDir: string,
   projectName: string,
   gitSync?: GitSync,
+  ownerEmail?: string,
 ): void {
   mkdirSync(chiralDir, { recursive: true });
   mkdirSync(join(chiralDir, 'locks'), { recursive: true });
@@ -56,4 +58,14 @@ export function createChiralDirectory(
     JSON.stringify(WORKFLOWS_TEMPLATE, null, 2) + '\n',
     'utf-8',
   );
+
+  if (ownerEmail) {
+    const now = new Date().toISOString();
+    writeTeam(chiralDir, {
+      version: 1,
+      members: {
+        [ownerEmail]: { role: 'owner', addedBy: ownerEmail, addedAt: now },
+      },
+    });
+  }
 }

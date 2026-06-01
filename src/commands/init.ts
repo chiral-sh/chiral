@@ -23,6 +23,16 @@ export interface InitOptions {
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
 
+function getGitActor(): string {
+  try {
+    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch {
+    throw new UserError(
+      'git config user.email is not set - configure it before running chiral init',
+    );
+  }
+}
+
 function isGitInstalled(): boolean {
   try {
     execSync('git --version', { stdio: 'pipe' });
@@ -61,6 +71,8 @@ export async function runInit(options: InitOptions): Promise<void> {
     throw new UserError(`Invalid project name: "${projectName}"`);
   }
 
+  const ownerEmail = getGitActor();
+
   // Free tier: enforce 1-project limit (no license check yet - placeholder)
   // TODO: re-enable once paid tier / license gate is wired up (see CLAUDE.md Phase 5)
   // const projectCount = getProjectCount();
@@ -90,7 +102,7 @@ export async function runInit(options: InitOptions): Promise<void> {
   mkdirSync(projectDir, { recursive: true });
 
   const chiralDir = join(projectDir, '.chiral');
-  createChiralDirectory(chiralDir, projectName);
+  createChiralDirectory(chiralDir, projectName, undefined, ownerEmail);
 
   // Register in global index and auto-select for this terminal session
   registerProject(projectName, projectDir);
