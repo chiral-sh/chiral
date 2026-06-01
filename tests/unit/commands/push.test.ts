@@ -177,7 +177,7 @@ function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflow
 
 // ── guards and options ────────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — guards', () => {
+describe('runPush (dry-run) - guards', () => {
   it('throws UserError when source equals target', async () => {
     await expect(
       runPush({ source: 'dev', target: 'dev', dryRun: true }),
@@ -208,7 +208,7 @@ describe('runPush (dry-run) — guards', () => {
 
 // ── classification (create / update / skip) ───────────────────────────────────
 
-describe('runPush (dry-run) — classification', () => {
+describe('runPush (dry-run) - classification', () => {
   it('classifies as would-create when target lacks workflow', async () => {
     setupProject([makeSnapshotWf('src-1', 'New WF', 'v1')], []);
 
@@ -274,7 +274,7 @@ describe('runPush (dry-run) — classification', () => {
 
 // ── credential mapping ────────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — credential mapping', () => {
+describe('runPush (dry-run) - credential mapping', () => {
   it('shows mapping for credentials found in nodes', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1', [], ['dev_pg'])]);
 
@@ -328,13 +328,13 @@ describe('runPush (dry-run) — credential mapping', () => {
     expect(joined).toContain('✗');
     expect(joined).toContain('missing in prod');
     expect(joined).toContain('Cannot push');
-    expect(joined).toContain('chiral credential add postgres prod=prod_pg');
+    expect(joined).toContain('chiral credential map postgres prod=prod_pg');
   });
 });
 
 // ── tag warnings ──────────────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — tag warnings', () => {
+describe('runPush (dry-run) - tag warnings', () => {
   it('warns when snapshot workflow has a tag missing in target', async () => {
     // 'unknown_tag' is not returned by targetClient.listTags()
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1', ['unknown_tag'])]);
@@ -365,7 +365,7 @@ describe('runPush (dry-run) — tag warnings', () => {
 
 // ── stale snapshot prompt ─────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — stale snapshot', () => {
+describe('runPush (dry-run) - stale snapshot', () => {
   it('prompts and aborts if snapshot is > 24h old and user says no', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
 
@@ -417,7 +417,7 @@ describe('runPush (dry-run) — stale snapshot', () => {
 
 // ── JSON output ───────────────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — JSON output', () => {
+describe('runPush (dry-run) - JSON output', () => {
   it('emits valid json matching expected structure', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v2', ['billing'], ['dev_pg'])], [makeSummary('tgt-1', 'W1', 'v1')]);
 
@@ -478,7 +478,7 @@ describe('runPush (dry-run) — JSON output', () => {
 
 // ── filters ───────────────────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — filters', () => {
+describe('runPush (dry-run) - filters', () => {
   it('--tag excludes workflows that do not have the tag', async () => {
     setupProject([
       makeSnapshotWf('src-1', 'Tagged WF', 'v1', ['billing']),
@@ -514,7 +514,7 @@ describe('runPush (dry-run) — filters', () => {
   it('does not include skipped workflows nodes in credential map validation', async () => {
     // src-1 is skipped (same versionId), src-2 is new
     // src-1 references dev_pg which maps to prod_pg (exists in target)
-    // src-2 has no credentials — should produce no credential errors
+    // src-2 has no credentials - should produce no credential errors
     setupProject(
       [
         makeSnapshotWf('src-1', 'Unchanged WF', 'v1', [], ['dev_pg']),
@@ -526,7 +526,7 @@ describe('runPush (dry-run) — filters', () => {
     MockN8nClient.mockImplementation(() =>
       makeTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([makeSummary('tgt-1', 'Unchanged WF', 'v1')]),
-        listCredentials: vi.fn().mockResolvedValue([]), // prod_pg NOT present — would abort if skipped wf is included
+        listCredentials: vi.fn().mockResolvedValue([]), // prod_pg NOT present - would abort if skipped wf is included
         listTags: vi.fn().mockResolvedValue([]),
       }) as never,
     );
@@ -545,7 +545,7 @@ describe('runPush (dry-run) — filters', () => {
 
 // ── summary line ──────────────────────────────────────────────────────────────
 
-describe('runPush (dry-run) — summary', () => {
+describe('runPush (dry-run) - summary', () => {
   it('shows already-in-sync message when all workflows are up to date', async () => {
     setupProject(
       [makeSnapshotWf('src-1', 'Same WF', 'v1')],
@@ -563,7 +563,7 @@ describe('runPush (dry-run) — summary', () => {
 
 // ── fingerprint-based classification ─────────────────────────────────────────
 
-describe('runPush (dry-run) — fingerprint-based classification', () => {
+describe('runPush (dry-run) - fingerprint-based classification', () => {
   it('classifies as skipped when target fingerprint contentHash matches source despite different versionId', async () => {
     const wf = makeSnapshotWf('src-1', 'Same Content WF', 'v2');
     // Target has versionId v1 (differs from snapshot v2), but same actual content
@@ -638,7 +638,7 @@ describe('runPush (dry-run) — fingerprint-based classification', () => {
 
 // ── dry-run: no workflow map writes ──────────────────────────────────────────
 
-describe('runPush (dry-run) — workflow map not written', () => {
+describe('runPush (dry-run) - workflow map not written', () => {
   it('does not create workflows.json when dry-run mode is used', async () => {
     setupProject([makeSnapshotWf('src-1', 'New WF', 'v1')], []);
 
@@ -650,7 +650,7 @@ describe('runPush (dry-run) — workflow map not written', () => {
 
 // ── live push fingerprint writes ──────────────────────────────────────────────
 
-describe('runPush (live) — fingerprint writes', () => {
+describe('runPush (live) - fingerprint writes', () => {
   it('writes fingerprint to target env after successful createWorkflow', async () => {
     const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
     setupProject([wf], []);
@@ -765,7 +765,7 @@ describe('runPush (live) — fingerprint writes', () => {
       }) as never,
     );
 
-    // suppress console output — we're only checking the fingerprints file
+    // suppress console output - we're only checking the fingerprints file
     vi.spyOn(console, 'log').mockImplementation(() => { });
     vi.spyOn(console, 'error').mockImplementation(() => { });
 
@@ -777,7 +777,7 @@ describe('runPush (live) — fingerprint writes', () => {
 
 // ── live push workflow map registration ───────────────────────────────────────
 
-describe('runPush (live) — workflow map registration', () => {
+describe('runPush (live) - workflow map registration', () => {
   it('writes workflows.json entry with source and target IDs after createWorkflow', async () => {
     const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
     setupProject([wf], []);
@@ -890,7 +890,7 @@ describe('runPush (live) — workflow map registration', () => {
 
 // ── header text ───────────────────────────────────────────────────────────────
 
-describe('runPush — header text', () => {
+describe('runPush - header text', () => {
   it('shows "Dry run:" header in dry-run mode', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
 
@@ -928,7 +928,7 @@ describe('runPush — header text', () => {
 
 // ── stale snapshot with --yes ─────────────────────────────────────────────────
 
-describe('runPush — stale snapshot with --yes', () => {
+describe('runPush - stale snapshot with --yes', () => {
   function setupStaleProject() {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -970,7 +970,7 @@ describe('runPush — stale snapshot with --yes', () => {
 
 // ── prod type-to-confirm ──────────────────────────────────────────────────────
 
-describe('runPush (live) — prod type-to-confirm', () => {
+describe('runPush (live) - prod type-to-confirm', () => {
   it('calls input() for the prod confirmation prompt, not confirm()', async () => {
     const wf = makeSnapshotWf('src-1', 'W1', 'v1');
     setupProject([wf], []);
@@ -985,7 +985,7 @@ describe('runPush (live) — prod type-to-confirm', () => {
     );
 
     vi.mocked(prompts.input).mockResolvedValue('prod');
-    // Per-workflow create prompt still fires for the new workflow — allow it
+    // Per-workflow create prompt still fires for the new workflow - allow it
     vi.mocked(prompts.confirm).mockResolvedValue(true);
 
     const output: string[] = [];

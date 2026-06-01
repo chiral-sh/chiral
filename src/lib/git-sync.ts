@@ -13,7 +13,7 @@ export interface SyncResult {
   manualCmd?: string;
 }
 
-// Non-secret files that belong to the team — config.json is always excluded
+// Non-secret files that belong to the team - config.json is always excluded
 const STAGED_RELATIVE: string[] = [
   'credentials.json',
   'workflows.json',
@@ -36,7 +36,7 @@ export async function syncToRemote(
 
   const { remote, branch } = gs;
 
-  // simple-git operates relative to the repo root — one level above .chiral/
+  // simple-git operates relative to the repo root - one level above .chiral/
   const repoRoot = resolve(chiralDir, '..');
   const git = simpleGit(repoRoot);
 
@@ -64,14 +64,13 @@ export async function syncToRemote(
       const fixHint =
         `Your local branch is "${current}" but gitSync.branch is set to "${branch}". ` +
         `Update gitSync.branch in .chiral/config.json to "${current}", ` +
-        `or run: chiral configure --remote ${remote}` +
-        ` (then manually set branch in config.json)`;
+        `or run: chiral remote set --branch ${current}`;
       const manualCmd =
         `git add .chiral/ && git commit -m "${commitMsg}" && git push ${remote} ${current}`;
       return { skipped: false, success: false, message: fixHint, manualCmd };
     }
 
-    // Strip VSCode credential helper env vars — the GIT_ASKPASS socket is scoped
+    // Strip VSCode credential helper env vars - the GIT_ASKPASS socket is scoped
     // to the VSCode window process and is unreachable from spawned subprocesses,
     // causing ECONNREFUSED. Removing these lets git fall back to the next
     // configured helper (SSH agent, macOS Keychain, GCM, credential.helper store).
@@ -101,7 +100,7 @@ export function formatSyncSuccess(result: SyncResult): string {
 export function formatSyncFailure(result: SyncResult): string[] {
   const { userMessage, fix } = classifyError(result.message ?? '');
   return [
-    `  ⚠ Git sync failed — ${userMessage}`,
+    `  ⚠ Git sync failed - ${userMessage}`,
     ...(fix ? [`    ${fix}`] : []),
     `    Sync manually when ready:`,
     `    ${result.manualCmd}`,
@@ -122,7 +121,7 @@ interface ErrorClassification {
 }
 
 function classifyError(msg: string): ErrorClassification {
-  // VSCode credential socket — ECONNREFUSED on a .sock path
+  // VSCode credential socket - ECONNREFUSED on a .sock path
   if (msg.includes('ECONNREFUSED') && msg.includes('.sock')) {
     return {
       userMessage: 'git credential helper is not accessible from this process',
@@ -156,7 +155,7 @@ function classifyError(msg: string): ErrorClassification {
   // Remote rejected (non-fast-forward / diverged)
   if (msg.includes('[rejected]') || msg.includes('failed to push')) {
     return {
-      userMessage: 'remote rejected the push — branches have diverged',
+      userMessage: 'remote rejected the push - branches have diverged',
       fix: `Rebase your local changes: git pull --rebase ${msg.match(/\S+\.git/)?.[0] ?? 'origin'} then retry`,
     };
   }
@@ -164,7 +163,7 @@ function classifyError(msg: string): ErrorClassification {
   // Network
   if (msg.includes('Could not resolve host') || msg.includes('Network unreachable') || msg.includes('ETIMEDOUT')) {
     return {
-      userMessage: 'cannot reach remote — network unreachable',
+      userMessage: 'cannot reach remote - network unreachable',
     };
   }
 

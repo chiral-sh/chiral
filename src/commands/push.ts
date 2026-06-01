@@ -41,7 +41,7 @@ function sanitizeWorkflowForApi(
   workflow: Record<string, unknown>,
   mode: 'create' | 'update' = 'create',
 ): Record<string, unknown> {
-  // POST /workflows (workflowCreate schema) does not accept description — additionalProperties: false
+  // POST /workflows (workflowCreate schema) does not accept description - additionalProperties: false
   // PUT /workflows/:id (workflow schema) does accept description
   const allowed = new Set([
     'name',
@@ -166,7 +166,7 @@ export async function runPush(
   // ── Guard: source ≠ target ────────────────────────────────────────────────
   if (options.source === options.target) {
     throw new UserError(
-      `Cannot push an environment to itself — source and target are both "${options.source}"`,
+      `Cannot push an environment to itself - source and target are both "${options.source}"`,
     );
   }
 
@@ -233,7 +233,7 @@ export async function runPush(
             default: false,
           });
         } catch (err) {
-          // ExitPromptError (Ctrl+C) — let top-level handler deal with it
+          // ExitPromptError (Ctrl+C) - let top-level handler deal with it
           throw err;
         }
         if (!proceed) throw new ControlledExit(0);
@@ -404,7 +404,7 @@ export async function runPush(
       const dst = padEnd(entry.targetName, CRED_COL_WIDTH);
       if (entry.status === 'passthrough') {
         console.log(
-          `    ${chalk.dim(src)} → ${chalk.dim(dst)}  ${chalk.yellow('⚠')} no mapping — passing through unchanged`,
+          `    ${chalk.dim(src)} → ${chalk.dim(dst)}  ${chalk.yellow('⚠')} no mapping - passing through unchanged`,
         );
       } else if (credentialErrors.some((e) => e.sourceName === entry.sourceName)) {
         console.log(
@@ -419,14 +419,14 @@ export async function runPush(
     console.log();
   }
 
-  // Credential errors — abort before showing changeset
+  // Credential errors - abort before showing changeset
   if (credentialErrors.length > 0) {
     const hint = credentialErrors.map((e) => {
       const logical = e.logicalName ?? e.sourceName;
-      return `  chiral credential add ${logical} ${options.target}=${e.targetName}`;
+      return `  chiral credential map ${logical} ${options.target}=${e.targetName}`;
     });
     console.log(
-      `  ${chalk.red('✗')}  Cannot push — ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Create ${credentialErrors.length === 1 ? 'it' : 'them'} first or run:`,
+      `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Create ${credentialErrors.length === 1 ? 'it' : 'them'} first or run:`,
     );
     for (const h of hint) console.log(chalk.dim(h));
     console.log();
@@ -437,21 +437,21 @@ export async function runPush(
   for (const c of toCreate) {
     const wasMapped = c.resolvedName !== c.workflow.name;
     const createNote = wasMapped
-      ? `will be created as "${c.resolvedName}" — run: chiral workflow map --validate to check`
+      ? `will be created as "${c.resolvedName}" - run: chiral workflow map --validate to check`
       : 'will be created';
     console.log(
       `  ${chalk.green('+')} ${c.resolvedName}  ${chalk.dim(`(${createNote})`)}`,
     );
   }
   for (const c of toUpdate) {
-    const activeNote = c.targetActive ? ' — active, will be paused briefly' : '';
+    const activeNote = c.targetActive ? ' - active, will be paused briefly' : '';
     console.log(
       `  ${chalk.yellow('~')} ${c.resolvedName}  ${chalk.dim(`(will be updated${activeNote})`)}`,
     );
   }
   for (const c of toSkip) {
     console.log(
-      `  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date — skipped)')}`,
+      `  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`,
     );
   }
 
@@ -460,7 +460,7 @@ export async function runPush(
     console.log();
     for (const tw of tagWarnings) {
       console.log(
-        `  ${chalk.yellow('⚠')}  Tag "${tw.name}" not found in ${chalk.cyan(options.target)} — it will not be assigned to pushed workflows`,
+        `  ${chalk.yellow('⚠')}  Tag "${tw.name}" not found in ${chalk.cyan(options.target)} - it will not be assigned to pushed workflows`,
       );
     }
   }
@@ -470,7 +470,7 @@ export async function runPush(
     const changeCount = toCreate.length + toUpdate.length;
     console.log();
     if (changeCount === 0) {
-      console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync — no changes needed`);
+      console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync - no changes needed`);
     } else {
       console.log(
         `  ${plural(changeCount, 'change')}. Run without ${chalk.dim('--dry-run')} to apply.`,
@@ -495,7 +495,7 @@ export async function runPush(
   // No changes needed
   if (changeCount === 0) {
     console.log();
-    console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync — no changes needed`);
+    console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync - no changes needed`);
     console.log();
     return;
   }
@@ -544,7 +544,7 @@ export async function runPush(
     const isProd = options.target.toLowerCase().includes('prod');
     if (isProd) {
       console.log(
-        `  ${chalk.yellow('⚠')}  Pushing to ${options.target} — review changes above carefully.`,
+        `  ${chalk.yellow('⚠')}  Pushing to ${options.target} - review changes above carefully.`,
       );
       await input({
         message: `Type "${options.target}" to confirm:`,
@@ -606,7 +606,7 @@ export async function runPush(
 
   for (const c of classified) {
     if (c.action === 'skipped') {
-      console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date — skipped)')}`);
+      console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`);
       results.skipped.push(c.workflow.name);
       continue;
     }
@@ -623,7 +623,7 @@ export async function runPush(
         if (!options.yes) {
           try {
             const createIt = await confirm({
-              message: `"${c.resolvedName}" doesn't exist in ${options.target} yet — create it?`,
+              message: `"${c.resolvedName}" doesn't exist in ${options.target} yet - create it?`,
               default: false,
             });
             if (!createIt) {
@@ -638,7 +638,7 @@ export async function runPush(
 
         const createResult = await targetClient.createWorkflow(sanitizedForCreate as Parameters<typeof targetClient.createWorkflow>[0]);
 
-        // POST does not accept description — follow up with PUT if source has one
+        // POST does not accept description - follow up with PUT if source has one
         if (typeof sourceWorkflow['description'] === 'string' && sourceWorkflow['description']) {
           await targetClient.updateWorkflow(createResult.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
         }
@@ -756,12 +756,12 @@ export async function runPush(
   console.log();
   if (results.failed.length === 0) {
     console.log(
-      `  ${chalk.green('✓')} Push complete — ${plural(results.created.length + results.updated.length, 'change')}`,
+      `  ${chalk.green('✓')} Push complete - ${plural(results.created.length + results.updated.length, 'change')}`,
     );
     console.log(`    Deployment: ${targetDeploymentId}`);
   } else {
     console.log(
-      `  ${chalk.red('✗')} Push incomplete — ${plural(results.created.length + results.updated.length, 'change')} of ${plural(changeCount, 'change')} applied.`,
+      `  ${chalk.red('✗')} Push incomplete - ${plural(results.created.length + results.updated.length, 'change')} of ${plural(changeCount, 'change')} applied.`,
     );
     console.log(`    Pre-push snapshot saved at .chiral/snapshots/${targetDeploymentId}/`);
     if (results.failed.length > 0) {
@@ -799,10 +799,10 @@ export const pushCommand = new Command('push')
   .description('Push workflows from a source environment to a target environment')
   .requiredOption('--source <env>', 'Source environment (reads from local snapshot)')
   .requiredOption('--target <env>', 'Target environment (the n8n instance to write to)')
-  .option('--dry-run', 'Preview changes only — no writes made')
+  .option('--dry-run', 'Preview changes only - no writes made')
   .option('--tag <tag>', 'Only push workflows with this tag')
   .option('--pattern <glob>', 'Glob pattern matched against workflow names (e.g. "Customer *")')
-  .addOption(new Option('--yes', 'Skip all confirmation prompts — for CI/scripted use').conflicts('dryRun'))
+  .addOption(new Option('--yes', 'Skip all confirmation prompts - for CI/scripted use').conflicts('dryRun'))
   .addOption(new Option('--no-activate', 'Do not reactivate workflows after push (leave them inactive)').conflicts('dryRun'))
   .option('--json', 'Output machine-readable JSON instead of human output')
   .option('--gated', 'Paid: gate push on smoke tests passing (requires licenseKey)')
