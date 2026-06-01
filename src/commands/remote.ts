@@ -1,7 +1,7 @@
 import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import {
   findChiralDir,
@@ -13,6 +13,7 @@ import {
 } from '../lib/config.js';
 import { readAuditLog } from '../state/audit.js';
 import { UserError } from '../lib/errors.js';
+import { simpleGit } from 'simple-git';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ function loadRemoteState(): RemoteState {
         gitSync: config.gitSync,
       };
     } catch {
-      // invalid config — fall through
+      // invalid config - fall through
     }
   }
 
@@ -127,24 +128,57 @@ export async function runRemoteSet(options: { url?: string; branch?: string }): 
   let remote = options.url;
   let branch = options.branch;
 
+  let currentBranch = 'main';
+  try {
+    const git = simpleGit(resolve(state.chiralDir, '..'));
+    const branches = await git.branchLocal();
+    if (branches.current) {
+      currentBranch = branches.current;
+    }
+  } catch {
+    // ignore
+  }
+
   // Interactive mode when neither flag is provided
+  let isInteractive = false;
   if (!remote && !branch) {
+    isInteractive = true;
     remote = await input({
       message: 'Git remote URL or name:',
       default: existing?.remote ?? 'origin',
       validate: (v) => (v.trim() ? true : 'Remote cannot be empty'),
     });
-    branch = await input({
-      message: 'Branch:',
-      default: existing?.branch ?? 'main',
-      validate: (v) => (v.trim() ? true : 'Branch cannot be empty'),
-    });
+  }
+
+  // If we have a remote but no branch, try to detect the remote's default branch
+  if (remote && !branch) {
+    let detectedBranch = currentBranch;
+    try {
+      const git = simpleGit(resolve(state.chiralDir, '..'));
+      const remoteInfo = await git.listRemote(['--symref', remote.trim(), 'HEAD']);
+      const match = remoteInfo.match(/ref: refs\/heads\/([^\s]+)\s+HEAD/);
+      if (match) {
+        detectedBranch = match[1];
+      }
+    } catch {
+      // ignore
+    }
+
+    if (isInteractive) {
+      branch = await input({
+        message: 'Branch:',
+        default: existing?.branch ?? detectedBranch,
+        validate: (v) => (v.trim() ? true : 'Branch cannot be empty'),
+      });
+    } else {
+      branch = detectedBranch;
+    }
   }
 
   state.gitSync = {
     enabled: existing?.enabled ?? true,
     remote: (remote ?? existing?.remote ?? 'origin').trim(),
-    branch: (branch ?? existing?.branch ?? 'main').trim(),
+    branch: (branch ?? existing?.branch ?? currentBranch).trim(),
   };
   saveRemoteState(state);
 
