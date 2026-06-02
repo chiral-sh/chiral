@@ -5,7 +5,7 @@ import { loadConfigAndDir } from '../lib/config.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.js';
-import { listDeployments, readSnapshotMeta, listSnapshotWorkflows } from '../state/snapshots.js';
+import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
 import { listLocks } from '../state/locks.js';
 import { writeStatusSentinel } from '../state/sentinel.js';
 
@@ -30,6 +30,7 @@ interface EnvRow {
   lastPush: string | null;
   workflowCount: number | null;
   stale: boolean;
+  drift: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,6 +56,33 @@ function findNearestEnv(input: string, names: string[]): string | undefined {
     if (d < bestDist) { bestDist = d; best = name; }
   }
   return bestDist <= 3 ? best : undefined;
+}
+
+export function computeDrift(
+  latestMeta: SnapshotMeta,
+  prevMeta: SnapshotMeta,
+  latestWorkflows: SnapshotWorkflow[],
+  prevWorkflows: SnapshotWorkflow[],
+): string | null {
+  if (!latestMeta.content_hash || !prevMeta.content_hash) return null;
+  if (latestMeta.content_hash === prevMeta.content_hash) return null;
+
+  const wfDelta = latestMeta.workflow_count - prevMeta.workflow_count;
+  const parts: string[] = [];
+
+  if (wfDelta !== 0) {
+    parts.push(`${wfDelta > 0 ? '+' : ''}${wfDelta} wf`);
+  }
+
+  const latestMap = new Map(latestWorkflows.map(w => [w.id, JSON.stringify(w)]));
+  let modified = 0;
+  for (const wf of prevWorkflows) {
+    const latestJson = latestMap.get(wf.id);
+    if (latestJson !== undefined && latestJson !== JSON.stringify(wf)) modified++;
+  }
+  if (modified > 0) parts.push(`~${modified} modified`);
+
+  return parts.length > 0 ? `Δ ${parts.join(', ')}` : null;
 }
 
 function humanize(iso: string, noHumanize: boolean): string {
@@ -113,7 +141,7 @@ function buildCellValues(row: EnvRow, noHumanize: boolean): Record<ColKey, strin
     lastPull: lastPullCell,
     lastPush: row.lastPush ? humanize(row.lastPush, noHumanize) : '—',
     workflows: row.workflowCount === null ? '—' : row.workflowCount === 0 ? '0 (!)' : String(row.workflowCount),
-    drift: '—',
+    drift: row.drift ?? '—',
   };
 }
 
@@ -311,7 +339,23 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
     if (workflowCount === 0) zeroWorkflowEnvs.push(envName);
 
-    envRows.push({ name: envName, lastPull, lastPush, workflowCount, stale });
+    // Compute drift between latest and previous snapshot for this env
+    let drift: string | null = null;
+    const envDeployments = listDeployments(chiralDir)
+      .filter(id => readSnapshotMeta(chiralDir, id)?.env === envName);
+    const latestDepId = envDeployments[0];
+    const prevDepId = envDeployments[1];
+    if (latestDepId && prevDepId) {
+      const latestMeta = readSnapshotMeta(chiralDir, latestDepId);
+      const prevMeta = readSnapshotMeta(chiralDir, prevDepId);
+      if (latestMeta && prevMeta) {
+        const latestWorkflows = readAllWorkflowsInDeployment(chiralDir, latestDepId);
+        const prevWorkflows = readAllWorkflowsInDeployment(chiralDir, prevDepId);
+        drift = computeDrift(latestMeta, prevMeta, latestWorkflows, prevWorkflows);
+      }
+    }
+
+    envRows.push({ name: envName, lastPull, lastPush, workflowCount, stale, drift });
   }
 
   // Locks
@@ -362,7 +406,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
         last_push: r.lastPush,
         workflow_count: r.workflowCount,
         stale: r.stale,
-        drift: null,
+        drift: r.drift,
       };
       if (requestedFields) {
         return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields!.includes(k as FieldName)));

@@ -11,8 +11,8 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
 }));
 
-import { runStatus } from '../../../src/commands/status.js';
-import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.js';
+import { runStatus, computeDrift } from '../../../src/commands/status.js';
+import { writeSnapshot, writeSnapshotMeta, type SnapshotMeta } from '../../../src/state/snapshots.js';
 import { writeLock } from '../../../src/state/locks.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -73,6 +73,7 @@ function makeAuditEntry(overrides: Partial<{
 // ── Snapshot helpers ───────────────────────────────────────────────────────────
 
 const DEP_DEV = '20260602T100000Z-aabbccdd';
+const DEP_DEV_PREV = '20260601T100000Z-11223344'; // older than DEP_DEV (sort order: newest first)
 const DEP_PROD = '20260602T100000Z-eeff0011';
 
 function writeDevSnapshot(workflowCount = 12) {
@@ -793,5 +794,159 @@ describe('runStatus — error cases', () => {
     setupProject();
     await expect(runStatus({ staleLockAfter: 0 })).rejects.toThrow(UserError);
     await expect(runStatus({ staleLockAfter: 0 })).rejects.toThrow('--stale-lock-after must be a positive integer');
+  });
+});
+
+// ── computeDrift unit tests ────────────────────────────────────────────────────
+
+function makeMeta(overrides: Partial<SnapshotMeta>): SnapshotMeta {
+  return {
+    deployment_id: DEP_DEV,
+    env: 'dev',
+    command: 'pull',
+    timestamp: '2026-06-02T10:00:00.000Z',
+    workflow_count: 3,
+    filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    ...overrides,
+  };
+}
+
+describe('computeDrift', () => {
+  it('returns null when both snapshots have the same content_hash', () => {
+    const latest = makeMeta({ content_hash: 'abc123', workflow_count: 3 });
+    const prev = makeMeta({ content_hash: 'abc123', workflow_count: 3 });
+    const wfs = [{ id: 'wf-0', name: 'A' }, { id: 'wf-1', name: 'B' }];
+    expect(computeDrift(latest, prev, wfs, wfs)).toBeNull();
+  });
+
+  it('returns "Δ +3 wf" when latest has 3 more workflows than previous', () => {
+    const latest = makeMeta({ content_hash: 'hash-new', workflow_count: 5 });
+    const prev = makeMeta({ content_hash: 'hash-old', workflow_count: 2 });
+    const latestWfs = Array.from({ length: 5 }, (_, i) => ({ id: `wf-${i}`, name: `W${i}` }));
+    const prevWfs = Array.from({ length: 2 }, (_, i) => ({ id: `wf-${i}`, name: `W${i}` }));
+    expect(computeDrift(latest, prev, latestWfs, prevWfs)).toBe('Δ +3 wf');
+  });
+
+  it('returns "Δ ~2 modified" when same count but 2 workflows have different JSON', () => {
+    const latest = makeMeta({ content_hash: 'hash-new', workflow_count: 3 });
+    const prev = makeMeta({ content_hash: 'hash-old', workflow_count: 3 });
+    const latestWfs = [
+      { id: 'wf-0', name: 'V2' },
+      { id: 'wf-1', name: 'V2' },
+      { id: 'wf-2', name: 'Same' },
+    ];
+    const prevWfs = [
+      { id: 'wf-0', name: 'V1' },
+      { id: 'wf-1', name: 'V1' },
+      { id: 'wf-2', name: 'Same' },
+    ];
+    expect(computeDrift(latest, prev, latestWfs, prevWfs)).toBe('Δ ~2 modified');
+  });
+
+  it('returns null when latest snapshot has no content_hash', () => {
+    const latest = makeMeta({ workflow_count: 3 }); // no content_hash
+    const prev = makeMeta({ content_hash: 'hash-old', workflow_count: 3 });
+    const wfs = [{ id: 'wf-0', name: 'A' }];
+    expect(computeDrift(latest, prev, wfs, wfs)).toBeNull();
+  });
+
+  it('returns null when previous snapshot has no content_hash', () => {
+    const latest = makeMeta({ content_hash: 'hash-new', workflow_count: 3 });
+    const prev = makeMeta({ workflow_count: 3 }); // no content_hash
+    const wfs = [{ id: 'wf-0', name: 'A' }];
+    expect(computeDrift(latest, prev, wfs, wfs)).toBeNull();
+  });
+});
+
+describe('runStatus — drift indicator via runStatus', () => {
+  function writeDevSnapshotWithHash(depId: string, workflowCount: number, contentHash: string, wfNameSuffix = '') {
+    const wfs = Array.from({ length: workflowCount }, (_, i) => ({
+      id: `wf-${i}`,
+      name: `Workflow${wfNameSuffix} ${i}`,
+    }));
+    for (const wf of wfs) writeSnapshot(CHIRAL_DIR, depId, wf);
+    writeSnapshotMeta(CHIRAL_DIR, depId, {
+      deployment_id: depId,
+      env: 'dev',
+      command: 'pull',
+      timestamp: depId === DEP_DEV ? '2026-06-02T10:00:00.000Z' : '2026-06-01T10:00:00.000Z',
+      workflow_count: workflowCount,
+      content_hash: contentHash,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+  }
+
+  it('shows "—" drift in text and null in JSON when both snapshots have the same content_hash', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithHash(DEP_DEV, 3, 'SAME_HASH');
+    writeDevSnapshotWithHash(DEP_DEV_PREV, 3, 'SAME_HASH');
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.environments[0].drift).toBeNull();
+  });
+
+  it('shows null drift in JSON when only one snapshot exists', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithHash(DEP_DEV, 3, 'SOME_HASH');
+    // No previous snapshot
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.environments[0].drift).toBeNull();
+  });
+
+  it('shows null drift in JSON when latest snapshot has no content_hash', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+
+    // Latest snapshot: no content_hash
+    const wfs = [{ id: 'wf-0', name: 'A' }];
+    writeSnapshot(CHIRAL_DIR, DEP_DEV, wfs[0]);
+    writeSnapshotMeta(CHIRAL_DIR, DEP_DEV, {
+      deployment_id: DEP_DEV, env: 'dev', command: 'pull',
+      timestamp: '2026-06-02T10:00:00.000Z', workflow_count: 1,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    writeDevSnapshotWithHash(DEP_DEV_PREV, 1, 'PREV_HASH');
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.environments[0].drift).toBeNull();
+  });
+
+  it('shows drift string in text table drift column', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithHash(DEP_DEV, 5, 'HASH_NEW');
+    writeDevSnapshotWithHash(DEP_DEV_PREV, 2, 'HASH_OLD');
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({});
+
+    const output = stdoutLines.join('\n');
+    expect(output).toContain('Δ +3 wf');
+  });
+
+  it('shows drift in JSON when counts differ between snapshots', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithHash(DEP_DEV, 5, 'HASH_NEW');
+    writeDevSnapshotWithHash(DEP_DEV_PREV, 2, 'HASH_OLD');
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.environments[0].drift).toBe('Δ +3 wf');
   });
 });
