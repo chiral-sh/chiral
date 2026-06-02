@@ -139,7 +139,12 @@ export async function runAdopt(
       console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
     }
 
-    console.log(`\n  ${chalk.dim('Next:')} chiral pull --env ${options.env}\n`);
+    const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
+    if (otherEnvs.length > 0) {
+      console.log(`\n  ${chalk.dim('Next:')} chiral diff --source ${options.env} --target ${otherEnvs[0]}\n`);
+    } else {
+      console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
+    }
 
     // Fix B1: record actual workflow IDs in the audit entry
     baseEntry.workflow_ids = workflows.map((w) => w.id);
