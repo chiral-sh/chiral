@@ -619,6 +619,151 @@ describe('runStatus — --fields mode', () => {
   });
 });
 
+describe('runStatus — watch mode', () => {
+  it('runs once and exits 0 when --watch is set but stdout is not a TTY', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+    // process.stdout.isTTY is undefined (falsy) in the test environment by default
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    const { stdoutLines } = captureOutput();
+
+    await expect(runStatus({ watch: true })).resolves.not.toThrow();
+
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+    expect(stdoutLines.some(l => l.includes('│'))).toBe(true); // table rendered once
+  });
+
+  it('respects the 300ms debounce — rapid file changes trigger at most one re-render', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    let watchCallback: ((event: string, filename: string) => void) | null = null;
+    const mockWatcher = { close: vi.fn() };
+    const nodeFs = await import('node:fs');
+    const watchSpy = vi.spyOn(nodeFs, 'watch').mockImplementation((_path: any, _opts: any, cb?: any) => {
+      watchCallback = cb ?? _opts;
+      return mockWatcher as any;
+    });
+
+    const { stdoutLines } = captureOutput();
+    const runPromise = runStatus({ watch: true });
+
+    // Flush microtasks to let the initial doOnce() and watch setup complete
+    await Promise.resolve();
+    await Promise.resolve();
+    const initialCount = stdoutLines.length;
+
+    // Fire 3 rapid events
+    watchCallback!('change', 'audit.jsonl');
+    watchCallback!('change', 'audit.jsonl');
+    watchCallback!('change', 'audit.jsonl');
+
+    // 100ms — debounce timer not yet expired
+    await vi.advanceTimersByTimeAsync(100);
+    expect(stdoutLines.length).toBe(initialCount);
+
+    // Advance past debounce threshold (300ms total from last event)
+    await vi.advanceTimersByTimeAsync(250);
+
+    // Trigger SIGINT to end the watch loop
+    process.emit('SIGINT', 'SIGINT');
+    await runPromise;
+
+    // Should have rendered at least once more after debounce
+    expect(stdoutLines.length).toBeGreaterThanOrEqual(initialCount + 1);
+    expect(mockWatcher.close).toHaveBeenCalled();
+
+    watchSpy.mockRestore();
+    writeSpy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+  });
+
+  it('prints "Stopped watching." and resolves on SIGINT', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    const writeChunks: string[] = [];
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any) => {
+      writeChunks.push(String(chunk));
+      return true;
+    });
+
+    const nodeFs = await import('node:fs');
+    const watchSpy = vi.spyOn(nodeFs, 'watch').mockImplementation((_path: any, _opts: any, _cb?: any) => {
+      return { close: vi.fn() } as any;
+    });
+
+    captureOutput();
+    const runPromise = runStatus({ watch: true });
+
+    // Flush microtasks to let the initial render complete and watch loop to be established
+    await Promise.resolve();
+    await Promise.resolve();
+
+    process.emit('SIGINT', 'SIGINT');
+    await runPromise;
+
+    expect(writeChunks.some(c => c.includes('Stopped watching'))).toBe(true);
+
+    watchSpy.mockRestore();
+    writeSpy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+  });
+
+  it('--watch --json re-emits a full JSON envelope on each re-render', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    let watchCallback: ((event: string, filename: string) => void) | null = null;
+    const mockWatcher = { close: vi.fn() };
+    const nodeFs = await import('node:fs');
+    const watchSpy = vi.spyOn(nodeFs, 'watch').mockImplementation((_path: any, _opts: any, cb?: any) => {
+      watchCallback = cb ?? _opts;
+      return mockWatcher as any;
+    });
+
+    const { stdoutLines } = captureOutput();
+    const runPromise = runStatus({ watch: true, json: true });
+
+    // Flush microtasks to let initial render complete
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const firstJsonLines = stdoutLines.filter(l => l.startsWith('{'));
+    expect(firstJsonLines).toHaveLength(1);
+    expect(JSON.parse(firstJsonLines[0]).status).toBe('ok');
+
+    // Fire a file event and let debounce expire
+    watchCallback!('change', 'audit.jsonl');
+    await vi.advanceTimersByTimeAsync(350);
+
+    process.emit('SIGINT', 'SIGINT');
+    await runPromise;
+
+    // Should have two JSON envelopes (initial + one re-render)
+    const allJsonLines = stdoutLines.filter(l => l.startsWith('{'));
+    expect(allJsonLines.length).toBeGreaterThanOrEqual(2);
+    for (const line of allJsonLines) {
+      expect(JSON.parse(line).status).toBe('ok');
+    }
+
+    watchSpy.mockRestore();
+    writeSpy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+  });
+});
+
 describe('runStatus — error cases', () => {
   it('throws UserError when no environments are configured', async () => {
     vol.fromJSON({

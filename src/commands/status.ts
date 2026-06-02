@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { join } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, watch as fsWatch } from 'node:fs';
 import { loadConfigAndDir } from '../lib/config.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
@@ -21,6 +21,7 @@ export interface StatusOptions {
   compact?: boolean;
   summary?: boolean;
   fields?: string;
+  watch?: boolean;
 }
 
 interface EnvRow {
@@ -163,6 +164,15 @@ function findLatestDeploymentForEnvLenient(chiralDir: string, env: string): stri
 // ── Run function ──────────────────────────────────────────────────────────────
 
 export async function runStatus(options: StatusOptions): Promise<void> {
+  // Fast-fail mutual exclusion before any data loading or loop setup
+  if (options.compact && options.json) {
+    throw new UserError('--compact cannot be combined with --json');
+  }
+  if (options.summary && options.json) {
+    throw new UserError('--summary cannot be combined with --json');
+  }
+
+  async function doOnce(): Promise<void> {
   const { config, chiralDir } = loadConfigAndDir();
 
   const allEnvNames = Object.keys(config.environments);
@@ -189,13 +199,6 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   }
   if (options.staleLockAfter !== undefined && (isNaN(options.staleLockAfter) || options.staleLockAfter < 1 || !Number.isInteger(options.staleLockAfter))) {
     throw new UserError('--stale-lock-after must be a positive integer (e.g. --stale-lock-after 24)');
-  }
-
-  if (options.compact && options.json) {
-    throw new UserError('--compact cannot be combined with --json');
-  }
-  if (options.summary && options.json) {
-    throw new UserError('--summary cannot be combined with --json');
   }
 
   // Validate and parse --fields
@@ -414,6 +417,39 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   writeStatusSentinel(chiralDir);
 
   if (staleAfterExplicit && anyStale) throw new ControlledExit(3);
+  } // end doOnce
+
+  if (options.watch) {
+    if (!process.stdout.isTTY) {
+      // Non-TTY: run once, ignore --watch (no terminal to clear and re-render)
+      await doOnce();
+      return;
+    }
+
+    process.stdout.write('\x1b[2J\x1b[H');
+    try { await doOnce(); } catch (e) { if (!(e instanceof ControlledExit)) throw e; }
+
+    const { chiralDir: watchDir } = loadConfigAndDir();
+    await new Promise<void>((resolve) => {
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+      const watcher = fsWatch(watchDir, { recursive: true }, () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+          process.stdout.write('\x1b[2J\x1b[H');
+          try { await doOnce(); } catch { /* keep watching on re-render errors */ }
+        }, 300);
+      });
+      process.once('SIGINT', () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        watcher.close();
+        process.stdout.write('\n  Stopped watching.\n');
+        resolve();
+      });
+    });
+    return;
+  }
+
+  await doOnce();
 }
 
 // ── Command definition ────────────────────────────────────────────────────────
@@ -429,6 +465,7 @@ export const statusCommand = new Command('status')
   .option('--compact', 'Output one tab-separated line per env; exits 3 if any env is stale')
   .option('--summary', 'Output a single summary line; exits 3 if any env is stale')
   .option('--fields <cols>', 'Comma-separated column selector (name,last_pull,last_push,workflow_count,stale,drift)')
+  .option('--watch', 'Re-render on .chiral/ file changes; ignored when stdout is not a TTY')
   .addHelpText(
     'after',
     `
