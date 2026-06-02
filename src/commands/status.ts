@@ -18,6 +18,9 @@ export interface StatusOptions {
   staleLockAfter?: number;
   noHumanize?: boolean;
   verbose?: boolean;
+  compact?: boolean;
+  summary?: boolean;
+  fields?: string;
 }
 
 interface EnvRow {
@@ -67,6 +70,16 @@ function humanize(iso: string, noHumanize: boolean): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 }
 
+function compactAge(iso: string | null): string {
+  if (!iso) return 'never';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 3_600_000) return 'just now';
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(ms / 86_400_000);
+  return `${days}d`;
+}
+
 type ColKey = 'env' | 'lastPull' | 'lastPush' | 'workflows' | 'drift';
 
 const COLUMN_HEADERS: Record<ColKey, string> = {
@@ -78,6 +91,17 @@ const COLUMN_HEADERS: Record<ColKey, string> = {
 };
 
 const COLUMN_ORDER: ColKey[] = ['env', 'lastPull', 'lastPush', 'workflows', 'drift'];
+
+const VALID_FIELDS = ['name', 'last_pull', 'last_push', 'workflow_count', 'stale', 'drift'] as const;
+type FieldName = (typeof VALID_FIELDS)[number];
+
+const FIELD_TO_COL: Partial<Record<FieldName, ColKey>> = {
+  name: 'env',
+  last_pull: 'lastPull',
+  last_push: 'lastPush',
+  workflow_count: 'workflows',
+  drift: 'drift',
+};
 
 function buildCellValues(row: EnvRow, noHumanize: boolean): Record<ColKey, string> {
   const lastPullCell = row.lastPull
@@ -92,11 +116,11 @@ function buildCellValues(row: EnvRow, noHumanize: boolean): Record<ColKey, strin
   };
 }
 
-function renderTable(rows: EnvRow[], noHumanize: boolean): string[] {
+function renderTable(rows: EnvRow[], noHumanize: boolean, cols: ColKey[] = COLUMN_ORDER): string[] {
   const allCells = rows.map(row => buildCellValues(row, noHumanize));
 
   const widths: Record<ColKey, number> = {} as Record<ColKey, number>;
-  for (const col of COLUMN_ORDER) {
+  for (const col of cols) {
     widths[col] = Math.max(
       COLUMN_HEADERS[col].length,
       ...allCells.map(c => c[col].length),
@@ -104,11 +128,11 @@ function renderTable(rows: EnvRow[], noHumanize: boolean): string[] {
   }
 
   function borderLine(left: string, mid: string, right: string): string {
-    return '  ' + left + COLUMN_ORDER.map(c => '─'.repeat(widths[c] + 2)).join(mid) + right;
+    return '  ' + left + cols.map(c => '─'.repeat(widths[c] + 2)).join(mid) + right;
   }
 
   function dataLine(vals: Record<ColKey, string>): string {
-    return '  │' + COLUMN_ORDER.map(c => ' ' + vals[c].padEnd(widths[c]) + ' ').join('│') + '│';
+    return '  │' + cols.map(c => ' ' + vals[c].padEnd(widths[c]) + ' ').join('│') + '│';
   }
 
   const lines: string[] = [];
@@ -165,6 +189,25 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   }
   if (options.staleLockAfter !== undefined && (isNaN(options.staleLockAfter) || options.staleLockAfter < 1 || !Number.isInteger(options.staleLockAfter))) {
     throw new UserError('--stale-lock-after must be a positive integer (e.g. --stale-lock-after 24)');
+  }
+
+  if (options.compact && options.json) {
+    throw new UserError('--compact cannot be combined with --json');
+  }
+  if (options.summary && options.json) {
+    throw new UserError('--summary cannot be combined with --json');
+  }
+
+  // Validate and parse --fields
+  let requestedFields: FieldName[] | null = null;
+  if (options.fields) {
+    const cols = options.fields.split(',').map(s => s.trim());
+    for (const col of cols) {
+      if (!(VALID_FIELDS as readonly string[]).includes(col)) {
+        throw new UserError(`Unknown column '${col}'. Valid columns: ${VALID_FIELDS.join(', ')}`);
+      }
+    }
+    requestedFields = cols as FieldName[];
   }
 
   const staleAfterDays = options.staleAfter ?? 7;
@@ -281,18 +324,52 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
   const anyStale = envRows.some(r => r.stale);
 
-  // Output
+  // ── Output ────────────────────────────────────────────────────────────────
+
+  if (options.compact) {
+    for (const row of envRows) {
+      const staleIcon = row.stale ? '!' : '✓';
+      const age = compactAge(row.lastPull);
+      const count = row.workflowCount === null ? '—' : String(row.workflowCount);
+      console.log(`${row.name}\t${staleIcon}\t${age}\t${count}wf\t${locks.length} locks`);
+    }
+    writeStatusSentinel(chiralDir);
+    if (anyStale) throw new ControlledExit(3);
+    return;
+  }
+
+  if (options.summary) {
+    const total = envRows.length;
+    const staleCount = envRows.filter(r => r.stale).length;
+    if (staleCount > 0) {
+      console.log(`${staleCount}/${total} envs stale, ${locks.length} locks`);
+    } else {
+      console.log(`${total}/${total} envs synced, ${locks.length} locks`);
+    }
+    writeStatusSentinel(chiralDir);
+    if (anyStale) throw new ControlledExit(3);
+    return;
+  }
+
   if (options.json) {
-    printJson({
-      project: config.project,
-      environments: envRows.map(r => ({
+    const envObjects = envRows.map(r => {
+      const full: Record<string, unknown> = {
         name: r.name,
         last_pull: r.lastPull,
         last_push: r.lastPush,
         workflow_count: r.workflowCount,
         stale: r.stale,
         drift: null,
-      })),
+      };
+      if (requestedFields) {
+        return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields!.includes(k as FieldName)));
+      }
+      return full;
+    });
+
+    printJson({
+      project: config.project,
+      environments: envObjects,
       locks: locks.map(l => ({
         workflow_id: l.workflowId,
         actor: l.actor,
@@ -304,11 +381,18 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   } else {
     const noHumanize = options.noHumanize ?? false;
 
+    // Derive table columns from --fields if specified
+    const tableCols: ColKey[] = requestedFields
+      ? COLUMN_ORDER.filter(col =>
+          Object.entries(FIELD_TO_COL).some(([f, c]) => c === col && requestedFields!.includes(f as FieldName))
+        )
+      : COLUMN_ORDER;
+
     console.log();
     console.log(`  ${config.project}`);
     console.log();
 
-    for (const line of renderTable(envRows, noHumanize)) console.log(line);
+    for (const line of renderTable(envRows, noHumanize, tableCols)) console.log(line);
 
     for (const envName of zeroWorkflowEnvs) {
       console.log(`\n  ⚠  ${envName} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
@@ -342,6 +426,9 @@ export const statusCommand = new Command('status')
   .option('--stale-lock-after <hours>', 'Mark locks as STALE when older than N hours (default 24; must be ≥ 1)', parseInt)
   .option('--no-humanize', 'Show ISO-8601 timestamps instead of relative time in text mode')
   .option('--verbose', 'Print each state file read to stderr before rendering')
+  .option('--compact', 'Output one tab-separated line per env; exits 3 if any env is stale')
+  .option('--summary', 'Output a single summary line; exits 3 if any env is stale')
+  .option('--fields <cols>', 'Comma-separated column selector (name,last_pull,last_push,workflow_count,stale,drift)')
   .addHelpText(
     'after',
     `
@@ -357,6 +444,15 @@ Examples:
 
   CI gate — exit 3 if any env not pulled in 5 days:
     chiral status --stale-after 5
+
+  Compact one-line-per-env output:
+    chiral status --compact
+
+  Shell prompt summary token:
+    chiral status --summary
+
+  Select specific columns:
+    chiral status --fields name,last_pull,workflow_count
 `,
   )
   .action(async (opts: Record<string, unknown>) => {

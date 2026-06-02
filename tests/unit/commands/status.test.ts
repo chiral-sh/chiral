@@ -477,6 +477,148 @@ describe('runStatus — sentinel', () => {
   });
 });
 
+describe('runStatus — compact mode', () => {
+  it('outputs one tab-separated line per env with correct field order', async () => {
+    setupProject();
+    const devPull = '2026-06-02T10:00:00.000Z'; // 2h before FIXED_NOW
+    const prodPull = '2026-05-25T12:00:00.000Z'; // 8 days before FIXED_NOW
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: devPull, target_env: 'dev' }) + '\n');
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: prodPull, target_env: 'prod' }) + '\n');
+    writeDevSnapshot(12);
+    writeProdSnapshot(8);
+
+    const { stdoutLines } = captureOutput();
+    // prod is stale (8d > 7d default), so exits 3
+    await expect(runStatus({ compact: true })).rejects.toThrow();
+
+    expect(stdoutLines).toHaveLength(2);
+    const devLine = stdoutLines[0].split('\t');
+    expect(devLine[0]).toBe('dev');
+    expect(devLine[1]).toBe('✓');     // not stale
+    expect(devLine[2]).toBe('2h');    // 2 hours ago
+    expect(devLine[3]).toBe('12wf');
+    expect(devLine[4]).toBe('0 locks');
+
+    const prodLine = stdoutLines[1].split('\t');
+    expect(prodLine[0]).toBe('prod');
+    expect(prodLine[1]).toBe('!');    // stale
+    expect(prodLine[2]).toBe('8d');   // 8 days ago
+    expect(prodLine[3]).toBe('8wf');
+    expect(prodLine[4]).toBe('0 locks');
+  });
+
+  it('exits 3 when any env is stale; exits 0 when all are fresh', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    // fresh pull: 1 hour ago
+    const recentPull = '2026-06-02T11:00:00.000Z';
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: recentPull, target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    captureOutput();
+    await expect(runStatus({ compact: true })).resolves.not.toThrow();
+  });
+
+  it('exits 3 when stale in compact mode', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    // stale: 8 days ago
+    const stalePull = '2026-05-25T12:00:00.000Z';
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: stalePull, target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    captureOutput();
+    const { ControlledExit } = await import('../../../src/lib/errors.js');
+    await expect(runStatus({ compact: true })).rejects.toThrow(ControlledExit);
+  });
+});
+
+describe('runStatus — summary mode', () => {
+  it('outputs "N/N envs synced, 0 locks" when all envs are fresh', async () => {
+    setupProject();
+    // Both pulled recently (1h ago = just now, within 7d threshold)
+    const recentPull = '2026-06-02T11:00:00.000Z';
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: recentPull, target_env: 'dev' }) + '\n');
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: recentPull, target_env: 'prod' }) + '\n');
+    writeDevSnapshot();
+    writeProdSnapshot();
+
+    const { stdoutLines } = captureOutput();
+    await expect(runStatus({ summary: true })).resolves.not.toThrow();
+
+    expect(stdoutLines[0]).toBe('2/2 envs synced, 0 locks');
+  });
+
+  it('outputs "N/M envs stale, 0 locks" when one env is stale and exits 3', async () => {
+    setupProject();
+    const recentPull = '2026-06-02T11:00:00.000Z';
+    const stalePull = '2026-05-25T12:00:00.000Z';
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: recentPull, target_env: 'dev' }) + '\n');
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: stalePull, target_env: 'prod' }) + '\n');
+    writeDevSnapshot();
+    writeProdSnapshot();
+
+    const { stdoutLines } = captureOutput();
+    const { ControlledExit } = await import('../../../src/lib/errors.js');
+    await expect(runStatus({ summary: true })).rejects.toThrow(ControlledExit);
+
+    expect(stdoutLines[0]).toBe('1/2 envs stale, 0 locks');
+  });
+});
+
+describe('runStatus — --fields mode', () => {
+  it('renders only requested columns in text mode', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ fields: 'name,last_pull' });
+
+    const output = stdoutLines.join('\n');
+    expect(output).toContain('env');
+    expect(output).toContain('last pull');
+    expect(output).not.toContain('last push');
+    expect(output).not.toContain('workflows');
+    expect(output).not.toContain('drift');
+  });
+
+  it('omits unrequested fields from JSON env objects when --fields is used', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    const devPull = '2026-06-02T10:00:00.000Z';
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ timestamp: devPull, target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true, fields: 'name,last_pull' });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    const env = parsed.data.environments[0];
+    expect(env.name).toBeDefined();
+    expect(env.last_pull).toBeDefined();
+    expect(env.last_push).toBeUndefined();
+    expect(env.workflow_count).toBeUndefined();
+    expect(env.stale).toBeUndefined();
+    expect(env.drift).toBeUndefined();
+  });
+
+  it('throws UserError for unknown column in --fields', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    await expect(runStatus({ fields: 'name,bogus_col' })).rejects.toThrow(UserError);
+    await expect(runStatus({ fields: 'name,bogus_col' })).rejects.toThrow(/bogus_col/);
+  });
+
+  it('throws UserError when --compact is combined with --json', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    await expect(runStatus({ compact: true, json: true })).rejects.toThrow(UserError);
+    await expect(runStatus({ compact: true, json: true })).rejects.toThrow(/--compact/);
+  });
+
+  it('throws UserError when --summary is combined with --json', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    await expect(runStatus({ summary: true, json: true })).rejects.toThrow(UserError);
+    await expect(runStatus({ summary: true, json: true })).rejects.toThrow(/--summary/);
+  });
+});
+
 describe('runStatus — error cases', () => {
   it('throws UserError when no environments are configured', async () => {
     vol.fromJSON({
