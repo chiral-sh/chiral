@@ -126,7 +126,7 @@ export async function runInit(options: InitOptions): Promise<void> {
     `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('- ' + note) : ''}`;
 
   console.log(`\n  ${chalk.bold(projectName)}\n`);
-  console.log(file(`${projectDir}/.chiral/config.example.json`, 'fill in your environments here'));
+  console.log(file(`${projectDir}/.chiral/config.example.json`));
   console.log(file(`${projectDir}/.chiral/.gitignore`, 'keeps config.json out of git'));
   console.log(file(`${projectDir}/.chiral/credentials.json`));
   console.log(file(`${projectDir}/.chiral/audit.jsonl`));
