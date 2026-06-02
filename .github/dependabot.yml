@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # Application + dev dependencies. Dependabot reads the pnpm-lock.yaml
+  # (lockfileVersion 9) directly. Weekly, grouped to keep PR volume sane.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One combined PR for routine minor/patch bumps across all packages.
+      # Major bumps still arrive as individual PRs so they get real review
+      # (e.g. the vitest 1.x -> 4.x jump).
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      # Matches the repo's Conventional Commits convention -> chore(deps): ...
+      prefix: chore
+      include: scope
+
+  # Keep the pinned GitHub Actions current (the @v6 pins in ci.yml / audit.yml).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+      include: scope
