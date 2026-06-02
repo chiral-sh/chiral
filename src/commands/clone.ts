@@ -20,6 +20,7 @@ import {
   writeSession,
 } from '../lib/projects.js';
 import { readInitEvent } from '../state/audit.js';
+import { loadWorkflowMap } from '../state/workflows.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -286,6 +287,8 @@ export async function runClone(
 
   // ── 12. Output ────────────────────────────────────────────────────────────
   if (outputMode === 'json') {
+    const wfMap = loadWorkflowMap(finalChiralDir);
+    const workflowsFound = Object.keys(wfMap.workflows).length;
     console.log(
       JSON.stringify({
         status: 'ok',
@@ -293,6 +296,7 @@ export async function runClone(
           project: projectName,
           path: targetDir,
           environments: Object.keys(collectedEnvs),
+          workflows_found: workflowsFound,
         },
       }),
     );
