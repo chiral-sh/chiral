@@ -482,9 +482,10 @@ describe('runPull - --json output', () => {
 
     expect(logged).toHaveLength(1);
     const result = JSON.parse(logged[0]);
-    expect(result.env).toBe('dev');
-    expect(result.pulled).toBe(2);
-    expect(result.deployment_id).toBeDefined();
+    expect(result.status).toBe('ok');
+    expect(result.data.env).toBe('dev');
+    expect(result.data.pulled).toBe(2);
+    expect(result.data.deployment_id).toBeDefined();
   });
 
   it('includes new/updated/deleted/unchanged fields in JSON output', async () => {
@@ -505,9 +506,9 @@ describe('runPull - --json output', () => {
     await runPull({ env: 'dev', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.updated).toContain('Workflow One');
-    expect(result.deleted).toContain('Workflow Two');
-    expect(result.unchanged).toBe(0);
+    expect(result.data.updated).toContain('Workflow One');
+    expect(result.data.deleted).toContain('Workflow Two');
+    expect(result.data.unchanged).toBe(0);
   });
 });
 
@@ -728,8 +729,8 @@ describe('runPull - active/inactive counts', () => {
     await runPull({ env: 'dev', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.active).toBe(1);
-    expect(result.inactive).toBe(1);
+    expect(result.data.active).toBe(1);
+    expect(result.data.inactive).toBe(1);
   });
 });
 
@@ -927,8 +928,8 @@ describe('runPull - --id (single workflow)', () => {
     await runPull({ env: 'dev', id: 'wf-1', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.pulled).toBe(1);
-    expect(result.new).toContain('Workflow One');
+    expect(result.data.pulled).toBe(1);
+    expect(result.data.new).toContain('Workflow One');
   });
 
   it('throws ControlledExit(1) with --id --exit-code when workflow is new', async () => {
@@ -1214,7 +1215,7 @@ describe('runPull - git sync runs regardless of output mode', () => {
     // JSON output still produced
     expect(logged).toHaveLength(1);
     const result = JSON.parse(logged[0]);
-    expect(result.env).toBe('dev');
+    expect(result.data.env).toBe('dev');
   });
 
   it('calls syncToRemote when --name-only mode', async () => {

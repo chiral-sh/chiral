@@ -440,8 +440,9 @@ describe('runDiff - --json output', () => {
 
     expect(logged).toHaveLength(1);
     const result = JSON.parse(logged[0]);
-    expect(result.source).toBe('dev');
-    expect(result.target).toBe('prod');
+    expect(result.status).toBe('ok');
+    expect(result.data.source).toBe('dev');
+    expect(result.data.target).toBe('prod');
   });
 
   it('includes added/removed/modified arrays in JSON output', async () => {
@@ -458,9 +459,9 @@ describe('runDiff - --json output', () => {
     await runDiff({ source: 'dev', target: 'prod', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.modified.map((m: { name: string }) => m.name)).toContain('Workflow One');
-    expect(result.added.map((a: { name: string }) => a.name)).toContain('Workflow Two');
-    expect(result.removed.map((r: { name: string }) => r.name)).toContain('Workflow Three');
+    expect(result.data.modified.map((m: { name: string }) => m.name)).toContain('Workflow One');
+    expect(result.data.added.map((a: { name: string }) => a.name)).toContain('Workflow Two');
+    expect(result.data.removed.map((r: { name: string }) => r.name)).toContain('Workflow Three');
   });
 
   it('includes sourceVersionId and targetVersionId for modified workflows', async () => {
@@ -477,8 +478,8 @@ describe('runDiff - --json output', () => {
     await runDiff({ source: 'dev', target: 'prod', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.modified[0].sourceVersionId).toBe('v1');
-    expect(result.modified[0].targetVersionId).toBe('v2');
+    expect(result.data.modified[0].sourceVersionId).toBe('v1');
+    expect(result.data.modified[0].targetVersionId).toBe('v2');
   });
 
   it('excludes unchanged from JSON by default', async () => {
@@ -494,7 +495,7 @@ describe('runDiff - --json output', () => {
     await runDiff({ source: 'dev', target: 'prod', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.unchanged).toEqual([]);
+    expect(result.data.unchanged).toEqual([]);
   });
 
   it('includes unchanged in JSON when --show-unchanged is set', async () => {
@@ -510,7 +511,7 @@ describe('runDiff - --json output', () => {
     await runDiff({ source: 'dev', target: 'prod', json: true, showUnchanged: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.unchanged.map((u: { name: string }) => u.name)).toContain('Workflow One');
+    expect(result.data.unchanged.map((u: { name: string }) => u.name)).toContain('Workflow One');
   });
 });
 

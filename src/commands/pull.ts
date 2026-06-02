@@ -7,6 +7,7 @@ import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob, detectsEnvMarker } from '../lib/cli.js';
+import { printJson } from '../lib/output.js';
 import {
   generateDeploymentId,
   writeSnapshot,
@@ -79,7 +80,7 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
       added.push(wf);
     } else if (
       (prev as Record<string, unknown>).versionId !== wf.versionId ||
-      computeContentHash(prev as Record<string, unknown>) !== computeContentHash(wf)
+      computeContentHash(prev) !== computeContentHash(wf)
     ) {
       updated.push(wf);
     } else {
@@ -249,19 +250,17 @@ export async function runPull(
       if (outputMode === 'name-only') {
         if (hasChanges) console.log(workflow.name);
       } else if (outputMode === 'json') {
-        console.log(
-          JSON.stringify({
-            env: options.env,
-            deployment_id: deploymentId,
-            pulled: 1,
-            active: workflow.active ? 1 : 0,
-            inactive: workflow.active ? 0 : 1,
-            new: isNew ? [workflow.name] : [],
-            updated: isUpdated ? [workflow.name] : [],
-            deleted: [],
-            unchanged: hasChanges ? 0 : 1,
-          }),
-        );
+        printJson({
+          env: options.env,
+          deployment_id: deploymentId,
+          pulled: 1,
+          active: workflow.active ? 1 : 0,
+          inactive: workflow.active ? 0 : 1,
+          new: isNew ? [workflow.name] : [],
+          updated: isUpdated ? [workflow.name] : [],
+          deleted: [],
+          unchanged: hasChanges ? 0 : 1,
+        });
       } else {
         console.log();
         if (isNew) {
@@ -399,19 +398,17 @@ export async function runPull(
       if (outputMode === 'name-only') {
         // nothing changed - no output
       } else if (outputMode === 'json') {
-        console.log(
-          JSON.stringify({
-            env: options.env,
-            deployment_id: deploymentId,
-            pulled: workflows.length,
-            active: activeCount,
-            inactive: inactiveCount,
-            new: [],
-            updated: [],
-            deleted: [],
-            unchanged: workflows.length,
-          }),
-        );
+        printJson({
+          env: options.env,
+          deployment_id: deploymentId,
+          pulled: workflows.length,
+          active: activeCount,
+          inactive: inactiveCount,
+          new: [],
+          updated: [],
+          deleted: [],
+          unchanged: workflows.length,
+        });
       } else {
         if (workflows.length === 0) {
           console.log(
@@ -451,19 +448,17 @@ export async function runPull(
         for (const wf of (delta?.updated ?? [])) console.log(wf.name);
         for (const wf of (delta?.deleted ?? [])) console.log(wf.name);
       } else if (outputMode === 'json') {
-        console.log(
-          JSON.stringify({
-            env: options.env,
-            deployment_id: deploymentId,
-            pulled: workflows.length,
-            active: activeCount,
-            inactive: inactiveCount,
-            new: (delta?.added ?? workflows).map((w) => w.name),
-            updated: delta?.updated.map((w) => w.name) ?? [],
-            deleted: delta?.deleted.map((w) => w.name) ?? [],
-            unchanged: delta?.unchanged ?? 0,
-          }),
-        );
+        printJson({
+          env: options.env,
+          deployment_id: deploymentId,
+          pulled: workflows.length,
+          active: activeCount,
+          inactive: inactiveCount,
+          new: (delta?.added ?? workflows).map((w) => w.name),
+          updated: delta?.updated.map((w) => w.name) ?? [],
+          deleted: delta?.deleted.map((w) => w.name) ?? [],
+          unchanged: delta?.unchanged ?? 0,
+        });
       } else {
         if (isFirstPull && workflows.length === 0) {
           console.log(
@@ -479,10 +474,10 @@ export async function runPull(
         } else {
           const prevFp = loadFingerprints(chiralDir);
           console.log();
-          for (const wf of delta!.added) {
+          for (const wf of delta.added) {
             console.log(`  ${chalk.green('+')} ${wf.name}  ${chalk.dim('(new)')}`);
           }
-          for (const wf of delta!.updated) {
+          for (const wf of delta.updated) {
             const prevEntry = prevFp.envs[options.env]?.[wf.id];
             let updateLabel: string;
             if (!prevEntry) {
@@ -496,12 +491,12 @@ export async function runPull(
             }
             console.log(`  ${chalk.yellow('~')} ${wf.name}  ${chalk.dim(`(${updateLabel})`)}`);
           }
-          for (const wf of delta!.deleted) {
+          for (const wf of delta.deleted) {
             console.log(`  ${chalk.yellow('⚠')} ${wf.name}  ${chalk.dim('(removed from n8n)')}`);
           }
-          if (delta!.unchanged > 0) {
+          if (delta.unchanged > 0) {
             console.log(
-              `  ${chalk.dim(`  ${plural(delta!.unchanged, 'workflow')} unchanged`)}`,
+              `  ${chalk.dim(`  ${plural(delta.unchanged, 'workflow')} unchanged`)}`,
             );
           }
           console.log();
@@ -525,7 +520,7 @@ export async function runPull(
       const fp = loadFingerprints(chiralDir);
       if (!fp.envs[options.env]) fp.envs[options.env] = {};
       for (const wf of workflows) {
-        fp.envs[options.env]![wf.id] = {
+        fp.envs[options.env][wf.id] = {
           name: wf.name,
           versionId: wf.versionId,
           contentHash: computeContentHash(wf),

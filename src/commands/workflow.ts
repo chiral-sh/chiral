@@ -6,6 +6,7 @@ import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
+import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMapRequired,
   writeWorkflowMap,
@@ -113,7 +114,7 @@ async function promptEnvNames(
       const selected = await search<string | null>({
         message: `  Name in ${chalk.cyan(env)}:`,
         source: (term) => {
-          const skip = { value: null as null, name: chalk.dim('─ skip this env ─') };
+          const skip = { value: null, name: chalk.dim('─ skip this env ─') };
           if (!term) return [skip, ...workflows.map((w) => ({ value: w.name }))];
           const lower = term.toLowerCase();
           return [
@@ -258,11 +259,11 @@ export async function runWorkflowMap(
 
     if (options.dryRun) {
       if (options.json) {
-        console.log(JSON.stringify({
+        printJson({
           logical_name: logicalName,
           env_names: Object.fromEntries(Object.entries(envNames).map(([e, v]) => [e, v.name])),
           dry_run: true,
-        }, null, 2));
+        });
       } else {
         console.log('\n  Dry run - would write:');
         console.log(`    ${chalk.bold(logicalName)}`);
@@ -299,10 +300,10 @@ export async function runWorkflowMap(
     });
 
     if (options.json) {
-      console.log(JSON.stringify({
+      printJson({
         logical_name: logicalName,
         env_names: Object.fromEntries(Object.entries(envNames).map(([e, v]) => [e, v.name])),
-      }));
+      });
     } else {
       printMappedEntry(logicalName, envNames, allSame, uniformName);
     }
@@ -485,7 +486,7 @@ export async function runWorkflowMap(
     }
 
     if (options.json && jsonResults.length > 0) {
-      console.log(JSON.stringify(jsonResults.length === 1 ? jsonResults[0] : jsonResults, null, 2));
+      printJson(jsonResults.length === 1 ? jsonResults[0] : jsonResults);
     }
   }
 
@@ -561,7 +562,7 @@ async function runWorkflowPrune(
       });
     }
     if (doRemove) {
-      delete map.workflows[logical]![env];
+      delete map.workflows[logical][env];
       if (Object.keys(map.workflows[logical] ?? {}).length === 0) {
         delete map.workflows[logical];
       }
@@ -681,7 +682,7 @@ function renderMappedHuman(
     '  │ ' +
     [
       pad(chalk.dim('LOGICAL NAME'), C_LOGICAL),
-      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i]!)),
+      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i])),
     ].join(' │ ') +
     ' │';
 
@@ -697,7 +698,7 @@ function renderMappedHuman(
       pad(logicalStr, C_LOGICAL),
       ...envList.map((env, i) => {
         const name = envMap[env]?.name;
-        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]!);
+        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]);
       }),
     ];
     console.log('  │ ' + cells.join(' │ ') + ' │');
@@ -821,7 +822,7 @@ export async function runWorkflowList(
     const envs = options.env ? [options.env] : envList;
     const results = collectUnmapped(chiralDir, map, envs);
     if (options.json) {
-      console.log(JSON.stringify(results, null, 2));
+      printJson(results);
     } else {
       renderUnmappedHuman(results, envList);
     }
@@ -835,7 +836,7 @@ export async function runWorkflowList(
       ? allIncomplete.filter((r) => r.issues.some((i) => i.env === options.env))
       : allIncomplete;
     if (options.json) {
-      console.log(JSON.stringify(results, null, 2));
+      printJson(results);
     } else {
       renderIncompleteHuman(results);
     }
@@ -850,13 +851,9 @@ export async function runWorkflowList(
 
   if (options.json) {
     if (options.env) {
-      // Filtered blob when --env is combined with --json
-      console.log(
-        JSON.stringify({ version: map.version, workflows: Object.fromEntries(entries) }, null, 2),
-      );
+      printJson({ version: map.version, workflows: Object.fromEntries(entries) });
     } else {
-      // Raw blob - backward compat
-      console.log(JSON.stringify(map, null, 2));
+      printJson(map);
     }
     return;
   }

@@ -429,12 +429,13 @@ describe('runPush (dry-run) - JSON output', () => {
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
 
-    expect(parsed.source).toBe('dev');
-    expect(parsed.dry_run).toBe(true);
-    expect(parsed.updated).toContain('W1');
-    expect(parsed.created).toEqual([]);
-    expect(parsed.credential_map[0].targetName).toBe('prod_pg');
-    expect(parsed.credential_errors).toEqual([]);
+    expect(parsed.status).toBe('ok');
+    expect(parsed.data.source).toBe('dev');
+    expect(parsed.data.dry_run).toBe(true);
+    expect(parsed.data.updated).toContain('W1');
+    expect(parsed.data.created).toEqual([]);
+    expect(parsed.data.credential_map[0].targetName).toBe('prod_pg');
+    expect(parsed.data.credential_errors).toEqual([]);
   });
 
   it('exits 1 and includes credential_errors in json when mapped credential is missing', async () => {
@@ -457,8 +458,8 @@ describe('runPush (dry-run) - JSON output', () => {
     expect(err.code).toBe(1);
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
-    expect(parsed.credential_errors).toHaveLength(1);
-    expect(parsed.credential_errors[0].targetName).toBe('prod_pg');
+    expect(parsed.data.credential_errors).toHaveLength(1);
+    expect(parsed.data.credential_errors[0].targetName).toBe('prod_pg');
   });
 
   it('includes deployment_id (not null) in json when no workflows match filters', async () => {
@@ -471,8 +472,8 @@ describe('runPush (dry-run) - JSON output', () => {
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
-    expect(parsed.deployment_id).toBe('20260522T120000Z-abcdef12');
-    expect(parsed.credential_errors).toEqual([]);
+    expect(parsed.data.deployment_id).toBe('20260522T120000Z-abcdef12');
+    expect(parsed.data.credential_errors).toEqual([]);
   });
 });
 

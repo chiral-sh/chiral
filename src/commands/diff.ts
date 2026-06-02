@@ -6,6 +6,7 @@ import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
+import { printJson } from '../lib/output.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
 import {
@@ -91,7 +92,7 @@ async function classifyChange(
   if (!ctx.fingerprints.envs[targetEnv]) ctx.fingerprints.envs[targetEnv] = {};
 
   if (!srcEntry && srcFull) {
-    ctx.fingerprints.envs[sourceEnv]![src.id] = {
+    ctx.fingerprints.envs[sourceEnv][src.id] = {
       name: src.name,
       versionId: src.versionId,
       contentHash: srcContentHash,
@@ -100,7 +101,7 @@ async function classifyChange(
     };
   }
   if (!tgtEntry && tgtFull) {
-    ctx.fingerprints.envs[targetEnv]![tgt.id] = {
+    ctx.fingerprints.envs[targetEnv][tgt.id] = {
       name: tgt.name,
       versionId: tgt.versionId,
       contentHash: tgtContentHash,
@@ -274,21 +275,19 @@ export async function runDiff(
       for (const w of diff.removed) console.log(w.name);
       for (const w of diff.modified) console.log(w.targetName);
     } else if (outputMode === 'json') {
-      console.log(
-        JSON.stringify({
-          source: options.source,
-          target: options.target,
-          added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
-          removed: diff.removed.map(({ name }) => ({ name })),
-          modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind }) => ({
-            name: targetName,
-            sourceVersionId,
-            targetVersionId,
-            changeKind,
-          })),
-          unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
-        }),
-      );
+      printJson({
+        source: options.source,
+        target: options.target,
+        added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
+        removed: diff.removed.map(({ name }) => ({ name })),
+        modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind }) => ({
+          name: targetName,
+          sourceVersionId,
+          targetVersionId,
+          changeKind,
+        })),
+        unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
+      });
     } else {
       console.log();
       if (!hasDiff && diff.unchanged.length === 0) {
