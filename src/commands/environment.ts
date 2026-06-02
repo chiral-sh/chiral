@@ -456,7 +456,7 @@ export async function runEnvironmentRename(
   renameInFile(join(chiralDir, 'fingerprints.json'));
 
   // Update config
-  const envData = state.environments[oldName]!;
+  const envData = state.environments[oldName];
   delete state.environments[oldName];
   state.environments[newName] = envData;
   saveState(state);

@@ -23,7 +23,7 @@ export async function runUse(projectName?: string, options: { json?: boolean } =
   if (!projectName) {
     const ppid = process.ppid;
     const session = ppid ? readSession(ppid) : null;
-    const current = session?.project ?? (projects.length === 1 ? projects[0]!.name : null);
+    const current = session?.project ?? (projects.length === 1 ? projects[0].name : null);
 
     if (options.json) {
       const currentPath = current ? getProjectPath(current) : null;

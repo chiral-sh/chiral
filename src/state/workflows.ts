@@ -129,9 +129,9 @@ export function upsertEnvEntry(
   newEntry: WorkflowEntry,
 ): void {
   if (!map.workflows[logicalName]) map.workflows[logicalName] = {};
-  const existing = map.workflows[logicalName]![env];
+  const existing = map.workflows[logicalName][env];
   const nameChanged = existing !== undefined && existing.name !== newEntry.name;
-  map.workflows[logicalName]![env] = {
+  map.workflows[logicalName][env] = {
     name: newEntry.name,
     id: newEntry.id ?? (nameChanged ? undefined : existing?.id),
   };

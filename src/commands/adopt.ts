@@ -93,7 +93,7 @@ export async function runAdopt(
     const fingerprints = loadFingerprints(chiralDir);
     if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
     for (const workflow of workflows) {
-      fingerprints.envs[options.env]![workflow.id] = {
+      fingerprints.envs[options.env][workflow.id] = {
         name: workflow.name,
         versionId: workflow.versionId,
         contentHash: computeContentHash(workflow),

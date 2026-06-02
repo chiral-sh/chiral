@@ -180,6 +180,6 @@ export function upsertFingerprintEntry(
 ): void {
   const data = loadFingerprints(chiralDir);
   if (!data.envs[env]) data.envs[env] = {};
-  data.envs[env]![workflowId] = entry;
+  data.envs[env][workflowId] = entry;
   writeFingerprints(chiralDir, data);
 }

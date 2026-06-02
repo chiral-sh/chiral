@@ -374,9 +374,9 @@ export async function runTeamSetRole(
   }
 
   if (previousOwner) {
-    team.members[previousOwner]!.role = 'member';
+    team.members[previousOwner].role = 'member';
   }
-  team.members[email]!.role = newRole;
+  team.members[email].role = newRole;
   writeTeam(chiralDir, team);
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
