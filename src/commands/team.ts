@@ -37,7 +37,7 @@ function formatDate(iso: string): string {
 export async function runTeamList(options: { json?: boolean }): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   const team = readTeam(chiralDir);
@@ -107,7 +107,7 @@ export async function runTeamList(options: { json?: boolean }): Promise<void> {
 export async function runTeamWhoami(options: { json?: boolean }): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   const actor = getGitActor();
@@ -147,7 +147,7 @@ export async function runTeamAdd(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   if (!z.string().email().safeParse(email).success) {
@@ -228,7 +228,7 @@ export async function runTeamRemove(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   if (!z.string().email().safeParse(email).success) {
@@ -325,7 +325,7 @@ export async function runTeamSetRole(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   if (!z.string().email().safeParse(email).success) {
