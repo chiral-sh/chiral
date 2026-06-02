@@ -93,7 +93,7 @@ describe('runTeamList', () => {
     vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: JSON.stringify({ version: 1, projects: {} }) });
     delete process.env['CHIRAL_PROJECT'];
     await expect(runTeamList({})).rejects.toThrow(UserError);
-    await expect(runTeamList({})).rejects.toThrow("No active project found");
+    await expect(runTeamList({})).rejects.toThrow("No active project");
   });
 
   it('throws UserError when team.json is missing', async () => {
@@ -157,7 +157,7 @@ describe('runTeamWhoami', () => {
     vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: JSON.stringify({ version: 1, projects: {} }) });
     delete process.env['CHIRAL_PROJECT'];
     await expect(runTeamWhoami({})).rejects.toThrow(UserError);
-    await expect(runTeamWhoami({})).rejects.toThrow("No active project found");
+    await expect(runTeamWhoami({})).rejects.toThrow("No active project");
   });
 
   it('throws UserError when git config user.email is unset', async () => {

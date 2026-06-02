@@ -16,6 +16,15 @@ import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 
+// ── Output mode ───────────────────────────────────────────────────────────────
+
+type OutputMode = 'human' | 'json';
+
+function resolveOutputMode(options: { json?: boolean }): OutputMode {
+  if (options.json || !process.stdout.isTTY) return 'json';
+  return 'human';
+}
+
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
 function maskKey(key: string): string {
@@ -143,13 +152,17 @@ function saveState(state: LoadedState): void {
 
 export async function runEnvironmentAdd(
   envName: string | undefined,
-  options: { skipTest?: boolean },
+  options: { skipTest?: boolean; url?: string; apiKey?: string; json?: boolean },
 ): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadState();
 
   // Determine env name
   let name = envName?.trim() ?? '';
   if (!name) {
+    if (outputMode === 'json') {
+      throw new UserError('Environment name is required in non-interactive mode. Pass it as an argument: chiral environment add <name> --url <url> --api-key <key>');
+    }
     name = await input({
       message: 'Environment name:',
       default: Object.keys(state.environments).length === 0 ? 'dev' : undefined,
@@ -164,53 +177,98 @@ export async function runEnvironmentAdd(
     );
   }
 
-  console.log(`\n  ${chalk.bold('Adding')} ${chalk.cyan(name)}\n`);
+  // Resolve URL: flag → env var → prompt
+  const envUpper = name.toUpperCase();
+  const urlFromEnv = process.env[`CHIRAL_URL_${envUpper}`];
+  const keyFromEnv = process.env[`CHIRAL_API_KEY_${envUpper}`];
 
-  const url = await input({
-    message: '  n8n URL:',
-    validate: validateUrl,
-  });
+  let url = options.url ?? urlFromEnv ?? '';
+  let apiKey = options.apiKey ?? keyFromEnv ?? '';
 
-  console.log(
-    chalk.dim(
-      '  Scopes needed: workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
-      '                 credential:list  tag:list  tag:create  (n8n Settings → API)',
-    ),
-  );
-
-  const keyInput = await password({ message: '  API key:', mask: '•' });
-  if (!keyInput) throw new UserError('API key is required');
-
-  const normalizedUrl = url.replace(/\/+$/, '');
-  let status: EnvResult['status'] = 'skipped';
-  let workflowCount: number | undefined;
-
-  if (!options.skipTest) {
-    const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
-    try {
-      const client = new N8nClient({ url: normalizedUrl, apiKey: keyInput }, name);
-      ({ workflowCount } = await client.testConnection());
-      spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
-      status = 'connected';
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      spinner.fail(chalk.red(`  ${msg}`));
-      if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
-      const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
-      if (!saveAnyway) {
-        console.log(chalk.dim('\n  Environment not saved.\n'));
-        return;
-      }
-      status = 'unreachable';
+  if (outputMode === 'json') {
+    if (!url) {
+      throw new UserError(
+        `--url is required in non-interactive mode. Pass --url <url> or set CHIRAL_URL_${envUpper}.`,
+      );
+    }
+    try { new URL(url); } catch {
+      throw new UserError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
+    }
+    if (!apiKey) {
+      throw new UserError(
+        `--api-key is required in non-interactive mode. Pass --api-key <key> or set CHIRAL_API_KEY_${envUpper}.`,
+      );
+    }
+  } else {
+    if (!url) {
+      console.log(`\n  ${chalk.bold('Adding')} ${chalk.cyan(name)}\n`);
+      url = await input({
+        message: '  n8n URL:',
+        validate: validateUrl,
+      });
+    }
+    if (!apiKey) {
+      console.log(
+        chalk.dim(
+          '  Scopes needed: workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
+          '                 credential:list  tag:list  tag:create  (n8n Settings → API)',
+        ),
+      );
+      const keyInput = await password({ message: '  API key:', mask: '•' });
+      if (!keyInput) throw new UserError('API key is required');
+      apiKey = keyInput;
     }
   }
 
-  state.environments[name] = { url: normalizedUrl, apiKey: keyInput };
+  const normalizedUrl = url.replace(/\/+$/, '');
+  let connected = false;
+  let workflowCount: number | undefined;
+  let status: EnvResult['status'] = 'skipped';
+
+  if (!options.skipTest) {
+    if (outputMode === 'json') {
+      try {
+        const client = new N8nClient({ url: normalizedUrl, apiKey }, name);
+        ({ workflowCount } = await client.testConnection());
+        connected = true;
+        status = 'connected';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new UserError(`Connection test failed: ${msg}`);
+      }
+    } else {
+      const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
+      try {
+        const client = new N8nClient({ url: normalizedUrl, apiKey }, name);
+        ({ workflowCount } = await client.testConnection());
+        spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
+        connected = true;
+        status = 'connected';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spinner.fail(chalk.red(`  ${msg}`));
+        if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
+        const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
+        if (!saveAnyway) {
+          console.log(chalk.dim('\n  Environment not saved.\n'));
+          return;
+        }
+        status = 'unreachable';
+      }
+    }
+  }
+
+  state.environments[name] = { url: normalizedUrl, apiKey };
   saveState(state);
 
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     envs[name] = { url: normalizedUrl, apiKey: `YOUR_${name.toUpperCase()}_API_KEY` };
   });
+
+  if (outputMode === 'json') {
+    console.log(JSON.stringify({ status: 'ok', data: { env: name, url: normalizedUrl, connected } }));
+    return;
+  }
 
   const results: EnvResult[] = [{ name, url: normalizedUrl, workflowCount, status }];
   printEnvTable(state.project, state.environments, results);
@@ -221,8 +279,9 @@ export async function runEnvironmentAdd(
 
 export async function runEnvironmentConfigure(
   envName: string,
-  options: { skipTest?: boolean },
+  options: { skipTest?: boolean; url?: string; apiKey?: string; json?: boolean },
 ): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadState();
 
   const existing = state.environments[envName];
@@ -232,39 +291,75 @@ export async function runEnvironmentConfigure(
     );
   }
 
-  console.log(`\n  ${chalk.bold('Updating')} ${chalk.cyan(envName)}\n`);
+  // Resolve URL and API key: flag → env var → existing value (for non-interactive) or prompt
+  const envUpper = envName.toUpperCase();
+  const urlFromEnv = process.env[`CHIRAL_URL_${envUpper}`];
+  const keyFromEnv = process.env[`CHIRAL_API_KEY_${envUpper}`];
 
-  const url = await input({
-    message: '  n8n URL:',
-    default: existing.url,
-    validate: validateUrl,
-  });
+  let url = options.url ?? urlFromEnv ?? '';
+  let apiKey = options.apiKey ?? keyFromEnv ?? '';
 
-  console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
-  const keyInput = await password({ message: '  API key:', mask: '•' });
-  const apiKey = keyInput || existing.apiKey;
+  if (outputMode === 'json') {
+    // In JSON mode, fall back to existing values when flags/env vars are absent
+    if (!url) url = existing.url;
+    if (!apiKey) apiKey = existing.apiKey;
+  } else {
+    console.log(`\n  ${chalk.bold('Updating')} ${chalk.cyan(envName)}\n`);
+    if (!url) {
+      url = await input({
+        message: '  n8n URL:',
+        default: existing.url,
+        validate: validateUrl,
+      });
+    }
+    if (!apiKey) {
+      console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
+      const keyInput = await password({ message: '  API key:', mask: '•' });
+      apiKey = keyInput || existing.apiKey;
+    }
+  }
+
+  if (!url) throw new UserError('URL is required.');
+  try { new URL(url); } catch {
+    throw new UserError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
+  }
+  if (!apiKey) throw new UserError('API key is required.');
 
   const normalizedUrl = url.replace(/\/+$/, '');
-  let status: EnvResult['status'] = 'skipped';
+  let connected = false;
   let workflowCount: number | undefined;
+  let status: EnvResult['status'] = 'skipped';
 
   if (!options.skipTest) {
-    const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
-    try {
-      const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
-      ({ workflowCount } = await client.testConnection());
-      spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
-      status = 'connected';
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      spinner.fail(chalk.red(`  ${msg}`));
-      if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
-      const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
-      if (!saveAnyway) {
-        console.log(chalk.dim('\n  No changes saved.\n'));
-        return;
+    if (outputMode === 'json') {
+      try {
+        const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
+        ({ workflowCount } = await client.testConnection());
+        connected = true;
+        status = 'connected';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new UserError(`Connection test failed: ${msg}`);
       }
-      status = 'unreachable';
+    } else {
+      const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
+      try {
+        const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
+        ({ workflowCount } = await client.testConnection());
+        spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
+        connected = true;
+        status = 'connected';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spinner.fail(chalk.red(`  ${msg}`));
+        if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
+        const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
+        if (!saveAnyway) {
+          console.log(chalk.dim('\n  No changes saved.\n'));
+          return;
+        }
+        status = 'unreachable';
+      }
     }
   }
 
@@ -273,11 +368,16 @@ export async function runEnvironmentConfigure(
 
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     const existingKey = envs[envName]?.apiKey as string | undefined;
-    envs[envName] = { 
-      url: normalizedUrl, 
-      apiKey: existingKey || `YOUR_${envName.toUpperCase()}_API_KEY` 
+    envs[envName] = {
+      url: normalizedUrl,
+      apiKey: existingKey || `YOUR_${envName.toUpperCase()}_API_KEY`,
     };
   });
+
+  if (outputMode === 'json') {
+    console.log(JSON.stringify({ status: 'ok', data: { env: envName, url: normalizedUrl, connected } }));
+    return;
+  }
 
   const results: EnvResult[] = [{ name: envName, url: normalizedUrl, workflowCount, status }];
   printEnvTable(state.project, state.environments, results);
@@ -286,8 +386,18 @@ export async function runEnvironmentConfigure(
 
 // ── environment list ──────────────────────────────────────────────────────────
 
-export async function runEnvironmentList(): Promise<void> {
+export async function runEnvironmentList(options: { json?: boolean } = {}): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadState();
+
+  if (outputMode === 'json') {
+    const data = Object.entries(state.environments).map(([env, cfg]) => ({
+      env,
+      url: cfg.url,
+    }));
+    console.log(JSON.stringify({ status: 'ok', data }));
+    return;
+  }
 
   if (Object.keys(state.environments).length === 0) {
     console.log(
@@ -303,7 +413,12 @@ export async function runEnvironmentList(): Promise<void> {
 
 // ── environment rename ─────────────────────────────────────────────────────────
 
-export async function runEnvironmentRename(oldName: string, newName: string): Promise<void> {
+export async function runEnvironmentRename(
+  oldName: string,
+  newName: string,
+  options: { json?: boolean } = {},
+): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadState();
 
   if (!(oldName in state.environments)) {
@@ -355,6 +470,11 @@ export async function runEnvironmentRename(oldName: string, newName: string): Pr
     }
   });
 
+  if (outputMode === 'json') {
+    console.log(JSON.stringify({ status: 'ok', data: { old_name: oldName, new_name: newName } }));
+    return;
+  }
+
   console.log(`\n  ${chalk.green('✓')}  Renamed environment ${chalk.cyan(oldName)} → ${chalk.cyan(newName)}\n`);
 }
 
@@ -362,17 +482,30 @@ export async function runEnvironmentRename(oldName: string, newName: string): Pr
 
 export async function runEnvironmentDelete(
   envName: string,
-  options: { yes?: boolean },
+  options: { yes?: boolean; dryRun?: boolean; json?: boolean },
 ): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadState();
 
   if (!(envName in state.environments)) {
     throw new UserError(`Environment "${envName}" not found.`);
   }
 
+  if (options.dryRun) {
+    if (outputMode === 'json') {
+      console.log(JSON.stringify({ status: 'ok', data: { env: envName, would_delete: true } }));
+    } else {
+      console.log(`\n  ${chalk.bold('Dry run')} — would delete environment ${chalk.cyan(envName)}\n`);
+    }
+    return;
+  }
+
   const isProd = envName.toLowerCase().includes('prod');
 
   if (!options.yes) {
+    if (outputMode === 'json') {
+      throw new UserError(`Pass --yes to confirm deletion in non-interactive mode.`);
+    }
     if (isProd) {
       const confirmed = await input({
         message: `Type "${envName}" to confirm deletion:`,
@@ -401,6 +534,11 @@ export async function runEnvironmentDelete(
     delete envs[envName];
   });
 
+  if (outputMode === 'json') {
+    console.log(JSON.stringify({ status: 'ok', data: { env: envName, deleted: true } }));
+    return;
+  }
+
   console.log(`\n  ${chalk.green('✓')}  Deleted environment ${chalk.cyan(envName)}\n`);
 }
 
@@ -412,60 +550,115 @@ export const environmentCommand = new Command('environment')
 environmentCommand
   .command('add [name]')
   .description('Add a new environment connection')
+  .option('--url <url>', 'n8n instance URL (non-interactive)')
+  .option('--api-key <key>', 'n8n API key (non-interactive)')
   .option('--skip-test', 'Skip the connection test')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
+Environment variables:
+  CHIRAL_URL_<ENV>      n8n URL for the named environment (e.g. CHIRAL_URL_PROD)
+  CHIRAL_API_KEY_<ENV>  API key for the named environment (e.g. CHIRAL_API_KEY_PROD)
+
 Examples:
   Add an environment interactively:
     chiral environment add
 
   Add a named environment:
     chiral environment add dev
+
+  Non-interactive (CI/agent use):
+    chiral environment add prod --url https://n8n.prod.com --api-key \$KEY --json
+
+  Using environment variables:
+    CHIRAL_URL_PROD=https://n8n.prod.com CHIRAL_API_KEY_PROD=\$KEY \\
+      chiral environment add prod --json
+
+Exit codes:
+  0  Success
+  1  General error (env already exists, connection failed)
+  2  Usage error (missing required flags in non-interactive mode)
 `)
-  .action(async (nameArg: string | undefined, options: { skipTest?: boolean }) => {
+  .action(async (nameArg: string | undefined, options: { skipTest?: boolean; url?: string; apiKey?: string; json?: boolean }) => {
     await runEnvironmentAdd(nameArg, options);
   });
 
 environmentCommand
   .command('configure <name>')
   .description('Update URL or API key for an existing environment')
+  .option('--url <url>', 'New n8n instance URL')
+  .option('--api-key <key>', 'New n8n API key')
   .option('--skip-test', 'Skip the connection test')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
+Environment variables:
+  CHIRAL_URL_<ENV>      n8n URL for the named environment (e.g. CHIRAL_URL_PROD)
+  CHIRAL_API_KEY_<ENV>  API key for the named environment (e.g. CHIRAL_API_KEY_PROD)
+
 Examples:
-  Update an existing environment:
+  Update an existing environment interactively:
     chiral environment configure dev
+
+  Update URL only (non-interactive):
+    chiral environment configure dev --url https://new-n8n.example.com --json
+
+  Update both URL and key (non-interactive):
+    chiral environment configure prod --url https://n8n.prod.com --api-key \$KEY --json
+
+Exit codes:
+  0  Success
+  1  General error (env not found, connection failed)
+  2  Usage error (invalid URL)
 `)
-  .action(async (name: string, options: { skipTest?: boolean }) => {
+  .action(async (name: string, options: { skipTest?: boolean; url?: string; apiKey?: string; json?: boolean }) => {
     await runEnvironmentConfigure(name, options);
   });
 
 environmentCommand
   .command('list')
-  .description('List all configured environments with their connection status')
+  .description('List all configured environments')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
 Examples:
   Show all environments:
     chiral environment list
+
+  Output as JSON:
+    chiral environment list --json
+
+Exit codes:
+  0  Success
+  1  No active project found
 `)
-  .action(async () => {
-    await runEnvironmentList();
+  .action(async (options: { json?: boolean }) => {
+    await runEnvironmentList(options);
   });
 
 environmentCommand
   .command('rename <old-name> <new-name>')
   .description('Rename an environment (updates all state files atomically)')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
 Examples:
   Rename dev to staging:
     chiral environment rename dev staging
+
+  Output as JSON:
+    chiral environment rename dev staging --json
+
+Exit codes:
+  0  Success
+  1  Error (env not found, new name already exists)
 `)
-  .action(async (oldName: string, newName: string) => {
-    await runEnvironmentRename(oldName, newName);
+  .action(async (oldName: string, newName: string, options: { json?: boolean }) => {
+    await runEnvironmentRename(oldName, newName, options);
   });
 
 environmentCommand
   .command('delete <name>')
   .description('Delete an environment from config (type-to-confirm for prod)')
   .option('--yes', 'Skip confirmation prompt')
+  .option('--dry-run', 'Show what would be deleted without making changes')
+  .option('--json', 'Output result as JSON (requires --yes for actual deletion)')
   .addHelpText('after', `
 Examples:
   Delete an environment (will prompt to confirm):
@@ -473,7 +666,21 @@ Examples:
 
   Skip confirmation:
     chiral environment delete staging --yes
+
+  Preview what would be deleted:
+    chiral environment delete staging --dry-run
+
+  Non-interactive (agent use):
+    chiral environment delete staging --yes --json
+
+  Dry run as JSON:
+    chiral environment delete staging --dry-run --json
+
+Exit codes:
+  0  Success (or no-op for dry-run)
+  1  Error (env not found)
+  2  Usage error (--json without --yes for actual deletion)
 `)
-  .action(async (name: string, options: { yes?: boolean }) => {
+  .action(async (name: string, options: { yes?: boolean; dryRun?: boolean; json?: boolean }) => {
     await runEnvironmentDelete(name, options);
   });
