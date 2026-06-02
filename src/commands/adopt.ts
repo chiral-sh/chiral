@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from
 import { N8nClient } from '../lib/n8n-client.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, detectsEnvMarker } from '../lib/cli.js';
-import { generateDeploymentId, writeSnapshot, writeSnapshotMeta } from '../state/snapshots.js';
+import { generateDeploymentId, writeSnapshot, writeSnapshotMeta, computeSnapshotContentHash } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
@@ -87,6 +87,7 @@ export async function runAdopt(
       command: 'adopt',
       timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
+      content_hash: computeSnapshotContentHash(workflows),
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
 

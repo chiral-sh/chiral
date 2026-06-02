@@ -14,6 +14,7 @@ import {
   writeSnapshotMeta,
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
+  computeSnapshotContentHash,
   type SnapshotWorkflow,
 } from '../state/snapshots.js';
 import { writeAuditEntry, readAuditLog } from '../state/audit.js';
@@ -227,6 +228,7 @@ export async function runPull(
         command: 'pull',
         timestamp: snapshotTimestamp,
         workflow_count: 1,
+        content_hash: computeSnapshotContentHash([workflow]),
         filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
       });
       upsertFingerprintEntry(chiralDir, options.env, workflow.id, {
@@ -382,6 +384,7 @@ export async function runPull(
       command: 'pull' as const,
       timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
+      content_hash: computeSnapshotContentHash(workflows),
       filters: {
         tag: options.tag ?? null,
         pattern: options.pattern ?? null,

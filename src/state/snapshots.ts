@@ -7,7 +7,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
 
@@ -24,6 +24,7 @@ const SnapshotMetaSchema = z.object({
   command: z.enum(['pull', 'adopt', 'push']),
   timestamp: z.string().datetime(),
   workflow_count: z.number().int(),
+  content_hash: z.string().optional(),
   filters: z.object({
     tag: z.string().nullable(),
     pattern: z.string().nullable(),
@@ -37,6 +38,12 @@ export type SnapshotMeta = z.infer<typeof SnapshotMetaSchema>;
 export type SnapshotWorkflow = z.infer<typeof SnapshotWorkflowSchema>;
 
 const DEPLOYMENT_ID_RE = /^\d{8}T\d{6}Z-[0-9a-f]{8}$/;
+
+export function computeSnapshotContentHash(workflows: SnapshotWorkflow[]): string {
+  const sorted = [...workflows].sort((a, b) => a.id.localeCompare(b.id));
+  const str = sorted.map((w) => `${w.id}:${JSON.stringify(w)}`).join('\n');
+  return createHash('sha1').update(str).digest('hex');
+}
 
 export function generateDeploymentId(): string {
   const ts = new Date()

@@ -173,6 +173,18 @@ describe('runPull - first pull (no previous snapshot)', () => {
     expect(meta.workflow_count).toBe(2);
   });
 
+  it('writes meta.json with content_hash after a successful pull', async () => {
+    setupProject();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    await runPull({ env: 'dev' });
+
+    const metas = Object.keys(vol.toJSON() ?? {}).filter((p) => p.endsWith('meta.json'));
+    expect(metas).toHaveLength(1);
+    const meta = JSON.parse(vol.readFileSync(metas[0], 'utf-8') as string);
+    expect(meta.content_hash).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it('writes a success audit entry with pulled workflow IDs', async () => {
     setupProject();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);

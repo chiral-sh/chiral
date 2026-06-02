@@ -139,6 +139,18 @@ describe('runAdopt', () => {
     expect(snapshots[0]).toContain('wf-1.json');
   });
 
+  it('writes meta.json with content_hash after adopting workflows', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    await runAdopt({ env: 'dev' });
+
+    const metas = Object.keys(vol.toJSON() ?? {}).filter((p) => p.endsWith('meta.json'));
+    expect(metas).toHaveLength(1);
+    const meta = JSON.parse(vol.readFileSync(metas[0], 'utf-8') as string);
+    expect(meta.content_hash).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it('writes an audit log entry on success', async () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
