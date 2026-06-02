@@ -17,6 +17,7 @@ import { useCommand } from './commands/use.js';
 import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
 import { remoteCommand } from './commands/remote.js';
+import { statusCommand } from './commands/status.js';
 
 const program = new Command();
 
@@ -31,6 +32,7 @@ program.addCommand(useCommand);
 program.addCommand(projectCommand);
 program.addCommand(environmentCommand);
 program.addCommand(remoteCommand);
+program.addCommand(statusCommand);
 program.addCommand(adoptCommand);
 program.addCommand(pullCommand);
 program.addCommand(diffCommand);
