@@ -18,6 +18,7 @@ import {
 } from '../state/fingerprints.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 import { renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { pageOutput } from '../lib/pager.js';
 
 interface AddedEntry {
   name: string;
@@ -181,6 +182,8 @@ export interface DiffOptions {
   json?: boolean;
   exitCode?: boolean;
   explain?: string;
+  verbose?: boolean;
+  noPager?: boolean;
 }
 
 type OutputMode = 'human' | 'json' | 'name-only';
@@ -368,6 +371,20 @@ export async function runDiff(
             console.log(`  "${options.explain}" is not a modified workflow. ${suffix}`);
           }
         }
+        if (options.verbose && diff.modified.length > 0) {
+          const sections: string[] = [];
+          for (const w of diff.modified) {
+            if (w.nodes) {
+              const groups = renderNodeGroups(w.nodes);
+              sections.push(`  ${w.targetName}\n\n`);
+              sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
+              sections.push('\n\n');
+            }
+          }
+          if (sections.length > 0) {
+            await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
+          }
+        }
         if (options.showUnchanged) {
           for (const w of diff.unchanged) {
             console.log(`      ${w.name}    ${chalk.dim('(identical)')}`);
@@ -421,6 +438,8 @@ export const diffCommand = new Command('diff')
   .addOption(new Option('--name-only', 'Print only differing workflow names, one per line - suitable for piping').conflicts('json'))
   .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
   .addOption(new Option('--explain <workflow>', 'Drill into one modified workflow\'s named node changes, grouped by risk').conflicts('json').conflicts('nameOnly'))
+  .addOption(new Option('--verbose', 'Expand all modified workflows\' named node changes, grouped by risk, routed through pager').conflicts('json').conflicts('nameOnly'))
+  .option('--no-pager', 'Disable the pager and print output directly to stdout')
   .option('--exit-code', 'Exit 1 if any differences found, 0 if environments are identical (CI use)')
   .addHelpText(
     'after',
@@ -437,5 +456,5 @@ Examples:
 `,
   )
   .action(async (options) => {
-    await runDiff(options);
+    await runDiff({ ...options, noPager: options.pager === false });
   });

@@ -15,8 +15,13 @@ vi.mock('../../../src/lib/n8n-client.js', () => ({
   N8nClient: vi.fn(),
 }));
 
+vi.mock('../../../src/lib/pager.js', () => ({
+  pageOutput: vi.fn().mockImplementation(async (text: string) => { console.log(text); }),
+}));
+
 import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
+import { pageOutput } from '../../../src/lib/pager.js';
 import { runDiff } from '../../../src/commands/diff.js';
 import type { WorkflowSummary } from '../../../src/lib/n8n-client.js';
 
@@ -1291,6 +1296,139 @@ describe('runDiff - --explain flag', () => {
     const joined = output.join('\n');
     expect(joined).toContain('"Nonexistent" is not a modified workflow');
     expect(joined).toContain('No modified workflows');
+  });
+});
+
+// ── --verbose flag ────────────────────────────────────────────────────────────
+
+const mockPageOutput = vi.mocked(pageOutput);
+
+describe('runDiff - --verbose flag', () => {
+  it('expands every modified workflow named node changes through pageOutput', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    const srcFull = {
+      nodes: [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+        { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+      ],
+      connections: {},
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    mockPageOutput.mockResolvedValue(undefined);
+
+    await runDiff({ source: 'dev', target: 'prod', verbose: true });
+
+    expect(mockPageOutput).toHaveBeenCalledOnce();
+    const text = mockPageOutput.mock.calls[0]![0];
+    expect(text).toContain('Workflow One');
+    expect(text).toContain('Logic changed');
+    expect(text).toContain('HTTP Request');
+  });
+
+  it('passes noPager: true to pageOutput when --no-pager is set', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    const srcFull = {
+      nodes: [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+        { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+      ],
+      connections: {},
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    mockPageOutput.mockResolvedValue(undefined);
+
+    await runDiff({ source: 'dev', target: 'prod', verbose: true, noPager: true });
+
+    expect(mockPageOutput).toHaveBeenCalledWith(expect.any(String), { noPager: true });
+  });
+
+  it('prints output plainly to stdout when non-TTY (no pager spawned)', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    const srcFull = {
+      nodes: [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+        { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+      ],
+      connections: {},
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    // Mock calls console.log with the text (default mock behavior)
+    mockPageOutput.mockImplementation(async (text: string) => { console.log(text); });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod', verbose: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflow One');
+    expect(joined).toContain('Logic changed');
+    expect(joined).toContain('HTTP Request');
+  });
+
+  it('does not call pageOutput when there are no modified workflows', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    mockPageOutput.mockResolvedValue(undefined);
+
+    await runDiff({ source: 'dev', target: 'prod', verbose: true });
+
+    expect(mockPageOutput).not.toHaveBeenCalled();
   });
 });
 
