@@ -214,7 +214,7 @@ describe('runDiff - diff symbols', () => {
     expect(output.join('\n')).toContain('Workflow Three');
   });
 
-  it('shows ~ for workflow with differing versionId', async () => {
+  it('shows stat table for workflow with differing versionId', async () => {
     setupProject();
     setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
     setupTwoClientMocks(
@@ -227,9 +227,11 @@ describe('runDiff - diff symbols', () => {
 
     await runDiff({ source: 'dev', target: 'prod' });
 
-    expect(output.join('\n')).toContain('~');
-    expect(output.join('\n')).toContain('Workflow One');
-    expect(output.join('\n')).toContain('(logic changed)');
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflow One');
+    expect(joined).toContain('+0');
+    expect(joined).toContain('~0');
+    expect(joined).not.toContain('(logic changed)');
   });
 
   it('shows identical message when both envs match exactly', async () => {
@@ -761,8 +763,9 @@ describe('runDiff - fingerprint-based change detection', () => {
     // Fallback path triggered - both sides fetched, content differs → configuration changed
     expect(srcGetWorkflow).toHaveBeenCalledWith(SRC_WF1.id);
     expect(tgtGetWorkflow).toHaveBeenCalledWith(TGT_WF1_UPDATED.id);
-    expect(output.join('\n')).toContain('~');
-    expect(output.join('\n')).toContain('(configuration changed)');
+    // Stat table is shown: modified node appears as ~1
+    expect(output.join('\n')).toContain('~1');
+    expect(output.join('\n')).toContain('Workflow One');
   });
 
   it('reports unchanged via fallback when full workflow content matches despite different versionId', async () => {
@@ -1048,6 +1051,160 @@ describe('runDiff - node diff in --json output', () => {
     await expect(
       runDiff({ source: 'dev', target: 'prod', json: true }),
     ).rejects.toThrow('API key for dev is invalid or expired');
+  });
+});
+
+// ── stat table human output ───────────────────────────────────────────────────
+
+describe('runDiff - stat table human output', () => {
+  it('renders stat table with counts and churn bar for modified workflows', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    const srcFull = {
+      nodes: [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+        { id: 'b', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+      ],
+      connections: {},
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    // Stat table shows workflow name, +1 added, ~0 modified, -0 removed, and a bar
+    expect(joined).toContain('Workflow One');
+    expect(joined).toContain('+1');
+    expect(joined).toContain('~0');
+    expect(joined).toContain('-0');
+    expect(joined).toMatch(/[█░]+/); // churn bar
+    expect(joined).not.toContain('(logic changed)');
+    expect(joined).not.toContain('(configuration changed)');
+  });
+
+  it('keeps + and - format for added and removed workflows', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1, SRC_WF2]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED, TGT_WF3]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    // Added workflow still uses + prefix
+    expect(joined).toContain('+');
+    expect(joined).toContain('Workflow Two');
+    // Removed workflow still uses - prefix
+    expect(joined).toContain('-');
+    expect(joined).toContain('Workflow Three');
+  });
+
+  it('still prints N added, M modified, K removed summary line', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1, SRC_WF2]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED, TGT_WF3]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('1 added');
+    expect(joined).toContain('1 modified');
+    expect(joined).toContain('1 removed');
+  });
+
+  it('sorts modified workflows by churn descending in stat table', async () => {
+    setupProject();
+    // Two modified workflows: src-1 and src-2
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/fingerprints.json`,
+      JSON.stringify({
+        version: 1,
+        envs: {
+          dev: {
+            'src-1': { name: 'Workflow One', versionId: 'v1', contentHash: 'sha256:' + 'a'.repeat(64), structureHash: 'sha256:' + 'a'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
+            'src-2': { name: 'Workflow Two', versionId: 'v1', contentHash: 'sha256:' + 'c'.repeat(64), structureHash: 'sha256:' + 'c'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
+          },
+          prod: {
+            'tgt-1': { name: 'Workflow One', versionId: 'v2', contentHash: 'sha256:' + 'b'.repeat(64), structureHash: 'sha256:' + 'b'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
+            'tgt-2': { name: 'Workflow Two', versionId: 'v2', contentHash: 'sha256:' + 'd'.repeat(64), structureHash: 'sha256:' + 'd'.repeat(64), updatedAt: '2024-01-01T00:00:00.000Z' },
+          },
+        },
+      }),
+    );
+
+    const WF2_SRC = makeSummary({ id: 'src-2', name: 'Workflow Two', versionId: 'v1' });
+    const WF2_TGT = makeSummary({ id: 'tgt-2', name: 'Workflow Two', versionId: 'v2' });
+
+    // Workflow One: 1 node on each side, 0 changes (same node) → 0 churn
+    // Workflow Two: src has 0 nodes, tgt has 3 nodes → 3 added, higher churn
+    const wf1Src = { nodes: [{ id: 'x', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }], connections: {} };
+    const wf1Tgt = { nodes: [{ id: 'x', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }], connections: {} };
+    const wf2Src = { nodes: [], connections: {} };
+    const wf2Tgt = {
+      nodes: [
+        { id: 'a', name: 'N1', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+        { id: 'b', name: 'N2', type: 'n8n-nodes-base.set', parameters: {} },
+        { id: 'c', name: 'N3', type: 'n8n-nodes-base.slack', parameters: {} },
+      ],
+      connections: {},
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1, WF2_SRC]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          id === 'src-1' ? Promise.resolve(wf1Src) : Promise.resolve(wf2Src),
+        ),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED, WF2_TGT]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          id === 'tgt-1' ? Promise.resolve(wf1Tgt) : Promise.resolve(wf2Tgt),
+        ),
+      }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    const wf1Pos = joined.indexOf('Workflow One');
+    const wf2Pos = joined.indexOf('Workflow Two');
+    // Workflow Two has higher churn → appears first in table
+    expect(wf2Pos).toBeLessThan(wf1Pos);
   });
 });
 

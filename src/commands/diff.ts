@@ -17,6 +17,7 @@ import {
   type Fingerprints,
 } from '../state/fingerprints.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
+import { renderStatTable, type StatRow } from '../lib/node-diff-render.js';
 
 interface AddedEntry {
   name: string;
@@ -337,11 +338,17 @@ export async function runDiff(
             `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.target}, not in ${options.source})`)}`,
           );
         }
-        for (const w of diff.modified) {
-          const kindLabel = w.changeKind === 'structural' ? 'logic changed' : 'configuration changed';
-          console.log(
-            `  ${chalk.yellow('~')} ${w.targetName}    ${chalk.dim(`(${kindLabel})`)}`,
-          );
+        if (diff.modified.length > 0) {
+          const statRows: StatRow[] = diff.modified.map((w) => ({
+            name: w.targetName,
+            counts: w.nodes?.counts ?? { added: 0, modified: 0, removed: 0 },
+            oldNodeCount: w.nodes?.oldNodeCount ?? 0,
+            newNodeCount: w.nodes?.newNodeCount ?? 0,
+            changeKind: w.changeKind,
+          }));
+          for (const line of renderStatTable(statRows).split('\n')) {
+            console.log(`  ${line}`);
+          }
         }
         if (options.showUnchanged) {
           for (const w of diff.unchanged) {
