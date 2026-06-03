@@ -302,24 +302,25 @@ export async function runEnvironmentConfigure(
   let url = options.url ?? urlFromEnv ?? '';
   let apiKey = options.apiKey ?? keyFromEnv ?? '';
 
-  if (outputMode === 'json') {
-    // In JSON mode, fall back to existing values when flags/env vars are absent
+  // A targeted update is any invocation that explicitly supplies a field (via
+  // flag or env var). In that case we only touch what was given and keep the
+  // rest as-is — passing --api-key should never prompt for the URL, and vice versa.
+  const targetedUpdate = Boolean(url) || Boolean(apiKey);
+
+  if (outputMode === 'json' || targetedUpdate) {
+    // Fall back to existing values for whatever wasn't explicitly provided.
     if (!url) url = existing.url;
     if (!apiKey) apiKey = existing.apiKey;
   } else {
     console.log(`\n  ${chalk.bold('Updating')} ${chalk.cyan(envName)}\n`);
-    if (!url) {
-      url = await input({
-        message: '  n8n URL:',
-        default: existing.url,
-        validate: validateUrl,
-      });
-    }
-    if (!apiKey) {
-      console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
-      const keyInput = await password({ message: '  API key:', mask: '•' });
-      apiKey = keyInput || existing.apiKey;
-    }
+    url = await input({
+      message: '  n8n URL:',
+      default: existing.url,
+      validate: validateUrl,
+    });
+    console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
+    const keyInput = await password({ message: '  API key:', mask: '•' });
+    apiKey = keyInput || existing.apiKey;
   }
 
   if (!url) throw new UserError('URL is required.');
