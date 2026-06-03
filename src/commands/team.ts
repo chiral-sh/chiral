@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { readTeam, ensureTeam, writeTeam } from '../state/team.js';
 import { writeAuditEntry } from '../state/audit.js';
@@ -150,7 +150,7 @@ export async function runTeamAdd(
     throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     throw new UserError(`Invalid email address: "${email}"`);
   }
 
@@ -214,7 +214,6 @@ export async function runTeamAdd(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(line);
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }
@@ -231,7 +230,7 @@ export async function runTeamRemove(
     throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     throw new UserError(`Invalid email address: "${email}"`);
   }
 
@@ -310,7 +309,6 @@ export async function runTeamRemove(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(line);
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }
@@ -328,7 +326,7 @@ export async function runTeamSetRole(
     throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     throw new UserError(`Invalid email address: "${email}"`);
   }
 
@@ -374,9 +372,9 @@ export async function runTeamSetRole(
   }
 
   if (previousOwner) {
-    team.members[previousOwner]!.role = 'member';
+    team.members[previousOwner].role = 'member';
   }
-  team.members[email]!.role = newRole;
+  team.members[email].role = newRole;
   writeTeam(chiralDir, team);
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
@@ -421,7 +419,6 @@ export async function runTeamSetRole(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(line);
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }

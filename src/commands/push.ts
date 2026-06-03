@@ -4,11 +4,12 @@ import { confirm, input } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
+import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMap,
   writeWorkflowMap,
@@ -262,11 +263,11 @@ export async function runPush(
       console.log(`  ${chalk.yellow('⚠')} No workflows${scopeDesc} found in snapshot for ${chalk.cyan(options.source)}.`);
       console.log();
     } else {
-      console.log(JSON.stringify({
-        source: options.source, target: options.target, dry_run: true,
+      printJson({
+        source: options.source, target: options.target, dry_run: options.dryRun ?? false,
         deployment_id: deploymentId, created: [], updated: [], skipped: [], failed: [],
         credential_map: [], tag_warnings: [], credential_errors: [],
-      }));
+      });
     }
     return;
   }
@@ -324,7 +325,7 @@ export async function runPush(
 
     // Fingerprint path: compute source hash from snapshot (no API call needed),
     // compare against stored target hash if available
-    const srcHash = computeContentHash(wf as Record<string, unknown>);
+    const srcHash = computeContentHash(wf);
     const tgtEntry = fingerprints.envs[options.target]?.[targetMatch.id];
     if (tgtEntry && srcHash === tgtEntry.contentHash) {
       return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
@@ -370,25 +371,23 @@ export async function runPush(
 
   // ── JSON output ───────────────────────────────────────────────────────────
   if (outputMode === 'json') {
-    console.log(
-      JSON.stringify({
-        source: options.source,
-        target: options.target,
-        dry_run: true,
-        deployment_id: deploymentId,
-        created: toCreate.map((c) => c.workflow.name),
-        updated: toUpdate.map((c) => c.workflow.name),
-        skipped: toSkip.map((c) => c.workflow.name),
-        failed: [],
-        credential_map: credMap.map(({ sourceName, targetName, status }) => ({
-          sourceName, targetName, status,
-        })),
-        tag_warnings: tagWarnings.map((t) => t.name),
-        credential_errors: credentialErrors.map(({ sourceName, targetName }) => ({
-          sourceName, targetName,
-        })),
-      }),
-    );
+    printJson({
+      source: options.source,
+      target: options.target,
+      dry_run: true,
+      deployment_id: deploymentId,
+      created: toCreate.map((c) => c.workflow.name),
+      updated: toUpdate.map((c) => c.workflow.name),
+      skipped: toSkip.map((c) => c.workflow.name),
+      failed: [],
+      credential_map: credMap.map(({ sourceName, targetName, status }) => ({
+        sourceName, targetName, status,
+      })),
+      tag_warnings: tagWarnings.map((t) => t.name),
+      credential_errors: credentialErrors.map(({ sourceName, targetName }) => ({
+        sourceName, targetName,
+      })),
+    });
     if (credentialErrors.length > 0) throw new ControlledExit(1);
     return;
   }
@@ -426,9 +425,10 @@ export async function runPush(
       return `  chiral credential map ${logical} ${options.target}=${e.targetName}`;
     });
     console.log(
-      `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Create ${credentialErrors.length === 1 ? 'it' : 'them'} first or run:`,
+      `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Map ${credentialErrors.length === 1 ? 'it' : 'them'} to an existing ${chalk.cyan(options.target)} credential:`,
     );
     for (const h of hint) console.log(chalk.dim(h));
+    console.log(chalk.dim(`  To see available credentials: chiral credential list --env ${options.target}`));
     console.log();
     throw new ControlledExit(1);
   }
@@ -643,7 +643,7 @@ export async function runPush(
           await targetClient.updateWorkflow(createResult.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
         }
 
-        fingerprints.envs[options.target]![createResult.id] = {
+        fingerprints.envs[options.target][createResult.id] = {
           name: c.resolvedName,
           versionId: createResult.versionId,
           contentHash: computeContentHash(sourceWorkflow),
@@ -696,7 +696,7 @@ export async function runPush(
 
         // Update
         const updateResult = await targetClient.updateWorkflow(targetWorkflow.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
-        fingerprints.envs[options.target]![targetWorkflow.id] = {
+        fingerprints.envs[options.target][targetWorkflow.id] = {
           name: c.resolvedName,
           versionId: updateResult.versionId,
           contentHash: computeContentHash(sourceWorkflow),
@@ -782,7 +782,6 @@ export async function runPush(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }

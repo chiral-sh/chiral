@@ -106,7 +106,7 @@ export function projectExists(name: string): boolean {
 export function getProjectPath(name: string): string | null {
   const index = readIndex();
   const key = findProjectKey(name, index);
-  return key ? (index.projects[key]!.path) : null;
+  return key ? (index.projects[key].path) : null;
 }
 
 export function registerProject(name: string, path: string): void {
@@ -139,7 +139,7 @@ export function renameProjectInIndex(oldName: string, newName: string, newPath: 
   if (conflictKey && conflictKey !== oldKey) {
     throw new UserError(`A project named "${conflictKey}" already exists.`);
   }
-  const entry = index.projects[oldKey]!;
+  const entry = index.projects[oldKey];
   delete index.projects[oldKey];
   entry.path = newPath;
   index.projects[newName] = entry;
@@ -277,7 +277,7 @@ export function resolveActiveProject(): ResolvedProject {
     throw new UserError("No projects found. Run 'chiral init <name>' to create one.");
   }
   if (projects.length === 1) {
-    const project = projects[0]!;
+    const project = projects[0];
     return { name: project.name, chiralDir: join(project.path, '.chiral'), inactiveReminder: false };
   }
   const names = projects.map((p) => p.name).join(', ');

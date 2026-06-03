@@ -2,17 +2,19 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command, Option } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob, detectsEnvMarker } from '../lib/cli.js';
+import { printJson } from '../lib/output.js';
 import {
   generateDeploymentId,
   writeSnapshot,
   writeSnapshotMeta,
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
+  computeSnapshotContentHash,
   type SnapshotWorkflow,
 } from '../state/snapshots.js';
 import { writeAuditEntry, readAuditLog } from '../state/audit.js';
@@ -25,6 +27,9 @@ import {
 } from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
+import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
+import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { pageOutput } from '../lib/pager.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +41,7 @@ export interface PullOptions {
   onlyActive?: boolean;
   json?: boolean;
   verbose?: boolean;
+  noPager?: boolean;
   nameOnly?: boolean;
   exitCode?: boolean;
 }
@@ -63,6 +69,7 @@ interface Delta {
   updated: WorkflowFull[];
   deleted: SnapshotWorkflow[];
   unchanged: number;
+  updatedNodes: Map<string, WorkflowDiffResult>;
 }
 
 function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): Delta {
@@ -71,6 +78,7 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
 
   const added: WorkflowFull[] = [];
   const updated: WorkflowFull[] = [];
+  const updatedNodes = new Map<string, WorkflowDiffResult>();
   let unchanged = 0;
 
   for (const wf of current) {
@@ -79,16 +87,17 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
       added.push(wf);
     } else if (
       (prev as Record<string, unknown>).versionId !== wf.versionId ||
-      computeContentHash(prev as Record<string, unknown>) !== computeContentHash(wf)
+      computeContentHash(prev) !== computeContentHash(wf)
     ) {
       updated.push(wf);
+      updatedNodes.set(wf.id, diffWorkflowNodes(prev, wf));
     } else {
       unchanged++;
     }
   }
 
   const deleted = previous.filter((p) => !currIds.has(p.id));
-  return { added, updated, deleted, unchanged };
+  return { added, updated, deleted, unchanged, updatedNodes };
 }
 
 function buildNextHint(
@@ -226,6 +235,7 @@ export async function runPull(
         command: 'pull',
         timestamp: snapshotTimestamp,
         workflow_count: 1,
+        content_hash: computeSnapshotContentHash([workflow]),
         filters: { tag: null, pattern: null, onlyActive: false, id: options.id },
       });
       upsertFingerprintEntry(chiralDir, options.env, workflow.id, {
@@ -249,19 +259,17 @@ export async function runPull(
       if (outputMode === 'name-only') {
         if (hasChanges) console.log(workflow.name);
       } else if (outputMode === 'json') {
-        console.log(
-          JSON.stringify({
-            env: options.env,
-            deployment_id: deploymentId,
-            pulled: 1,
-            active: workflow.active ? 1 : 0,
-            inactive: workflow.active ? 0 : 1,
-            new: isNew ? [workflow.name] : [],
-            updated: isUpdated ? [workflow.name] : [],
-            deleted: [],
-            unchanged: hasChanges ? 0 : 1,
-          }),
-        );
+        printJson({
+          env: options.env,
+          deployment_id: deploymentId,
+          pulled: 1,
+          active: workflow.active ? 1 : 0,
+          inactive: workflow.active ? 0 : 1,
+          new: isNew ? [workflow.name] : [],
+          updated: isUpdated ? [workflow.name] : [],
+          deleted: [],
+          unchanged: hasChanges ? 0 : 1,
+        });
       } else {
         console.log();
         if (isNew) {
@@ -297,7 +305,6 @@ export async function runPull(
           console.log(formatSyncSuccess(syncResult));
         } else {
           for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-          if (syncResult.message) logSyncError(syncResult.message);
         }
         console.log();
       }
@@ -383,6 +390,7 @@ export async function runPull(
       command: 'pull' as const,
       timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
+      content_hash: computeSnapshotContentHash(workflows),
       filters: {
         tag: options.tag ?? null,
         pattern: options.pattern ?? null,
@@ -399,19 +407,17 @@ export async function runPull(
       if (outputMode === 'name-only') {
         // nothing changed - no output
       } else if (outputMode === 'json') {
-        console.log(
-          JSON.stringify({
-            env: options.env,
-            deployment_id: deploymentId,
-            pulled: workflows.length,
-            active: activeCount,
-            inactive: inactiveCount,
-            new: [],
-            updated: [],
-            deleted: [],
-            unchanged: workflows.length,
-          }),
-        );
+        printJson({
+          env: options.env,
+          deployment_id: deploymentId,
+          pulled: workflows.length,
+          active: activeCount,
+          inactive: inactiveCount,
+          new: [],
+          updated: [],
+          deleted: [],
+          unchanged: workflows.length,
+        });
       } else {
         if (workflows.length === 0) {
           console.log(
@@ -451,19 +457,19 @@ export async function runPull(
         for (const wf of (delta?.updated ?? [])) console.log(wf.name);
         for (const wf of (delta?.deleted ?? [])) console.log(wf.name);
       } else if (outputMode === 'json') {
-        console.log(
-          JSON.stringify({
-            env: options.env,
-            deployment_id: deploymentId,
-            pulled: workflows.length,
-            active: activeCount,
-            inactive: inactiveCount,
-            new: (delta?.added ?? workflows).map((w) => w.name),
-            updated: delta?.updated.map((w) => w.name) ?? [],
-            deleted: delta?.deleted.map((w) => w.name) ?? [],
-            unchanged: delta?.unchanged ?? 0,
-          }),
-        );
+        printJson({
+          env: options.env,
+          deployment_id: deploymentId,
+          pulled: workflows.length,
+          active: activeCount,
+          inactive: inactiveCount,
+          new: (delta?.added ?? workflows).map((w) => w.name),
+          updated: delta
+            ? delta.updated.map((w) => ({ name: w.name, nodes: delta.updatedNodes.get(w.id) }))
+            : [],
+          deleted: delta?.deleted.map((w) => w.name) ?? [],
+          unchanged: delta?.unchanged ?? 0,
+        });
       } else {
         if (isFirstPull && workflows.length === 0) {
           console.log(
@@ -479,36 +485,67 @@ export async function runPull(
         } else {
           const prevFp = loadFingerprints(chiralDir);
           console.log();
-          for (const wf of delta!.added) {
+          for (const wf of delta.added) {
             console.log(`  ${chalk.green('+')} ${wf.name}  ${chalk.dim('(new)')}`);
           }
-          for (const wf of delta!.updated) {
-            const prevEntry = prevFp.envs[options.env]?.[wf.id];
-            let updateLabel: string;
-            if (!prevEntry) {
-              updateLabel = 'updated';
-            } else if (prevEntry.name !== wf.name) {
-              updateLabel = `renamed from "${prevEntry.name}"`;
-            } else if (prevEntry.structureHash !== computeStructureHash(wf)) {
-              updateLabel = 'logic changed';
-            } else {
-              updateLabel = 'configuration changed';
+          let updatedStatRows: StatRow[] = [];
+          if (delta.updated.length > 0) {
+            updatedStatRows = delta.updated.map((wf) => {
+              const prevEntry = prevFp.envs[options.env]?.[wf.id];
+              const diffResult = delta.updatedNodes.get(wf.id);
+              const changeKind: 'structural' | 'configuration' =
+                !prevEntry || prevEntry.name !== wf.name || prevEntry.structureHash !== computeStructureHash(wf)
+                  ? 'structural'
+                  : 'configuration';
+              return {
+                name: wf.name,
+                counts: diffResult?.counts ?? { added: 0, modified: 0, removed: 0 },
+                oldNodeCount: diffResult?.oldNodeCount ?? 0,
+                newNodeCount: diffResult?.newNodeCount ?? 0,
+                changeKind,
+              };
+            });
+            if (!options.verbose) {
+              for (const line of renderStatTable(updatedStatRows).split('\n')) {
+                console.log(`  ${line}`);
+              }
             }
-            console.log(`  ${chalk.yellow('~')} ${wf.name}  ${chalk.dim(`(${updateLabel})`)}`);
           }
-          for (const wf of delta!.deleted) {
+          for (const wf of delta.deleted) {
             console.log(`  ${chalk.yellow('⚠')} ${wf.name}  ${chalk.dim('(removed from n8n)')}`);
           }
-          if (delta!.unchanged > 0) {
+          if (delta.unchanged > 0) {
             console.log(
-              `  ${chalk.dim(`  ${plural(delta!.unchanged, 'workflow')} unchanged`)}`,
+              `  ${chalk.dim(`  ${plural(delta.unchanged, 'workflow')} unchanged`)}`,
             );
           }
           console.log();
           console.log(`  ${plural(totalChanges, 'change')}.`);
+
+          if (options.verbose && delta.updated.length > 0) {
+            const nodesByName = new Map(delta.updated.map((wf) => [wf.name, wf]));
+            const sections: string[] = [];
+            for (const { name, line } of renderStatRows(updatedStatRows)) {
+              const wf = nodesByName.get(name);
+              const diffResult = wf ? delta.updatedNodes.get(wf.id) : undefined;
+              if (!diffResult) continue;
+              const groups = renderNodeGroups(diffResult);
+              sections.push(`  ${line}\n`);
+              if (groups) {
+                sections.push('\n');
+                sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
+              }
+              sections.push('\n\n');
+            }
+            if (sections.length > 0) {
+              await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
+            }
+          }
         }
 
-        if (options.verbose) printWorkflowList(workflows);
+        if (options.verbose && (isFirstPull || !delta || delta.updated.length === 0)) {
+          printWorkflowList(workflows);
+        }
         warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
         const hint = buildNextHint(config, options.env, hasChanges, isFirstPull, {
           tag: options.tag,
@@ -525,7 +562,7 @@ export async function runPull(
       const fp = loadFingerprints(chiralDir);
       if (!fp.envs[options.env]) fp.envs[options.env] = {};
       for (const wf of workflows) {
-        fp.envs[options.env]![wf.id] = {
+        fp.envs[options.env][wf.id] = {
           name: wf.name,
           versionId: wf.versionId,
           contentHash: computeContentHash(wf),
@@ -560,7 +597,6 @@ export async function runPull(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }
@@ -585,7 +621,8 @@ export const pullCommand = new Command('pull')
   .requiredOption('--env <env>', 'Environment to pull from')
   .addOption(new Option('--tag <tag>', 'Only pull workflows with this tag name').conflicts('id'))
   .addOption(new Option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")').conflicts('id'))
-  .option('--verbose', 'List every pulled workflow with its active/inactive status')
+  .option('--verbose', 'Expand updated workflows\' named node changes, grouped by risk, routed through pager')
+  .option('--no-pager', 'Disable the pager and print output directly to stdout')
   .addOption(new Option('--only-active', 'Only pull currently active workflows').conflicts('id'))
   .addOption(new Option('--id <workflow-id>', 'Pull a single workflow by its n8n ID').conflicts(['tag', 'pattern', 'onlyActive']))
   .addOption(new Option('--name-only', 'Print only changed workflow names, one per line - suitable for piping').conflicts('json'))
@@ -606,5 +643,5 @@ Examples:
 `,
   )
   .action(async (options) => {
-    await runPull(options);
+    await runPull({ ...options, noPager: options.pager === false });
   });

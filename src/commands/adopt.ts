@@ -2,11 +2,11 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, detectsEnvMarker } from '../lib/cli.js';
-import { generateDeploymentId, writeSnapshot, writeSnapshotMeta } from '../state/snapshots.js';
+import { generateDeploymentId, writeSnapshot, writeSnapshotMeta, computeSnapshotContentHash } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
@@ -87,13 +87,14 @@ export async function runAdopt(
       command: 'adopt',
       timestamp: snapshotTimestamp,
       workflow_count: workflows.length,
+      content_hash: computeSnapshotContentHash(workflows),
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
 
     const fingerprints = loadFingerprints(chiralDir);
     if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
     for (const workflow of workflows) {
-      fingerprints.envs[options.env]![workflow.id] = {
+      fingerprints.envs[options.env][workflow.id] = {
         name: workflow.name,
         versionId: workflow.versionId,
         contentHash: computeContentHash(workflow),
@@ -158,7 +159,6 @@ export async function runAdopt(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }

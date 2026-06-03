@@ -47,32 +47,36 @@ function sha256hex(data: string): string {
   return 'sha256:' + createHash('sha256').update(data, 'utf8').digest('hex');
 }
 
+// Strips id/position/typeVersion and drops credential instance ids.
+// Used by both normalizeForContent (content hash) and the node-diff engine.
+export function normalizeNode(node: Record<string, unknown>): Record<string, unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id: _id, position: _pos, typeVersion: _tv, ...rest } = node;
+
+  const creds = rest['credentials'];
+  if (typeof creds !== 'object' || creds === null) return rest;
+
+  const normalizedCreds: Record<string, unknown> = {};
+  for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
+    if (typeof credValue === 'object' && credValue !== null) {
+      // Keep name, drop instance-specific id
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id: _cid, ...credRest } = credValue as Record<string, unknown>;
+      normalizedCreds[credType] = credRest;
+    } else {
+      normalizedCreds[credType] = credValue;
+    }
+  }
+  return { ...rest, credentials: normalizedCreds };
+}
+
 function normalizeForContent(wf: Record<string, unknown>): object {
   const nodes = Array.isArray(wf['nodes']) ? (wf['nodes'] as Record<string, unknown>[]) : [];
 
   const normalizedNodes = nodes
     .filter((n): n is Record<string, unknown> => typeof n === 'object' && n !== null)
     .sort((a, b) => String(a['id'] ?? '').localeCompare(String(b['id'] ?? '')))
-    .map((node) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { id: _id, position: _pos, typeVersion: _tv, ...rest } = node;
-
-      const creds = rest['credentials'];
-      if (typeof creds !== 'object' || creds === null) return rest;
-
-      const normalizedCreds: Record<string, unknown> = {};
-      for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
-        if (typeof credValue === 'object' && credValue !== null) {
-          // Keep name, drop instance-specific id
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { id: _cid, ...credRest } = credValue as Record<string, unknown>;
-          normalizedCreds[credType] = credRest;
-        } else {
-          normalizedCreds[credType] = credValue;
-        }
-      }
-      return { ...rest, credentials: normalizedCreds };
-    });
+    .map(normalizeNode);
 
   // Only hash settings fields that survive sanitizeWorkflowForApi - fields stripped
   // before push must not influence the hash or a round-trip causes a false "would-update".
@@ -180,6 +184,6 @@ export function upsertFingerprintEntry(
 ): void {
   const data = loadFingerprints(chiralDir);
   if (!data.envs[env]) data.envs[env] = {};
-  data.envs[env]![workflowId] = entry;
+  data.envs[env][workflowId] = entry;
   writeFingerprints(chiralDir, data);
 }

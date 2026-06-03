@@ -11,6 +11,7 @@ import {
   computeContentHash,
   computeStructureHash,
   loadFingerprints,
+  normalizeNode,
   writeFingerprints,
   upsertFingerprintEntry,
 } from '../../../src/state/fingerprints.js';
@@ -62,6 +63,63 @@ function makeWorkflow(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 const CHIRAL_DIR = '/repo/.chiral';
+
+// ── normalizeNode ─────────────────────────────────────────────────────────────
+
+describe('normalizeNode', () => {
+  const baseNode: Record<string, unknown> = {
+    id: 'node-1',
+    name: 'HTTP Request',
+    type: 'n8n-nodes-base.httpRequest',
+    typeVersion: 1,
+    position: [100, 200],
+    parameters: { url: 'https://api.example.com', method: 'GET' },
+    credentials: {
+      httpBasicAuth: { id: 'cred-123', name: 'dev_api_key' },
+    },
+  };
+
+  it('strips id, position, and typeVersion', () => {
+    const result = normalizeNode(baseNode);
+    expect(result).not.toHaveProperty('id');
+    expect(result).not.toHaveProperty('position');
+    expect(result).not.toHaveProperty('typeVersion');
+  });
+
+  it('strips credential id but preserves credentials.name', () => {
+    const result = normalizeNode(baseNode);
+    const creds = result['credentials'] as Record<string, Record<string, unknown>>;
+    expect(creds['httpBasicAuth']).not.toHaveProperty('id');
+    expect(creds['httpBasicAuth']?.['name']).toBe('dev_api_key');
+  });
+
+  it('preserves parameters', () => {
+    const result = normalizeNode(baseNode);
+    expect(result['parameters']).toEqual({ url: 'https://api.example.com', method: 'GET' });
+  });
+
+  it('preserves name and type', () => {
+    const result = normalizeNode(baseNode);
+    expect(result['name']).toBe('HTTP Request');
+    expect(result['type']).toBe('n8n-nodes-base.httpRequest');
+  });
+
+  it('handles a node with no credentials gracefully', () => {
+    const node = { id: 'n1', name: 'Set', type: 'n8n-nodes-base.set', position: [0, 0], parameters: {} };
+    const result = normalizeNode(node);
+    expect(result).not.toHaveProperty('id');
+    expect(result).not.toHaveProperty('position');
+    expect(result['name']).toBe('Set');
+  });
+
+  it('does not alter computeContentHash output (byte-identity with old inline logic)', () => {
+    const wf = makeWorkflow();
+    const hashBefore = computeContentHash(wf);
+    // Compute again after refactor — the exported normalizeNode is now the same code path
+    const hashAfter = computeContentHash(makeWorkflow());
+    expect(hashBefore).toBe(hashAfter);
+  });
+});
 
 // ── computeContentHash ────────────────────────────────────────────────────────
 

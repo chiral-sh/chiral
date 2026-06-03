@@ -108,7 +108,7 @@ describe('runAdopt', () => {
 
   it('throws UserError when --env is not in config', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await expect(runAdopt({ env: 'staging' })).rejects.toThrow(UserError);
     await expect(runAdopt({ env: 'staging' })).rejects.toThrow('Unknown environment "staging"');
@@ -116,7 +116,7 @@ describe('runAdopt', () => {
 
   it('creates N8nClient with correct env and envName', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runAdopt({ env: 'dev' });
 
@@ -128,7 +128,7 @@ describe('runAdopt', () => {
 
   it('writes snapshot files for each workflow', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runAdopt({ env: 'dev' });
 
@@ -139,9 +139,21 @@ describe('runAdopt', () => {
     expect(snapshots[0]).toContain('wf-1.json');
   });
 
+  it('writes meta.json with content_hash after adopting workflows', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+
+    await runAdopt({ env: 'dev' });
+
+    const metas = Object.keys(vol.toJSON() ?? {}).filter((p) => p.endsWith('meta.json'));
+    expect(metas).toHaveLength(1);
+    const meta = JSON.parse(vol.readFileSync(metas[0], 'utf-8') as string);
+    expect(meta.content_hash).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it('writes an audit log entry on success', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runAdopt({ env: 'dev' });
 
@@ -158,11 +170,11 @@ describe('runAdopt', () => {
 
   it('writes a failure audit entry and re-throws on API error', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockRejectedValue(new UserError('API key for dev is invalid or expired')),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await expect(runAdopt({ env: 'dev' })).rejects.toThrow(
       'API key for dev is invalid or expired',
@@ -178,14 +190,14 @@ describe('runAdopt', () => {
     setupChiralDir();
     const inactiveWf = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Inactive Workflow', active: false };
     const inactiveFull = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Inactive Workflow', active: false };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, inactiveWf]),
         getWorkflow: vi.fn()
           .mockResolvedValueOnce(WORKFLOW_FULL)
           .mockResolvedValueOnce(inactiveFull),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -202,9 +214,9 @@ describe('runAdopt', () => {
   it('fetches full workflow JSON for each summary', async () => {
     setupChiralDir();
     const getWorkflow = vi.fn().mockResolvedValue(WORKFLOW_FULL);
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow }) as never;
+    });
 
     await runAdopt({ env: 'dev' });
 
@@ -213,11 +225,11 @@ describe('runAdopt', () => {
 
   it('handles zero workflows gracefully', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await expect(runAdopt({ env: 'dev' })).resolves.not.toThrow();
 
@@ -228,7 +240,7 @@ describe('runAdopt', () => {
 
   it('writes fingerprints.json after adopting workflows', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runAdopt({ env: 'dev' });
 
@@ -241,7 +253,7 @@ describe('runAdopt', () => {
 
   it('writes all three fingerprint fields for each workflow', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runAdopt({ env: 'dev' });
 
@@ -258,14 +270,14 @@ describe('runAdopt', () => {
     setupChiralDir();
     const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
     const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, wf2Summary]),
         getWorkflow: vi.fn()
           .mockResolvedValueOnce(WORKFLOW_FULL)
           .mockResolvedValueOnce(wf2Full),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runAdopt({ env: 'dev' });
 
@@ -278,11 +290,11 @@ describe('runAdopt', () => {
 
   it('does not write fingerprints.json when the API call fails', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockRejectedValue(new UserError('connection refused')),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await expect(runAdopt({ env: 'dev' })).rejects.toThrow();
 
@@ -295,14 +307,14 @@ describe('runAdopt - audit workflow_ids', () => {
     setupChiralDir();
     const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
     const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, wf2Summary]),
         getWorkflow: vi.fn()
           .mockResolvedValueOnce(WORKFLOW_FULL)
           .mockResolvedValueOnce(wf2Full),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runAdopt({ env: 'dev' });
 
@@ -315,11 +327,11 @@ describe('runAdopt - audit workflow_ids', () => {
 
   it('records empty array when no workflows are adopted', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runAdopt({ env: 'dev' });
 
@@ -332,7 +344,7 @@ describe('runAdopt - audit workflow_ids', () => {
 describe('runAdopt - fingerprints summary output', () => {
   it('prints a fingerprints saved confirmation line', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -360,12 +372,12 @@ describe('runAdopt - env-specific name detection', () => {
 
   it('prints a warning when a workflow name contains an env marker and is not mapped', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([ENV_WORKFLOW_SUMMARY]),
         getWorkflow: vi.fn().mockResolvedValue(ENV_WORKFLOW_FULL),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -388,12 +400,12 @@ describe('runAdopt - env-specific name detection', () => {
         },
       },
     }));
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([ENV_WORKFLOW_SUMMARY]),
         getWorkflow: vi.fn().mockResolvedValue(ENV_WORKFLOW_FULL),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -406,7 +418,7 @@ describe('runAdopt - env-specific name detection', () => {
 
   it('does not print env-specific warning when workflow names have no env markers', async () => {
     setupChiralDir();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));

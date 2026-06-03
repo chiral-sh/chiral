@@ -32,7 +32,7 @@ export function loadCredentials(chiralDir: string): Credentials {
 
   const result = CredentialsSchema.safeParse(raw);
   if (!result.success) {
-    const firstError = result.error.errors[0];
+    const firstError = result.error.issues[0];
     const field = firstError.path.join('.');
     throw new UserError(
       `Invalid credentials.json: ${field ? field + ': ' : ''}${firstError.message}`,

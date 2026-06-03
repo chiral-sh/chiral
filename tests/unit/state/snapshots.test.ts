@@ -11,6 +11,7 @@ import {
   readSnapshotMeta,
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
+  computeSnapshotContentHash,
   SnapshotWorkflow,
 } from '../../../src/state/snapshots.js';
 import { UserError } from '../../../src/lib/errors.js';
@@ -284,5 +285,41 @@ describe('readAllWorkflowsInDeployment', () => {
     const workflows = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
     expect(workflows).toHaveLength(1);
     expect(workflows[0].id).toBe('wf-good');
+  });
+});
+
+describe('computeSnapshotContentHash', () => {
+  it('returns the same hash for identical workflow arrays regardless of input order', () => {
+    const wf1: SnapshotWorkflow = { id: 'wf-1', name: 'Alpha' };
+    const wf2: SnapshotWorkflow = { id: 'wf-2', name: 'Beta' };
+    expect(computeSnapshotContentHash([wf1, wf2])).toBe(computeSnapshotContentHash([wf2, wf1]));
+  });
+
+  it('returns different hashes for arrays differing by one workflow', () => {
+    const wf1: SnapshotWorkflow = { id: 'wf-1', name: 'Alpha' };
+    const wf2: SnapshotWorkflow = { id: 'wf-2', name: 'Beta' };
+    expect(computeSnapshotContentHash([wf1])).not.toBe(computeSnapshotContentHash([wf1, wf2]));
+  });
+
+  it('returns a 40-character hex string (SHA-1)', () => {
+    expect(computeSnapshotContentHash([WORKFLOW])).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+describe('SnapshotMeta content_hash field', () => {
+  it('accepts meta.json without content_hash (optional field)', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META);
+    const result = readSnapshotMeta('/fd', DEPLOYMENT_A);
+    expect(result).not.toBeNull();
+    expect(result?.content_hash).toBeUndefined();
+  });
+
+  it('accepts meta.json with content_hash and round-trips it correctly', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshotMeta('/fd', DEPLOYMENT_A, { ...BASE_META, content_hash: 'abc123def456' });
+    const result = readSnapshotMeta('/fd', DEPLOYMENT_A);
+    expect(result).not.toBeNull();
+    expect(result?.content_hash).toBe('abc123def456');
   });
 });

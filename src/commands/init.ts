@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { join, basename, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
-import { input } from '@inquirer/prompts';
+import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
@@ -12,6 +12,9 @@ import {
   writeSession,
 } from '../lib/projects.js';
 import { createChiralDirectory } from '../state/init.js';
+import { generateScript, getInstallPath, getChiralCommands } from '../lib/completion.js';
+
+const CHIRAL_VERSION = '0.1.0';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,8 @@ export interface InitOptions {
   project?: string;
   noGit?: boolean;
   json?: boolean;
+  installCompletion?: boolean;
+  noInstallCompletion?: boolean;
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
@@ -137,6 +142,45 @@ export async function runInit(options: InitOptions): Promise<void> {
     console.log(`\n  ${chalk.green('✓')}  Git initialized → ${chalk.dim(projectDir)}`);
   }
 
+  if (!options.noInstallCompletion && !options.json) {
+    const shellEnv = process.env['SHELL'];
+    if (shellEnv) {
+      const shellName = basename(shellEnv);
+      if (['bash', 'zsh', 'fish'].includes(shellName)) {
+        try {
+          let shouldInstall = options.installCompletion ?? false;
+          if (!shouldInstall && process.stdout.isTTY) {
+            shouldInstall = await confirm({
+              message: 'Enable tab completion for chiral?',
+              default: true,
+            });
+          }
+          if (shouldInstall) {
+            const commands = getChiralCommands();
+            const script = generateScript(shellName, commands, CHIRAL_VERSION);
+            const installPath = getInstallPath(shellName);
+            mkdirSync(dirname(installPath), { recursive: true });
+            writeFileSync(installPath, script, 'utf-8');
+            console.log(`  ${chalk.green('✓')}  Tab completion enabled → ${chalk.dim(installPath)}`);
+            if (shellName === 'zsh') {
+              const home = dirname(dirname(installPath));
+              const zshrc = join(home, '.zshrc');
+              const hasEntry = existsSync(zshrc) && readFileSync(zshrc, 'utf-8').includes('fpath=(~/.zfunc');
+              if (!hasEntry) {
+                console.log('');
+                console.log('  Add this line to ~/.zshrc to enable completions:');
+                console.log('    fpath=(~/.zfunc $fpath)');
+                console.log('    autoload -Uz compinit && compinit');
+              }
+            }
+          }
+        } catch {
+          // silently skip - init must never fail due to completion setup
+        }
+      }
+    }
+  }
+
   console.log(`\n  ${chalk.dim('Next:')} chiral environment add dev\n`);
 }
 
@@ -146,6 +190,8 @@ export const initCommand = new Command('init')
   .option('--project <name>', 'Project name (alternative to positional argument)')
   .option('--no-git', 'Skip automatic git init inside the project folder')
   .option('--json', 'Output result as JSON')
+  .option('--install-completion', 'Install shell completion without prompting (non-interactive)')
+  .option('--no-install-completion', 'Skip the tab completion prompt')
   .addHelpText(
     'after',
     `
@@ -158,9 +204,12 @@ Examples:
 
   Create without running git init:
     chiral init my-n8n --no-git
+
+  Create and auto-install completion without prompting (CI / scripts):
+    chiral init my-n8n --install-completion
 `,
   )
-  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean }) => {
+  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean; installCompletion?: boolean; noInstallCompletion?: boolean }) => {
     const resolvedName = nameArg ?? options.project;
-    await runInit({ project: resolvedName, noGit: options.noGit, json: options.json });
+    await runInit({ project: resolvedName, noGit: options.noGit, json: options.json, installCompletion: options.installCompletion, noInstallCompletion: options.noInstallCompletion });
   });

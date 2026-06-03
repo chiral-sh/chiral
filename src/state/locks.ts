@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
 
 export const LockFileSchema = z.object({
-  actor: z.string().email(),
+  actor: z.email(),
   timestamp: z.string().datetime(),
   hostname: z.string(),
 });

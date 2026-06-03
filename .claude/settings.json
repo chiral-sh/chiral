@@ -7,5 +7,39 @@
       "Bash(pnpm test:watch)",
       "Bash(node dist/index.js *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/purvesh/projects/chiral-cli && pnpm typecheck 2>&1 | tail -15"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"$TOOL_INPUT\" | grep -qE '(rm -rf src|rm -rf tests|git push --force|git push -f|> dist/)' && echo 'BLOCKED: dangerous command detected' && exit 2 || exit 0"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/purvesh/projects/chiral-cli && pnpm test 2>&1 | tail -20"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -353,8 +353,9 @@ describe('runCredentialMap - non-interactive', () => {
     await runCredentialMap(['postgres', 'postgres'], { json: true });
     console.log = orig;
     const output = JSON.parse(logs[0]!);
-    expect(output.logical_name).toBe('postgres');
-    expect(output.env_names).toMatchObject({ dev: 'postgres', prod: 'postgres' });
+    expect(output.status).toBe('ok');
+    expect(output.data.logical_name).toBe('postgres');
+    expect(output.data.env_names).toMatchObject({ dev: 'postgres', prod: 'postgres' });
   });
 });
 
@@ -572,7 +573,7 @@ describe('runCredentialList', () => {
     await runCredentialList({ json: true });
     console.log = orig;
     const parsed = JSON.parse(logs[0]!);
-    expect(parsed.credentials.postgres).toBeDefined();
+    expect(parsed.data.credentials.postgres).toBeDefined();
   });
 });
 
@@ -644,8 +645,9 @@ describe('runCredentialList --uncovered', () => {
     await runCredentialList({ uncovered: true, json: true });
     console.log = orig;
     const parsed = JSON.parse(logs[0]!);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0]).toMatchObject({ env: 'dev', name: 'dev_stripe' });
+    expect(parsed.status).toBe('ok');
+    expect(Array.isArray(parsed.data)).toBe(true);
+    expect(parsed.data[0]).toMatchObject({ env: 'dev', name: 'dev_stripe' });
   });
 });
 

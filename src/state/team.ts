@@ -5,13 +5,13 @@ import { UserError } from '../lib/errors.js';
 
 export const TeamMemberSchema = z.object({
   role: z.enum(['owner', 'member']),
-  addedBy: z.string().email(),
+  addedBy: z.email(),
   addedAt: z.string().datetime(),
 });
 
 export const TeamSchema = z.object({
   version: z.literal(1),
-  members: z.record(z.string().email(), TeamMemberSchema),
+  members: z.record(z.email(), TeamMemberSchema),
 });
 
 export type TeamMember = z.infer<typeof TeamMemberSchema>;
@@ -32,7 +32,7 @@ export function readTeam(chiralDir: string): Team {
 
   const result = TeamSchema.safeParse(raw);
   if (!result.success) {
-    const firstError = result.error.errors[0];
+    const firstError = result.error.issues[0];
     const field = firstError.path.join('.');
     throw new UserError(
       `Invalid team.json: ${field ? field + ': ' : ''}${firstError.message}`,

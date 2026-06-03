@@ -156,7 +156,8 @@ describe('runWorkflowMap', () => {
     const jsonOutput = spy.mock.calls.map((c) => c[0]).find((s: string) => s.startsWith('{'));
     expect(jsonOutput).toBeDefined();
     const parsed = JSON.parse(jsonOutput as string);
-    expect(parsed.logical_name).toBe('invoice-sync');
+    expect(parsed.status).toBe('ok');
+    expect(parsed.data.logical_name).toBe('invoice-sync');
     spy.mockRestore();
   });
 
@@ -284,8 +285,8 @@ describe('runWorkflowList', () => {
     await runWorkflowList({ json: true });
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
-    expect(parsed.workflows).toBeDefined();
-    expect(parsed.version).toBe(1);
+    expect(parsed.data.workflows).toBeDefined();
+    expect(parsed.data.version).toBe(1);
     spy.mockRestore();
   });
 
@@ -302,8 +303,8 @@ describe('runWorkflowList', () => {
     await runWorkflowList({ env: 'prod', json: true });
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
-    expect(parsed.workflows['invoice-sync']).toBeDefined();
-    expect(parsed.workflows['dev-only']).toBeUndefined();
+    expect(parsed.data.workflows['invoice-sync']).toBeDefined();
+    expect(parsed.data.workflows['dev-only']).toBeUndefined();
     spy.mockRestore();
   });
 
@@ -361,8 +362,9 @@ describe('runWorkflowList', () => {
     const output = spy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
     // Must be an array of UnmappedResult, NOT the full workflows.json blob
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0]).toMatchObject({ env: 'dev', name: 'Unmapped WF', id: 'wf-abc' });
+    expect(parsed.status).toBe('ok');
+    expect(Array.isArray(parsed.data)).toBe(true);
+    expect(parsed.data[0]).toMatchObject({ env: 'dev', name: 'Unmapped WF', id: 'wf-abc' });
     spy.mockRestore();
   });
 
@@ -384,7 +386,9 @@ describe('runWorkflowList', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
     await runWorkflowList({ unmapped: true, json: true });
     const output = spy.mock.calls[0]?.[0] as string;
-    expect(JSON.parse(output)).toEqual([]);
+    const parsed = JSON.parse(output);
+    expect(parsed.status).toBe('ok');
+    expect(parsed.data).toEqual([]);
     spy.mockRestore();
   });
 
@@ -415,7 +419,8 @@ describe('runWorkflowList', () => {
 
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
     await runWorkflowList({ unmapped: true, env: 'dev', json: true });
-    const parsed: Array<{ env: string; name: string }> = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const envelope = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const parsed: Array<{ env: string; name: string }> = envelope.data;
     expect(parsed.every((r) => r.env === 'dev')).toBe(true);
     expect(parsed.some((r) => r.name === 'Dev Only WF')).toBe(true);
     expect(parsed.some((r) => r.name === 'Prod Only WF')).toBe(false);
@@ -437,8 +442,8 @@ describe('runWorkflowList', () => {
     setupBase(missingId);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
     await runWorkflowList({ incomplete: true, json: true });
-    const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> =
-      JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const envelope = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> = envelope.data;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0]?.logical).toBe('second-wf');
     expect(parsed[0]?.issues).toContainEqual({ kind: 'missing_id', env: 'prod', name: 'second' });
@@ -458,8 +463,8 @@ describe('runWorkflowList', () => {
     setupBase(missingEnv);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
     await runWorkflowList({ incomplete: true, json: true });
-    const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> =
-      JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const envelope = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const parsed: Array<{ logical: string; issues: Array<{ kind: string; env: string }> }> = envelope.data;
     expect(parsed[0]?.issues).toContainEqual({ kind: 'missing_env', env: 'prod' });
     spy.mockRestore();
   });
@@ -477,7 +482,9 @@ describe('runWorkflowList', () => {
     setupBase(complete);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
     await runWorkflowList({ incomplete: true, json: true });
-    expect(JSON.parse(spy.mock.calls[0]?.[0] as string)).toEqual([]);
+    const parsed = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(parsed.status).toBe('ok');
+    expect(parsed.data).toEqual([]);
     spy.mockRestore();
   });
 
@@ -500,7 +507,8 @@ describe('runWorkflowList', () => {
     setupBase(mixed);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => { });
     await runWorkflowList({ incomplete: true, env: 'prod', json: true });
-    const parsed: Array<{ logical: string }> = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const envelope = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    const parsed: Array<{ logical: string }> = envelope.data;
     expect(parsed.some((r) => r.logical === 'prod-missing')).toBe(true);
     expect(parsed.some((r) => r.logical === 'dev-missing')).toBe(false);
     spy.mockRestore();

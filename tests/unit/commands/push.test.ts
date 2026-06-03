@@ -163,7 +163,7 @@ function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflow
     }
   }
 
-  MockN8nClient.mockImplementation((_env, envName) => {
+  MockN8nClient.mockImplementation(function(_env, envName) {
     if (envName === 'prod') {
       return makeTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue(targetWorkflows),
@@ -309,7 +309,7 @@ describe('runPush (dry-run) - credential mapping', () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1', [], ['dev_pg'])]);
 
     // Override mock to return empty credentials from target
-    MockN8nClient.mockImplementation(() => {
+    MockN8nClient.mockImplementation(function() {
       return makeTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]), // missing prod_pg!
@@ -429,24 +429,25 @@ describe('runPush (dry-run) - JSON output', () => {
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
 
-    expect(parsed.source).toBe('dev');
-    expect(parsed.dry_run).toBe(true);
-    expect(parsed.updated).toContain('W1');
-    expect(parsed.created).toEqual([]);
-    expect(parsed.credential_map[0].targetName).toBe('prod_pg');
-    expect(parsed.credential_errors).toEqual([]);
+    expect(parsed.status).toBe('ok');
+    expect(parsed.data.source).toBe('dev');
+    expect(parsed.data.dry_run).toBe(true);
+    expect(parsed.data.updated).toContain('W1');
+    expect(parsed.data.created).toEqual([]);
+    expect(parsed.data.credential_map[0].targetName).toBe('prod_pg');
+    expect(parsed.data.credential_errors).toEqual([]);
   });
 
   it('exits 1 and includes credential_errors in json when mapped credential is missing', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1', [], ['dev_pg'])]);
 
-    MockN8nClient.mockImplementation(() =>
-      makeTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]), // prod_pg missing
         listTags: vi.fn().mockResolvedValue([]),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
@@ -457,8 +458,8 @@ describe('runPush (dry-run) - JSON output', () => {
     expect(err.code).toBe(1);
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
-    expect(parsed.credential_errors).toHaveLength(1);
-    expect(parsed.credential_errors[0].targetName).toBe('prod_pg');
+    expect(parsed.data.credential_errors).toHaveLength(1);
+    expect(parsed.data.credential_errors[0].targetName).toBe('prod_pg');
   });
 
   it('includes deployment_id (not null) in json when no workflows match filters', async () => {
@@ -471,8 +472,8 @@ describe('runPush (dry-run) - JSON output', () => {
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
-    expect(parsed.deployment_id).toBe('20260522T120000Z-abcdef12');
-    expect(parsed.credential_errors).toEqual([]);
+    expect(parsed.data.deployment_id).toBe('20260522T120000Z-abcdef12');
+    expect(parsed.data.credential_errors).toEqual([]);
   });
 });
 
@@ -523,13 +524,13 @@ describe('runPush (dry-run) - filters', () => {
       [makeSummary('tgt-1', 'Unchanged WF', 'v1')],
     );
 
-    MockN8nClient.mockImplementation(() =>
-      makeTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([makeSummary('tgt-1', 'Unchanged WF', 'v1')]),
         listCredentials: vi.fn().mockResolvedValue([]), // prod_pg NOT present - would abort if skipped wf is included
         listTags: vi.fn().mockResolvedValue([]),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -655,14 +656,14 @@ describe('runPush (live) - fingerprint writes', () => {
     const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
     setupProject([wf], []);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPush({ source: 'dev', target: 'prod', yes: true });
 
@@ -681,15 +682,15 @@ describe('runPush (live) - fingerprint writes', () => {
     const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false); // inactive
     setupProject([wf], [targetWf]);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([targetWf]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
         updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPush({ source: 'dev', target: 'prod', yes: true });
 
@@ -709,15 +710,15 @@ describe('runPush (live) - fingerprint writes', () => {
     const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
     const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'desc-v1' });
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow,
         updateWorkflow,
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPush({ source: 'dev', target: 'prod', yes: true });
 
@@ -736,15 +737,15 @@ describe('runPush (live) - fingerprint writes', () => {
     const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
     const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'v1' });
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow,
         updateWorkflow,
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPush({ source: 'dev', target: 'prod', yes: true });
 
@@ -756,18 +757,18 @@ describe('runPush (live) - fingerprint writes', () => {
     const wf = makeSnapshotWf('src-1', 'Failing WF', 'v1');
     setupProject([wf], []);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockRejectedValue(new Error('API error')),
-      }) as never,
-    );
+      }) as never;
+    });
 
     // suppress console output - we're only checking the fingerprints file
-    vi.spyOn(console, 'log').mockImplementation(() => { });
-    vi.spyOn(console, 'error').mockImplementation(() => { });
+    vi.spyOn(console, 'log').mockImplementation(function() { });
+    vi.spyOn(console, 'error').mockImplementation(function() { });
 
     await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
 
@@ -782,14 +783,14 @@ describe('runPush (live) - workflow map registration', () => {
     const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
     setupProject([wf], []);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPush({ source: 'dev', target: 'prod', yes: true });
 
@@ -807,15 +808,15 @@ describe('runPush (live) - workflow map registration', () => {
     const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
     setupProject([wf], [targetWf]);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([targetWf]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
         updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPush({ source: 'dev', target: 'prod', yes: true });
 
@@ -842,14 +843,14 @@ describe('runPush (live) - workflow map registration', () => {
       },
     }));
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-inv', versionId: 'v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -870,17 +871,17 @@ describe('runPush (live) - workflow map registration', () => {
     const wf = makeSnapshotWf('src-1', 'Failing WF', 'v1');
     setupProject([wf], []);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockRejectedValue(new Error('API error')),
-      }) as never,
-    );
+      }) as never;
+    });
 
-    vi.spyOn(console, 'log').mockImplementation(() => { });
-    vi.spyOn(console, 'error').mockImplementation(() => { });
+    vi.spyOn(console, 'log').mockImplementation(function() { });
+    vi.spyOn(console, 'error').mockImplementation(function() { });
 
     await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
 
@@ -907,14 +908,14 @@ describe('runPush - header text', () => {
     const wf = makeSnapshotWf('src-1', 'W1', 'v1');
     setupProject([wf], []);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -975,14 +976,14 @@ describe('runPush (live) - prod type-to-confirm', () => {
     const wf = makeSnapshotWf('src-1', 'W1', 'v1');
     setupProject([wf], []);
 
-    MockN8nClient.mockImplementation(() =>
-      makeFullTargetClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         listCredentials: vi.fn().mockResolvedValue([]),
         listTags: vi.fn().mockResolvedValue([]),
         createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'v1' }),
-      }) as never,
-    );
+      }) as never;
+    });
 
     vi.mocked(prompts.input).mockResolvedValue('prod');
     // Per-workflow create prompt still fires for the new workflow - allow it

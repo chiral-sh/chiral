@@ -35,7 +35,7 @@ export async function runProjectList(options: { json?: boolean } = {}): Promise<
   if (options.json) {
     const ppid = process.ppid;
     const session = ppid ? readSession(ppid) : null;
-    const current = session?.project ?? (projects.length === 1 ? projects[0]!.name : null);
+    const current = session?.project ?? (projects.length === 1 ? projects[0].name : null);
     const data = projects.map((p) => ({ name: p.name, path: p.path, active: p.name === current }));
     console.log(JSON.stringify({ status: 'ok', data }));
     return;
@@ -48,7 +48,7 @@ export async function runProjectList(options: { json?: boolean } = {}): Promise<
 
   const ppid = process.ppid;
   const session = ppid ? readSession(ppid) : null;
-  const current = session?.project ?? (projects.length === 1 ? projects[0]!.name : null);
+  const current = session?.project ?? (projects.length === 1 ? projects[0].name : null);
 
   const C_NAME = Math.max(7, ...projects.map((p) => p.name.length)) + 2;
   const C_PATH = Math.min(50, Math.max(10, ...projects.map((p) => p.path.length))) + 2;
@@ -96,7 +96,7 @@ export async function runProjectCurrent(options: { json?: boolean } = {}): Promi
     return;
   }
   if (projects.length === 1) {
-    const p = projects[0]!;
+    const p = projects[0];
     if (options.json) {
       console.log(JSON.stringify({ status: 'ok', data: { name: p.name, path: p.path } }));
       return;

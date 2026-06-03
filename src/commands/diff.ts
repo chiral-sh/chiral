@@ -6,6 +6,7 @@ import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
+import { printJson } from '../lib/output.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
 import {
@@ -15,6 +16,9 @@ import {
   computeStructureHash,
   type Fingerprints,
 } from '../state/fingerprints.js';
+import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
+import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { pageOutput } from '../lib/pager.js';
 
 interface AddedEntry {
   name: string;
@@ -32,9 +36,11 @@ interface ModifiedEntry {
   name: string;
   targetName: string;
   sourceId: string;
+  targetId: string;
   sourceVersionId: string;
   targetVersionId: string;
   changeKind: 'structural' | 'configuration';
+  nodes?: WorkflowDiffResult;
 }
 
 interface UnchangedEntry {
@@ -91,7 +97,7 @@ async function classifyChange(
   if (!ctx.fingerprints.envs[targetEnv]) ctx.fingerprints.envs[targetEnv] = {};
 
   if (!srcEntry && srcFull) {
-    ctx.fingerprints.envs[sourceEnv]![src.id] = {
+    ctx.fingerprints.envs[sourceEnv][src.id] = {
       name: src.name,
       versionId: src.versionId,
       contentHash: srcContentHash,
@@ -100,7 +106,7 @@ async function classifyChange(
     };
   }
   if (!tgtEntry && tgtFull) {
-    ctx.fingerprints.envs[targetEnv]![tgt.id] = {
+    ctx.fingerprints.envs[targetEnv][tgt.id] = {
       name: tgt.name,
       versionId: tgt.versionId,
       contentHash: tgtContentHash,
@@ -150,6 +156,7 @@ async function computeDiff(
           name: src.name,
           targetName: resolvedName,
           sourceId: src.id,
+          targetId: tgt.id,
           sourceVersionId: src.versionId,
           targetVersionId: tgt.versionId,
           changeKind: kind,
@@ -174,6 +181,9 @@ export interface DiffOptions {
   nameOnly?: boolean;
   json?: boolean;
   exitCode?: boolean;
+  explain?: string;
+  verbose?: boolean;
+  noPager?: boolean;
 }
 
 type OutputMode = 'human' | 'json' | 'name-only';
@@ -267,6 +277,20 @@ export async function runDiff(
     const ctx: FingerprintContext = { fingerprints, sourceClient, targetClient, chiralDir };
     const workflowMap = loadWorkflowMap(chiralDir);
     const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target, ctx);
+
+    // Fetch full content and compute node-level diffs for every modified workflow.
+    if (diff.modified.length > 0) {
+      await Promise.all(
+        diff.modified.map(async (entry) => {
+          const [srcFull, tgtFull] = await Promise.all([
+            sourceClient.getWorkflow(entry.sourceId),
+            targetClient.getWorkflow(entry.targetId),
+          ]);
+          entry.nodes = diffWorkflowNodes(tgtFull, srcFull);
+        }),
+      );
+    }
+
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
 
     if (outputMode === 'name-only') {
@@ -274,21 +298,20 @@ export async function runDiff(
       for (const w of diff.removed) console.log(w.name);
       for (const w of diff.modified) console.log(w.targetName);
     } else if (outputMode === 'json') {
-      console.log(
-        JSON.stringify({
-          source: options.source,
-          target: options.target,
-          added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
-          removed: diff.removed.map(({ name }) => ({ name })),
-          modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind }) => ({
-            name: targetName,
-            sourceVersionId,
-            targetVersionId,
-            changeKind,
-          })),
-          unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
-        }),
-      );
+      printJson({
+        source: options.source,
+        target: options.target,
+        added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
+        removed: diff.removed.map(({ name }) => ({ name })),
+        modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind, nodes }) => ({
+          name: targetName,
+          sourceVersionId,
+          targetVersionId,
+          changeKind,
+          nodes: nodes ?? null,
+        })),
+        unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
+      });
     } else {
       console.log();
       if (!hasDiff && diff.unchanged.length === 0) {
@@ -319,11 +342,53 @@ export async function runDiff(
             `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.target}, not in ${options.source})`)}`,
           );
         }
-        for (const w of diff.modified) {
-          const kindLabel = w.changeKind === 'structural' ? 'logic changed' : 'configuration changed';
-          console.log(
-            `  ${chalk.yellow('~')} ${w.targetName}    ${chalk.dim(`(${kindLabel})`)}`,
-          );
+        if (diff.modified.length > 0) {
+          const statRows: StatRow[] = diff.modified.map((w) => ({
+            name: w.targetName,
+            counts: w.nodes?.counts ?? { added: 0, modified: 0, removed: 0 },
+            oldNodeCount: w.nodes?.oldNodeCount ?? 0,
+            newNodeCount: w.nodes?.newNodeCount ?? 0,
+            changeKind: w.changeKind,
+          }));
+          if (!options.verbose) {
+            for (const line of renderStatTable(statRows).split('\n')) {
+              console.log(`  ${line}`);
+            }
+          } else {
+            const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
+            const sections: string[] = [];
+            for (const { name, line } of renderStatRows(statRows)) {
+              const w = nodesByName.get(name);
+              if (!w?.nodes) continue;
+              const groups = renderNodeGroups(w.nodes);
+              sections.push(`  ${line}\n`);
+              if (groups) {
+                sections.push('\n');
+                sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
+              }
+              sections.push('\n\n');
+            }
+            if (sections.length > 0) {
+              await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
+            }
+          }
+        }
+        if (options.explain !== undefined) {
+          const match = diff.modified.find((w) => w.targetName === options.explain);
+          if (match?.nodes) {
+            const groups = renderNodeGroups(match.nodes);
+            console.log();
+            console.log(`  ${chalk.bold(options.explain)}`);
+            console.log();
+            for (const line of groups.split('\n')) {
+              console.log(`  ${line}`);
+            }
+          } else {
+            const modifiedNames = diff.modified.map((w) => w.targetName).join(', ');
+            const suffix = modifiedNames ? `Modified: ${modifiedNames}.` : 'No modified workflows.';
+            console.log();
+            console.log(`  "${options.explain}" is not a modified workflow. ${suffix}`);
+          }
         }
         if (options.showUnchanged) {
           for (const w of diff.unchanged) {
@@ -377,6 +442,9 @@ export const diffCommand = new Command('diff')
   .option('--show-unchanged', 'Include identical workflows in output')
   .addOption(new Option('--name-only', 'Print only differing workflow names, one per line - suitable for piping').conflicts('json'))
   .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
+  .addOption(new Option('--explain <workflow>', 'Drill into one modified workflow\'s named node changes, grouped by risk').conflicts('json').conflicts('nameOnly'))
+  .addOption(new Option('--verbose', 'Expand all modified workflows\' named node changes, grouped by risk, routed through pager').conflicts('json').conflicts('nameOnly'))
+  .option('--no-pager', 'Disable the pager and print output directly to stdout')
   .option('--exit-code', 'Exit 1 if any differences found, 0 if environments are identical (CI use)')
   .addHelpText(
     'after',
@@ -393,5 +461,5 @@ Examples:
 `,
   )
   .action(async (options) => {
-    await runDiff(options);
+    await runDiff({ ...options, noPager: options.pager === false });
   });

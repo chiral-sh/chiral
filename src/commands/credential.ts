@@ -3,8 +3,9 @@ import chalk from 'chalk';
 import { input } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
+import { printJson } from '../lib/output.js';
 import {
   loadCredentials,
   writeCredentials,
@@ -99,13 +100,13 @@ function levenshtein(a: string, b: string): number {
   );
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      dp[i]![j] =
+      dp[i][j] =
         a[i - 1] === b[j - 1]
-          ? dp[i - 1]![j - 1]!
-          : 1 + Math.min(dp[i - 1]![j]!, dp[i]![j - 1]!, dp[i - 1]![j - 1]!);
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
     }
   }
-  return dp[m]![n]!;
+  return dp[m][n];
 }
 
 function normalizedSimilarity(a: string, b: string): number {
@@ -269,9 +270,7 @@ export async function runCredentialMap(
 
     if (options.dryRun) {
       if (options.json) {
-        console.log(
-          JSON.stringify({ logical_name: logicalName, env_names: envMap, dry_run: true }, null, 2),
-        );
+        printJson({ logical_name: logicalName, env_names: envMap, dry_run: true });
       } else {
         console.log('\n  Dry run - would write:');
         console.log(`    ${chalk.bold(logicalName)}`);
@@ -285,7 +284,7 @@ export async function runCredentialMap(
 
     // Upsert into credentials.json
     if (!credentials.credentials[logicalName]) credentials.credentials[logicalName] = {};
-    Object.assign(credentials.credentials[logicalName]!, envMap);
+    Object.assign(credentials.credentials[logicalName], envMap);
     writeCredentials(chiralDir, credentials);
 
     writeAuditEntry(chiralDir, {
@@ -306,7 +305,7 @@ export async function runCredentialMap(
     });
 
     if (options.json) {
-      console.log(JSON.stringify({ logical_name: logicalName, env_names: envMap }));
+      printJson({ logical_name: logicalName, env_names: envMap });
     } else {
       console.log(`\n  ${chalk.green('✓')} Saved "${chalk.bold(logicalName)}"`);
       const envPad = Math.max(...Object.keys(envMap).map((e) => e.length)) + 2;
@@ -326,7 +325,6 @@ export async function runCredentialMap(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }
@@ -511,7 +509,7 @@ export async function runCredentialMap(
     if (!options.dryRun) {
       // Upsert immediately (atomicity)
       if (!credentials.credentials[targetLogical]) credentials.credentials[targetLogical] = {};
-      Object.assign(credentials.credentials[targetLogical]!, envNames);
+      Object.assign(credentials.credentials[targetLogical], envNames);
       writeCredentials(chiralDir, credentials);
 
       writeAuditEntry(chiralDir, {
@@ -564,7 +562,7 @@ export async function runCredentialMap(
   }
 
   if (options.json && jsonResults.length > 0) {
-    console.log(JSON.stringify(jsonResults.length === 1 ? jsonResults[0] : jsonResults, null, 2));
+    printJson(jsonResults.length === 1 ? jsonResults[0] : jsonResults);
   }
 
   // Coverage summary (only when interactive work was done)
@@ -600,7 +598,6 @@ export async function runCredentialMap(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }
@@ -661,13 +658,7 @@ export async function runCredentialList(
     );
 
     if (options.json) {
-      console.log(
-        JSON.stringify(
-          uncovered.map((d) => ({ env: d.env, name: d.name, workflows: d.workflowNames })),
-          null,
-          2,
-        ),
-      );
+      printJson(uncovered.map((d) => ({ env: d.env, name: d.name, workflows: d.workflowNames })));
       return;
     }
 
@@ -706,18 +697,9 @@ export async function runCredentialList(
 
   if (options.json) {
     if (options.env) {
-      console.log(
-        JSON.stringify(
-          {
-            version: credentials.version,
-            credentials: Object.fromEntries(entries),
-          },
-          null,
-          2,
-        ),
-      );
+      printJson({ version: credentials.version, credentials: Object.fromEntries(entries) });
     } else {
-      console.log(JSON.stringify(credentials, null, 2));
+      printJson(credentials);
     }
     return;
   }
@@ -741,7 +723,7 @@ export async function runCredentialList(
     '  │ ' +
     [
       pad(chalk.dim('LOGICAL NAME'), C_LOGICAL),
-      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i]!)),
+      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i])),
     ].join(' │ ') +
     ' │';
 
@@ -757,7 +739,7 @@ export async function runCredentialList(
       pad(logicalStr, C_LOGICAL),
       ...envList.map((env, i) => {
         const name = envMap[env];
-        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]!);
+        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]);
       }),
     ];
     console.log('  │ ' + cells.join(' │ ') + ' │');
@@ -845,7 +827,6 @@ export async function runCredentialUnmap(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }

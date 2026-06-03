@@ -3,6 +3,7 @@ import { Command, CommanderError } from 'commander';
 import chalk from 'chalk';
 import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
+import { printJsonError, isJsonFlagActive } from './lib/output.js';
 import { cloneCommand } from './commands/clone.js';
 import { initCommand } from './commands/init.js';
 import { adoptCommand } from './commands/adopt.js';
@@ -16,8 +17,17 @@ import { useCommand } from './commands/use.js';
 import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
 import { remoteCommand } from './commands/remote.js';
+import { statusCommand } from './commands/status.js';
+import { completionCommand, internalCompleteEnvsCommand } from './commands/completion.js';
 
 const program = new Command();
+
+// Align continuation lines under the first line's text. The "  ✗  " prefix is
+// 5 columns wide, so any newline-separated lines (e.g. Commander's "(Did you
+// mean ...?)" suggestion) must be indented 5 spaces to line up.
+function indentContinuation(message: string): string {
+  return message.replace(/\n/g, '\n     ');
+}
 
 program
   .name('chiral')
@@ -30,6 +40,7 @@ program.addCommand(useCommand);
 program.addCommand(projectCommand);
 program.addCommand(environmentCommand);
 program.addCommand(remoteCommand);
+program.addCommand(statusCommand);
 program.addCommand(adoptCommand);
 program.addCommand(pullCommand);
 program.addCommand(diffCommand);
@@ -37,6 +48,8 @@ program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
 program.addCommand(credentialCommand);
 program.addCommand(teamCommand);
+program.addCommand(completionCommand);
+program.addCommand(internalCompleteEnvsCommand);
 
 // Global protection against Commander eagerly eating flags as option values.
 // Catches cases like `--remote --solo` where Commander assigns '--solo' as the
@@ -82,16 +95,31 @@ try {
     if (err.exitCode === 0 || err.code === 'commander.help') process.exit(0); // --help, --version, no-subcommand: output already written
     // Commander bakes "error: " into the message - strip it for our formatter
     const message = err.message.replace(/^error:\s*/, '');
-    console.error(`\n  ${chalk.red('✗')}  ${message}\n`);
+    if (isJsonFlagActive()) {
+      printJsonError('usage_error', message, false);
+    } else {
+      console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
+    }
     process.exit(1);
   }
   if (err instanceof UserError) {
-    console.error(`\n  ${chalk.red('✗')}  ${err.message}`);
-    if (err.hint) console.error(chalk.dim(err.hint));
-    console.error();
+    const alreadyDisplayed = (err as unknown as Record<string, unknown>).__alreadyDisplayed === true;
+    if (!alreadyDisplayed) {
+      if (isJsonFlagActive()) {
+        printJsonError('user_error', err.message, false);
+      } else {
+        console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
+        if (err.hint) console.error(chalk.dim(err.hint));
+        console.error();
+      }
+    }
     process.exit(1);
   }
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`\n  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
+  if (isJsonFlagActive()) {
+    printJsonError('unexpected_error', message, false);
+  } else {
+    console.error(`\n  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
+  }
   process.exit(2);
 }

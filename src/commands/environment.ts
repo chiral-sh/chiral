@@ -15,6 +15,9 @@ import {
 import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
+import { loadCredentials, writeCredentials } from '../state/credentials.js';
+import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
+import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 
 // ── Output mode ───────────────────────────────────────────────────────────────
 
@@ -299,24 +302,25 @@ export async function runEnvironmentConfigure(
   let url = options.url ?? urlFromEnv ?? '';
   let apiKey = options.apiKey ?? keyFromEnv ?? '';
 
-  if (outputMode === 'json') {
-    // In JSON mode, fall back to existing values when flags/env vars are absent
+  // A targeted update is any invocation that explicitly supplies a field (via
+  // flag or env var). In that case we only touch what was given and keep the
+  // rest as-is — passing --api-key should never prompt for the URL, and vice versa.
+  const targetedUpdate = Boolean(url) || Boolean(apiKey);
+
+  if (outputMode === 'json' || targetedUpdate) {
+    // Fall back to existing values for whatever wasn't explicitly provided.
     if (!url) url = existing.url;
     if (!apiKey) apiKey = existing.apiKey;
   } else {
     console.log(`\n  ${chalk.bold('Updating')} ${chalk.cyan(envName)}\n`);
-    if (!url) {
-      url = await input({
-        message: '  n8n URL:',
-        default: existing.url,
-        validate: validateUrl,
-      });
-    }
-    if (!apiKey) {
-      console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
-      const keyInput = await password({ message: '  API key:', mask: '•' });
-      apiKey = keyInput || existing.apiKey;
-    }
+    url = await input({
+      message: '  n8n URL:',
+      default: existing.url,
+      validate: validateUrl,
+    });
+    console.log(chalk.dim(`  Current key: ${maskKey(existing.apiKey)} - Enter to keep`));
+    const keyInput = await password({ message: '  API key:', mask: '•' });
+    apiKey = keyInput || existing.apiKey;
   }
 
   if (!url) throw new UserError('URL is required.');
@@ -456,7 +460,7 @@ export async function runEnvironmentRename(
   renameInFile(join(chiralDir, 'fingerprints.json'));
 
   // Update config
-  const envData = state.environments[oldName]!;
+  const envData = state.environments[oldName];
   delete state.environments[oldName];
   state.environments[newName] = envData;
   saveState(state);
@@ -478,6 +482,71 @@ export async function runEnvironmentRename(
   console.log(`\n  ${chalk.green('✓')}  Renamed environment ${chalk.cyan(oldName)} → ${chalk.cyan(newName)}\n`);
 }
 
+// ── environment delete helpers ─────────────────────────────────────────────────
+
+interface DeleteImpact {
+  credentialLogicals: string[];
+  workflowLogicals: string[];
+  fingerprintCount: number;
+}
+
+function collectDeleteImpact(chiralDir: string, envName: string): DeleteImpact {
+  const credentialLogicals: string[] = [];
+  try {
+    const creds = loadCredentials(chiralDir);
+    for (const [logicalName, envMap] of Object.entries(creds.credentials)) {
+      if (envName in envMap) credentialLogicals.push(logicalName);
+    }
+  } catch { /* file may not exist yet */ }
+
+  const workflowLogicals: string[] = [];
+  try {
+    const wfMap = loadWorkflowMap(chiralDir);
+    for (const [logicalName, envMap] of Object.entries(wfMap.workflows)) {
+      if (envName in envMap) workflowLogicals.push(logicalName);
+    }
+  } catch { /* file may not exist yet */ }
+
+  let fingerprintCount = 0;
+  try {
+    const fp = loadFingerprints(chiralDir);
+    fingerprintCount = Object.keys(fp.envs[envName] ?? {}).length;
+  } catch { /* file may not exist yet */ }
+
+  return { credentialLogicals, workflowLogicals, fingerprintCount };
+}
+
+function purgeEnvFromStateFiles(chiralDir: string, envName: string): void {
+  // credentials.json — remove env key from each logical credential's inner map
+  try {
+    const creds = loadCredentials(chiralDir);
+    let changed = false;
+    for (const envMap of Object.values(creds.credentials)) {
+      if (envName in envMap) { delete envMap[envName]; changed = true; }
+    }
+    if (changed) writeCredentials(chiralDir, creds);
+  } catch { /* best-effort */ }
+
+  // workflows.json — remove env key from each logical workflow's inner map
+  try {
+    const wfMap = loadWorkflowMap(chiralDir);
+    let changed = false;
+    for (const envMap of Object.values(wfMap.workflows)) {
+      if (envName in envMap) { delete envMap[envName]; changed = true; }
+    }
+    if (changed) writeWorkflowMap(chiralDir, wfMap);
+  } catch { /* best-effort */ }
+
+  // fingerprints.json — remove the entire env block
+  try {
+    const fp = loadFingerprints(chiralDir);
+    if (envName in fp.envs) {
+      delete fp.envs[envName];
+      writeFingerprints(chiralDir, fp);
+    }
+  } catch { /* best-effort */ }
+}
+
 // ── environment delete ─────────────────────────────────────────────────────────
 
 export async function runEnvironmentDelete(
@@ -492,38 +561,54 @@ export async function runEnvironmentDelete(
   }
 
   if (options.dryRun) {
+    const impact = collectDeleteImpact(state.chiralDir, envName);
     if (outputMode === 'json') {
-      console.log(JSON.stringify({ status: 'ok', data: { env: envName, would_delete: true } }));
+      console.log(JSON.stringify({
+        status: 'ok',
+        data: {
+          env: envName,
+          would_delete: true,
+          credential_mappings: impact.credentialLogicals,
+          workflow_entries: impact.workflowLogicals,
+          fingerprints: impact.fingerprintCount,
+        },
+      }));
     } else {
       console.log(`\n  ${chalk.bold('Dry run')} — would delete environment ${chalk.cyan(envName)}\n`);
+      console.log(`  ${chalk.dim('config.json')}         removes ${chalk.cyan(envName)} entry`);
+      if (impact.credentialLogicals.length > 0) {
+        const names = impact.credentialLogicals.join(', ');
+        console.log(`  ${chalk.dim('credentials.json')}    ${impact.credentialLogicals.length} mapping${impact.credentialLogicals.length === 1 ? '' : 's'}  ${chalk.dim('→')}  ${chalk.dim(names)}`);
+      } else {
+        console.log(`  ${chalk.dim('credentials.json')}    no mappings for this env`);
+      }
+      if (impact.workflowLogicals.length > 0) {
+        const names = impact.workflowLogicals.join(', ');
+        console.log(`  ${chalk.dim('workflows.json')}      ${impact.workflowLogicals.length} entr${impact.workflowLogicals.length === 1 ? 'y' : 'ies'}  ${chalk.dim('→')}  ${chalk.dim(names)}`);
+      } else {
+        console.log(`  ${chalk.dim('workflows.json')}      no entries for this env`);
+      }
+      if (impact.fingerprintCount > 0) {
+        console.log(`  ${chalk.dim('fingerprints.json')}   ${impact.fingerprintCount} fingerprint${impact.fingerprintCount === 1 ? '' : 's'}`);
+      } else {
+        console.log(`  ${chalk.dim('fingerprints.json')}   no fingerprints for this env`);
+      }
+      console.log();
     }
     return;
   }
-
-  const isProd = envName.toLowerCase().includes('prod');
 
   if (!options.yes) {
     if (outputMode === 'json') {
       throw new UserError(`Pass --yes to confirm deletion in non-interactive mode.`);
     }
-    if (isProd) {
-      const confirmed = await input({
-        message: `Type "${envName}" to confirm deletion:`,
-        validate: (v) => v === envName || `Type exactly "${envName}" to confirm`,
-      });
-      if (confirmed !== envName) {
-        console.log('\n  Cancelled.\n');
-        return;
-      }
-    } else {
-      const ok = await confirm({
-        message: `Delete environment "${envName}"?`,
-        default: false,
-      });
-      if (!ok) {
-        console.log('\n  Cancelled.\n');
-        return;
-      }
+    const confirmed = await input({
+      message: `Type "${envName}" to confirm deletion:`,
+      validate: (v) => v === envName || `Type exactly "${envName}" to confirm`,
+    });
+    if (confirmed !== envName) {
+      console.log('\n  Cancelled.\n');
+      return;
     }
   }
 
@@ -533,6 +618,8 @@ export async function runEnvironmentDelete(
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     delete envs[envName];
   });
+
+  purgeEnvFromStateFiles(state.chiralDir, envName);
 
   if (outputMode === 'json') {
     console.log(JSON.stringify({ status: 'ok', data: { env: envName, deleted: true } }));
@@ -655,7 +742,7 @@ Exit codes:
 
 environmentCommand
   .command('delete <name>')
-  .description('Delete an environment from config (type-to-confirm for prod)')
+  .description('Delete an environment from config (type-to-confirm)')
   .option('--yes', 'Skip confirmation prompt')
   .option('--dry-run', 'Show what would be deleted without making changes')
   .option('--json', 'Output result as JSON (requires --yes for actual deletion)')
