@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command, Option } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
@@ -298,7 +298,6 @@ export async function runPull(
           console.log(formatSyncSuccess(syncResult));
         } else {
           for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-          if (syncResult.message) logSyncError(syncResult.message);
         }
         console.log();
       }
@@ -558,7 +557,6 @@ export async function runPull(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }

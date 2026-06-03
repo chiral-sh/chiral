@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, detectsEnvMarker } from '../lib/cli.js';
@@ -159,7 +159,6 @@ export async function runAdopt(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }

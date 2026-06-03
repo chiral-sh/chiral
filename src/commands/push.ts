@@ -4,7 +4,7 @@ import { confirm, input } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
@@ -425,9 +425,10 @@ export async function runPush(
       return `  chiral credential map ${logical} ${options.target}=${e.targetName}`;
     });
     console.log(
-      `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Create ${credentialErrors.length === 1 ? 'it' : 'them'} first or run:`,
+      `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Map ${credentialErrors.length === 1 ? 'it' : 'them'} to an existing ${chalk.cyan(options.target)} credential:`,
     );
     for (const h of hint) console.log(chalk.dim(h));
+    console.log(chalk.dim(`  To see available credentials: chiral credential list --env ${options.target}`));
     console.log();
     throw new ControlledExit(1);
   }
@@ -781,7 +782,6 @@ export async function runPush(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { readTeam, ensureTeam, writeTeam } from '../state/team.js';
 import { writeAuditEntry } from '../state/audit.js';
@@ -214,7 +214,6 @@ export async function runTeamAdd(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(line);
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }
@@ -310,7 +309,6 @@ export async function runTeamRemove(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(line);
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }
@@ -421,7 +419,6 @@ export async function runTeamSetRole(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(line);
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }

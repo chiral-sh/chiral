@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { input } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
-import { syncToRemote, formatSyncSuccess, formatSyncFailure, logSyncError } from '../lib/git-sync.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import {
@@ -325,7 +325,6 @@ export async function runCredentialMap(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }
@@ -599,7 +598,6 @@ export async function runCredentialMap(
         console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-        if (syncResult.message) logSyncError(syncResult.message);
       }
       console.log();
     }
@@ -829,7 +827,6 @@ export async function runCredentialUnmap(
       console.log(formatSyncSuccess(syncResult));
     } else {
       for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
-      if (syncResult.message) logSyncError(syncResult.message);
     }
     console.log();
   }
