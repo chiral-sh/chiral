@@ -321,7 +321,8 @@ describe('runPull - delta against previous snapshot', () => {
     await runPull({ env: 'dev' });
 
     expect(output.join('\n')).toContain('Workflow One');
-    expect(output.join('\n')).toContain('(updated)');
+    expect(output.join('\n')).not.toContain('(updated)');
+    expect(output.join('\n')).not.toContain('logic changed');
   });
 
   it('detects a renamed workflow even when versionId is unchanged', async () => {
@@ -676,7 +677,7 @@ describe('runPull - --verbose output', () => {
     await runPull({ env: 'dev', verbose: true });
 
     const joined = output.join('\n');
-    expect(joined).toContain('(updated)');
+    expect(joined).not.toContain('(updated)');
     expect(joined).toContain('Workflows pulled:');
     expect(joined).toContain('Workflow One');
     expect(joined).toContain('Workflow Two');
@@ -692,6 +693,184 @@ describe('runPull - --verbose output', () => {
     await runPull({ env: 'dev' });
 
     expect(output.join('\n')).not.toContain('Workflows pulled:');
+  });
+});
+
+describe('runPull - stat table for updated workflows', () => {
+  it('renders updated workflows as stat table instead of ~ label', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+
+    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflow One');
+    expect(joined).not.toContain('logic changed');
+    expect(joined).not.toContain('configuration changed');
+    expect(joined).not.toContain('(updated)');
+    // stat table includes churn bar characters
+    expect(joined).toContain('░');
+  });
+
+  it('added and deleted lines remain unchanged alongside stat table', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+
+    const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted, WF3 new
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF3),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflow Three');
+    expect(joined).toContain('(new)');
+    expect(joined).toContain('Workflow Two');
+    expect(joined).toContain('(removed from n8n)');
+    expect(joined).toContain('Workflow One');
+  });
+
+  it('change-count summary is still printed after stat table', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+
+    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    expect(output.join('\n')).toContain('1 change');
+  });
+
+  it('first-pull path is unaffected by stat table change', async () => {
+    setupProject();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('baseline saved');
+    expect(joined).not.toContain('░');
+  });
+
+  it('no-change path is unaffected by stat table change', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1 : WF2),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('up to date');
+    expect(joined).not.toContain('░');
+  });
+
+  it('renders structural stat rows above configuration rows', async () => {
+    setupProject();
+
+    const prevNodes = [
+      { id: 'n1', name: 'HTTP', type: 'n8n-nodes-base.httpRequest' },
+      { id: 'n2', name: 'Set', type: 'n8n-nodes-base.set' },
+    ];
+    const WF1_STRUCT = { ...WF1, versionId: 'v2', nodes: [...prevNodes, { id: 'n3', name: 'Code', type: 'n8n-nodes-base.code' }] };
+    const WF2_CONFIG = { ...WF2, versionId: 'v2', nodes: prevNodes, settings: { saveManualExecutions: true } };
+
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF1, nodes: prevNodes });
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF2, nodes: prevNodes });
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT,
+      env: 'dev',
+      command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z',
+      workflow_count: 2,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    // Write fingerprints so changeKind can distinguish structural vs config
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/fingerprints.json`, JSON.stringify({
+      version: 1,
+      envs: {
+        dev: {
+          'wf-1': {
+            name: 'Workflow One', versionId: 'v1',
+            contentHash: 'sha256:' + 'a'.repeat(64),
+            structureHash: 'sha256:' + 'b'.repeat(64), // stale — forces structural
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+          'wf-2': {
+            name: 'Workflow Two', versionId: 'v1',
+            contentHash: 'sha256:' + 'c'.repeat(64),
+            structureHash: 'sha256:' + 'd'.repeat(64), // stale — forces structural
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      },
+    }));
+
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_STRUCT, WF2_CONFIG]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_STRUCT : WF2_CONFIG),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflow One');
+    expect(joined).toContain('Workflow Two');
+    expect(joined).toContain('░');
   });
 });
 

@@ -28,6 +28,7 @@ import {
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
+import { renderStatTable, type StatRow } from '../lib/node-diff-render.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -485,19 +486,25 @@ export async function runPull(
           for (const wf of delta.added) {
             console.log(`  ${chalk.green('+')} ${wf.name}  ${chalk.dim('(new)')}`);
           }
-          for (const wf of delta.updated) {
-            const prevEntry = prevFp.envs[options.env]?.[wf.id];
-            let updateLabel: string;
-            if (!prevEntry) {
-              updateLabel = 'updated';
-            } else if (prevEntry.name !== wf.name) {
-              updateLabel = `renamed from "${prevEntry.name}"`;
-            } else if (prevEntry.structureHash !== computeStructureHash(wf)) {
-              updateLabel = 'logic changed';
-            } else {
-              updateLabel = 'configuration changed';
+          if (delta.updated.length > 0) {
+            const statRows: StatRow[] = delta.updated.map((wf) => {
+              const prevEntry = prevFp.envs[options.env]?.[wf.id];
+              const diffResult = delta.updatedNodes.get(wf.id);
+              const changeKind: 'structural' | 'configuration' =
+                !prevEntry || prevEntry.name !== wf.name || prevEntry.structureHash !== computeStructureHash(wf)
+                  ? 'structural'
+                  : 'configuration';
+              return {
+                name: wf.name,
+                counts: diffResult?.counts ?? { added: 0, modified: 0, removed: 0 },
+                oldNodeCount: diffResult?.oldNodeCount ?? 0,
+                newNodeCount: diffResult?.newNodeCount ?? 0,
+                changeKind,
+              };
+            });
+            for (const line of renderStatTable(statRows).split('\n')) {
+              console.log(`  ${line}`);
             }
-            console.log(`  ${chalk.yellow('~')} ${wf.name}  ${chalk.dim(`(${updateLabel})`)}`);
           }
           for (const wf of delta.deleted) {
             console.log(`  ${chalk.yellow('⚠')} ${wf.name}  ${chalk.dim('(removed from n8n)')}`);
