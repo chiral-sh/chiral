@@ -16,6 +16,7 @@ import {
   computeStructureHash,
   type Fingerprints,
 } from '../state/fingerprints.js';
+import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 
 interface AddedEntry {
   name: string;
@@ -33,9 +34,11 @@ interface ModifiedEntry {
   name: string;
   targetName: string;
   sourceId: string;
+  targetId: string;
   sourceVersionId: string;
   targetVersionId: string;
   changeKind: 'structural' | 'configuration';
+  nodes?: WorkflowDiffResult;
 }
 
 interface UnchangedEntry {
@@ -151,6 +154,7 @@ async function computeDiff(
           name: src.name,
           targetName: resolvedName,
           sourceId: src.id,
+          targetId: tgt.id,
           sourceVersionId: src.versionId,
           targetVersionId: tgt.versionId,
           changeKind: kind,
@@ -268,6 +272,20 @@ export async function runDiff(
     const ctx: FingerprintContext = { fingerprints, sourceClient, targetClient, chiralDir };
     const workflowMap = loadWorkflowMap(chiralDir);
     const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target, ctx);
+
+    // Fetch full content and compute node-level diffs for every modified workflow.
+    if (diff.modified.length > 0) {
+      await Promise.all(
+        diff.modified.map(async (entry) => {
+          const [srcFull, tgtFull] = await Promise.all([
+            sourceClient.getWorkflow(entry.sourceId),
+            targetClient.getWorkflow(entry.targetId),
+          ]);
+          entry.nodes = diffWorkflowNodes(srcFull, tgtFull);
+        }),
+      );
+    }
+
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
 
     if (outputMode === 'name-only') {
@@ -280,11 +298,12 @@ export async function runDiff(
         target: options.target,
         added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
         removed: diff.removed.map(({ name }) => ({ name })),
-        modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind }) => ({
+        modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind, nodes }) => ({
           name: targetName,
           sourceVersionId,
           targetVersionId,
           changeKind,
+          nodes: nodes ?? null,
         })),
         unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
       });

@@ -68,7 +68,7 @@ function makeClientMock(overrides?: Partial<MockClient>): MockClient {
   return {
     warnIfExpiringSoon: vi.fn(),
     listWorkflows: overrides?.listWorkflows ?? vi.fn().mockResolvedValue([]),
-    getWorkflow: overrides?.getWorkflow ?? vi.fn(),
+    getWorkflow: overrides?.getWorkflow ?? vi.fn().mockResolvedValue({ nodes: [], connections: {} }),
   };
 }
 
@@ -916,6 +916,138 @@ describe('runDiff - Next: hint', () => {
 
     expect(output.join('\n')).toContain('--tag production');
     expect(output.join('\n')).toContain('--dry-run');
+  });
+});
+
+// ── node diff in --json output ────────────────────────────────────────────────
+
+describe('runDiff - node diff in --json output', () => {
+  it('modified entries include nodes object with correct added/removed/modified/connections', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    // src has node-a only; tgt adds node-b and node-c.
+    // node-a: matched by id, identical → unchanged
+    // node-b, node-c: only in tgt, no match in src → 2 added
+    // connections: src has none, tgt has one edge a→b
+    const srcFull = {
+      nodes: [
+        { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+      ],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+        { id: 'node-b', name: 'Slack', type: 'n8n-nodes-base.slack', parameters: {} },
+        { id: 'node-c', name: 'Set Data', type: 'n8n-nodes-base.set', parameters: {} },
+      ],
+      connections: { Trigger: { main: [[{ node: 'Slack', type: 'main', index: 0 }]] } },
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    const modified = result.data.modified[0];
+    expect(modified.nodes).toBeDefined();
+    expect(modified.nodes.added).toHaveLength(2);   // Slack + Set Data
+    expect(modified.nodes.removed).toHaveLength(0);
+    expect(modified.nodes.modified).toHaveLength(0);
+    expect(modified.nodes.connections).toEqual({ added: 1, removed: 0 });
+    expect(modified.nodes.counts).toEqual({ added: 2, modified: 0, removed: 0 });
+  });
+
+  it('modified entries include nodes.modified for parameter-only change', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    const srcFull = {
+      nodes: [{ id: 'node-a', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: { url: 'https://old.example.com' } }],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [{ id: 'node-a', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: { url: 'https://new.example.com' } }],
+      connections: {},
+    };
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    const modified = result.data.modified[0];
+    expect(modified.nodes.modified).toHaveLength(1);
+    expect(modified.nodes.modified[0].name).toBe('HTTP Request');
+    expect(modified.nodes.modified[0].changed).toContain('parameters');
+    expect(modified.nodes.added).toHaveLength(0);
+    expect(modified.nodes.removed).toHaveLength(0);
+  });
+
+  it('added and removed workflow JSON shapes are untouched by node diff', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF2]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF3]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.added[0]).toEqual({
+      name: 'Workflow Two',
+      sourceName: 'Workflow Two',
+      hint: 'wrong name?',
+    });
+    expect(result.data.removed[0]).toEqual({ name: 'Workflow Three' });
+    expect(result.data.added[0]).not.toHaveProperty('nodes');
+    expect(result.data.removed[0]).not.toHaveProperty('nodes');
+  });
+
+  it('fetch error for a modified workflow surfaces as client error', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    const fetchError = new Error('API key for dev is invalid or expired');
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]),
+        getWorkflow: vi.fn().mockRejectedValue(fetchError),
+      }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+
+    await expect(
+      runDiff({ source: 'dev', target: 'prod', json: true }),
+    ).rejects.toThrow('API key for dev is invalid or expired');
   });
 });
 
