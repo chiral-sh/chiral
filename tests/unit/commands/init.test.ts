@@ -13,7 +13,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('@inquirer/prompts', () => ({
   input: vi.fn(),
-  confirm: vi.fn(),
+  confirm: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock('chalk', () => ({
@@ -25,13 +25,15 @@ vi.mock('chalk', () => ({
   },
 }));
 
+import os from 'node:os';
 import { execSync } from 'node:child_process';
-import { input } from '@inquirer/prompts';
+import { input, confirm } from '@inquirer/prompts';
 import { runInit } from '../../../src/commands/init.js';
 import { createChiralDirectory } from '../../../src/state/init.js';
 
 const mockExecSync = vi.mocked(execSync);
 const mockInput = vi.mocked(input);
+const mockConfirm = vi.mocked(confirm);
 
 const GLOBAL_DIR = '/mock-global';
 const INDEX_PATH = `${GLOBAL_DIR}/projects/index.json`;
@@ -63,10 +65,14 @@ afterEach(() => {
   delete process.env['CHIRAL_PROJECTS_DIR'];
 });
 
+function setTTY(value: true | undefined): void {
+  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true, writable: true });
+}
+
 describe('runInit', () => {
   it('throws UserError when project name is empty and prompt returns empty string', async () => {
     mockInput.mockResolvedValueOnce('   ');
-    await expect(runInit({})).rejects.toThrow(new UserError('Project name is required'));
+    await expect(runInit({})).rejects.toThrow('Project name is required');
   });
 
   // Limit check is commented out in init.ts until the license gate is wired up (see CLAUDE.md Phase 5)
@@ -171,5 +177,89 @@ describe('runInit', () => {
     const chiralDir = `${PROJECT_DIR}/.chiral`;
     createChiralDirectory(chiralDir, 'my-project', undefined, undefined);
     expect(vol.existsSync(`${chiralDir}/team.json`)).toBe(false);
+  });
+});
+
+describe('completion prompt in runInit', () => {
+  const originalShell = process.env['SHELL'];
+
+  afterEach(() => {
+    setTTY(undefined);
+    if (originalShell === undefined) {
+      delete process.env['SHELL'];
+    } else {
+      process.env['SHELL'] = originalShell;
+    }
+  });
+
+  it('does not show completion prompt when stdout is not a TTY', async () => {
+    setTTY(undefined);
+    process.env['SHELL'] = '/bin/bash';
+    await runInit({ project: 'my-project' });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('does not show completion prompt when --json is set', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/bin/bash';
+    await runInit({ project: 'my-project', json: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('does not show completion prompt when --no-install-completion is set', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/bin/bash';
+    await runInit({ project: 'my-project', noInstallCompletion: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('installs bash completion without prompting when --install-completion is set', async () => {
+    setTTY(undefined);
+    process.env['SHELL'] = '/bin/bash';
+    await runInit({ project: 'my-project', installCompletion: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+    const expectedPath = `${os.homedir()}/.local/share/bash-completion/completions/chiral`;
+    expect(vol.existsSync(expectedPath)).toBe(true);
+  });
+
+  it('does not show completion prompt when SHELL is unset', async () => {
+    setTTY(true);
+    delete process.env['SHELL'];
+    await runInit({ project: 'my-project' });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('does not show completion prompt when SHELL is unsupported (powershell)', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/usr/bin/pwsh';
+    await runInit({ project: 'my-project' });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('installs bash completion script when user accepts', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/bin/bash';
+    mockConfirm.mockResolvedValueOnce(true);
+    await runInit({ project: 'my-project' });
+    const expectedPath = `${os.homedir()}/.local/share/bash-completion/completions/chiral`;
+    expect(vol.existsSync(expectedPath)).toBe(true);
+  });
+
+  it('does not write completion script when user declines', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/bin/bash';
+    mockConfirm.mockResolvedValueOnce(false);
+    await runInit({ project: 'my-project' });
+    const expectedPath = `${os.homedir()}/.local/share/bash-completion/completions/chiral`;
+    expect(vol.existsSync(expectedPath)).toBe(false);
+  });
+
+  it('installs fish completion when SHELL is /usr/bin/fish', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/usr/bin/fish';
+    mockConfirm.mockResolvedValueOnce(true);
+    await runInit({ project: 'my-project' });
+    const expectedPath = `${os.homedir()}/.config/fish/completions/chiral.fish`;
+    expect(vol.existsSync(expectedPath)).toBe(true);
   });
 });

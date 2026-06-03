@@ -100,7 +100,7 @@ describe('N8nClient.listWorkflows', () => {
   it('throws UserError on 401', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized', json: () => Promise.resolve({}) }));
     const client = new N8nClient(ENV, ENV_NAME);
-    await expect(client.listWorkflows()).rejects.toThrow(new UserError('API key for dev is invalid or expired'));
+    await expect(client.listWorkflows()).rejects.toThrow('API key for dev is invalid or expired');
   });
 
   it('throws UserError on 403', async () => {

@@ -415,7 +415,7 @@ describe('runClone', () => {
       const failingClient = mockClientMock({
         testConnection: vi.fn().mockRejectedValue(new Error('connection refused')),
       });
-      vi.mocked(N8nClient).mockImplementation(() => failingClient);
+      vi.mocked(N8nClient).mockImplementation(function() { return failingClient; });
       vi.mocked(confirm).mockResolvedValue(false);
 
       // Use single-env example so only one confirm fires

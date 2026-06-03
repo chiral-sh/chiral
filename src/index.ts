@@ -18,6 +18,7 @@ import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
 import { remoteCommand } from './commands/remote.js';
 import { statusCommand } from './commands/status.js';
+import { completionCommand, internalCompleteEnvsCommand } from './commands/completion.js';
 
 const program = new Command();
 
@@ -47,6 +48,8 @@ program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
 program.addCommand(credentialCommand);
 program.addCommand(teamCommand);
+program.addCommand(completionCommand);
+program.addCommand(internalCompleteEnvsCommand);
 
 // Global protection against Commander eagerly eating flags as option values.
 // Catches cases like `--remote --solo` where Commander assigns '--solo' as the
