@@ -147,7 +147,7 @@ describe('runPull - setup errors', () => {
 
   it('throws UserError when --env is not in config', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
     await expect(runPull({ env: 'staging' })).rejects.toThrow(UserError);
     await expect(runPull({ env: 'staging' })).rejects.toThrow('Unknown environment "staging"');
   });
@@ -156,7 +156,7 @@ describe('runPull - setup errors', () => {
 describe('runPull - first pull (no previous snapshot)', () => {
   it('writes snapshot files for all fetched workflows', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runPull({ env: 'dev' });
 
@@ -168,7 +168,7 @@ describe('runPull - first pull (no previous snapshot)', () => {
 
   it('writes meta.json for the new deployment', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runPull({ env: 'dev' });
 
@@ -182,7 +182,7 @@ describe('runPull - first pull (no previous snapshot)', () => {
 
   it('writes meta.json with content_hash after a successful pull', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runPull({ env: 'dev' });
 
@@ -194,7 +194,7 @@ describe('runPull - first pull (no previous snapshot)', () => {
 
   it('writes a success audit entry with pulled workflow IDs', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runPull({ env: 'dev' });
 
@@ -211,12 +211,12 @@ describe('runPull - first pull (no previous snapshot)', () => {
 describe('runPull - zero workflows', () => {
   it('shows a warning instead of success when no workflows found on first pull', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         getWorkflow: vi.fn(),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -233,12 +233,12 @@ describe('runPull - zero workflows', () => {
     setupProject();
     setupPreviousSnapshot(); // WF1 v1 + WF2 v1 previously - but n8n now returns nothing
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         getWorkflow: vi.fn(),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -265,12 +265,12 @@ describe('runPull - zero workflows', () => {
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([]),
         getWorkflow: vi.fn(),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -290,14 +290,14 @@ describe('runPull - delta against previous snapshot', () => {
     setupPreviousSnapshot();
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2, WF3]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : id === 'wf-2' ? WF2 : WF3),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -313,14 +313,14 @@ describe('runPull - delta against previous snapshot', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -337,14 +337,14 @@ describe('runPull - delta against previous snapshot', () => {
     setupPreviousSnapshot(); // WF1 name = 'Workflow One', versionId v1
 
     const WF1_RENAMED = { ...WF1, name: 'Workflow One Renamed' }; // same versionId v1
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_RENAMED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_RENAMED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -360,14 +360,14 @@ describe('runPull - delta against previous snapshot', () => {
     setupPreviousSnapshot(); // WF1 has no description, versionId v1
 
     const WF1_REDESCRIBED = { ...WF1, description: 'New description' }; // same versionId v1
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_REDESCRIBED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_REDESCRIBED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -382,12 +382,12 @@ describe('runPull - delta against previous snapshot', () => {
     setupProject();
     setupPreviousSnapshot(); // WF1 + WF2 in previous
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1]), // WF2 gone
         getWorkflow: vi.fn().mockResolvedValue(WF1),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -402,14 +402,14 @@ describe('runPull - delta against previous snapshot', () => {
     setupProject();
     setupPreviousSnapshot(); // WF1 v1 + WF2 v1
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -426,12 +426,12 @@ describe('runPull - filters', () => {
   it('only pulls workflows matching the given tag', async () => {
     setupProject();
     const getWorkflow = vi.fn().mockResolvedValue(WF1);
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow,
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev', tag: 'production' });
 
@@ -443,12 +443,12 @@ describe('runPull - filters', () => {
   it('only pulls workflows whose name matches the pattern', async () => {
     setupProject();
     const getWorkflow = vi.fn().mockResolvedValue(WF1);
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow,
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev', pattern: 'Workflow O*' });
 
@@ -459,12 +459,12 @@ describe('runPull - filters', () => {
   it('only pulls active workflows when --only-active is set', async () => {
     setupProject();
     const getWorkflow = vi.fn().mockResolvedValue(WF1);
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]), // WF2 is inactive
         getWorkflow,
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev', onlyActive: true });
 
@@ -474,12 +474,12 @@ describe('runPull - filters', () => {
 
   it('stores filter values in meta.json', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1]),
         getWorkflow: vi.fn().mockResolvedValue(WF1),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev', tag: 'production', onlyActive: true });
 
@@ -493,7 +493,7 @@ describe('runPull - filters', () => {
 describe('runPull - --json output', () => {
   it('emits a JSON object to stdout and no human text', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -513,12 +513,12 @@ describe('runPull - --json output', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED]), // WF2 deleted
         getWorkflow: vi.fn().mockResolvedValue(WF1_UPDATED),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -552,12 +552,12 @@ describe('runPull - --json output', () => {
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_CURR]),
         getWorkflow: vi.fn().mockResolvedValue(WF1_CURR),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -581,12 +581,12 @@ describe('runPull - --json output', () => {
     const getWorkflow = vi.fn().mockImplementation((id: string) =>
       Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
     );
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow,
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev', json: true });
 
@@ -600,14 +600,14 @@ describe('runPull - --json output', () => {
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF3),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -627,7 +627,7 @@ describe('runPull - --json output', () => {
 describe('runPull - --verbose output', () => {
   it('lists every pulled workflow with name and active status on first pull', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -645,14 +645,14 @@ describe('runPull - --verbose output', () => {
   it('lists workflows when nothing changed', async () => {
     setupProject();
     setupPreviousSnapshot();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -669,14 +669,14 @@ describe('runPull - --verbose output', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -691,7 +691,7 @@ describe('runPull - --verbose output', () => {
 
   it('does not print workflow list without --verbose', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -708,14 +708,14 @@ describe('runPull - stat table for updated workflows', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -737,14 +737,14 @@ describe('runPull - stat table for updated workflows', () => {
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted, WF3 new
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF3),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -764,14 +764,14 @@ describe('runPull - stat table for updated workflows', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -783,7 +783,7 @@ describe('runPull - stat table for updated workflows', () => {
 
   it('first-pull path is unaffected by stat table change', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -798,14 +798,14 @@ describe('runPull - stat table for updated workflows', () => {
   it('no-change path is unaffected by stat table change', async () => {
     setupProject();
     setupPreviousSnapshot();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -859,14 +859,14 @@ describe('runPull - stat table for updated workflows', () => {
       },
     }));
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_STRUCT, WF2_CONFIG]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_STRUCT : WF2_CONFIG),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -883,11 +883,11 @@ describe('runPull - stat table for updated workflows', () => {
 describe('runPull - error handling', () => {
   it('writes a failure audit entry and re-throws on API error', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockRejectedValue(new UserError('API key for dev is invalid or expired')),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await expect(runPull({ env: 'dev' })).rejects.toThrow(
       'API key for dev is invalid or expired',
@@ -902,7 +902,7 @@ describe('runPull - error handling', () => {
 
   it('shows diff Next hint on first pull', async () => {
     setupProject(); // has dev + prod, no previous snapshot
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -915,14 +915,14 @@ describe('runPull - error handling', () => {
   it('shows diff Next hint when no changes found', async () => {
     setupProject();
     setupPreviousSnapshot();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -935,7 +935,7 @@ describe('runPull - error handling', () => {
 
   it('omits Next hint when only one environment is configured', async () => {
     setupProject(SINGLE_ENV_CONFIG);
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -952,14 +952,14 @@ describe('runPull - smart Next: hint', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -974,12 +974,12 @@ describe('runPull - smart Next: hint', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED]),
         getWorkflow: vi.fn().mockResolvedValue(WF1_UPDATED),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -994,7 +994,7 @@ describe('runPull - smart Next: hint', () => {
 describe('runPull - active/inactive counts', () => {
   it('shows active and inactive counts in fetch line', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never); // WF1 active, WF2 inactive
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; }); // WF1 active, WF2 inactive
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1010,7 +1010,7 @@ describe('runPull - active/inactive counts', () => {
 
   it('includes active and inactive counts in --json output', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never); // WF1 active, WF2 inactive
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; }); // WF1 active, WF2 inactive
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -1029,14 +1029,14 @@ describe('runPull - --name-only output', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -1051,14 +1051,14 @@ describe('runPull - --name-only output', () => {
   it('prints nothing when no changes', async () => {
     setupProject();
     setupPreviousSnapshot();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -1072,12 +1072,12 @@ describe('runPull - --name-only output', () => {
     setupProject();
     setupPreviousSnapshot(); // WF1 + WF2
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1]), // WF2 gone
         getWorkflow: vi.fn().mockResolvedValue(WF1),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -1094,14 +1094,14 @@ describe('runPull - --exit-code', () => {
     setupPreviousSnapshot();
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const err = await runPull({ env: 'dev', exitCode: true }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
@@ -1112,21 +1112,21 @@ describe('runPull - --exit-code', () => {
   it('does not throw when nothing changed', async () => {
     setupProject();
     setupPreviousSnapshot();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await expect(runPull({ env: 'dev', exitCode: true })).resolves.toBeUndefined();
   });
 
   it('does not throw on first pull (no previous snapshot)', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await expect(runPull({ env: 'dev', exitCode: true })).resolves.toBeUndefined();
   });
@@ -1137,9 +1137,9 @@ describe('runPull - --id (single workflow)', () => {
     setupProject();
     const getWorkflow = vi.fn().mockResolvedValue(WF1);
     const listWorkflows = vi.fn();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ listWorkflows, getWorkflow }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ listWorkflows, getWorkflow }) as never;
+    });
 
     await runPull({ env: 'dev', id: 'wf-1' });
 
@@ -1149,9 +1149,9 @@ describe('runPull - --id (single workflow)', () => {
 
   it('writes only one snapshot file for the fetched workflow', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     await runPull({ env: 'dev', id: 'wf-1' });
 
@@ -1163,9 +1163,9 @@ describe('runPull - --id (single workflow)', () => {
 
   it('stores the workflow id in meta.json filters', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     await runPull({ env: 'dev', id: 'wf-1' });
 
@@ -1176,9 +1176,9 @@ describe('runPull - --id (single workflow)', () => {
 
   it('detects new workflow with --id', async () => {
     setupProject(); // no previous snapshot
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1193,9 +1193,9 @@ describe('runPull - --id (single workflow)', () => {
     setupPreviousSnapshot(); // WF1 at v1
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_UPDATED) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_UPDATED) }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1207,9 +1207,9 @@ describe('runPull - --id (single workflow)', () => {
 
   it('emits JSON with id-mode fields', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
@@ -1223,9 +1223,9 @@ describe('runPull - --id (single workflow)', () => {
 
   it('throws ControlledExit(1) with --id --exit-code when workflow is new', async () => {
     setupProject(); // no previous snapshot → workflow is new
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     const err = await runPull({ env: 'dev', id: 'wf-1', exitCode: true }).catch((e) => e);
     expect(err.name).toBe('ControlledExit');
@@ -1256,7 +1256,7 @@ describe('runPull - staleness warning', () => {
       }) + '\n',
     );
 
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
@@ -1288,7 +1288,7 @@ describe('runPull - staleness warning', () => {
       }) + '\n',
     );
 
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
@@ -1301,7 +1301,7 @@ describe('runPull - staleness warning', () => {
 describe('runPull - fingerprints', () => {
   it('writes fingerprints.json with one entry per pulled workflow on first pull', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runPull({ env: 'dev' });
 
@@ -1335,14 +1335,14 @@ describe('runPull - fingerprints', () => {
     );
 
     const WF1_UPDATED = { ...WF1, versionId: 'v2' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev' });
 
@@ -1354,9 +1354,9 @@ describe('runPull - fingerprints', () => {
 
   it('writes fingerprint for the single workflow when using --id', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     await runPull({ env: 'dev', id: 'wf-1' });
 
@@ -1386,14 +1386,14 @@ describe('runPull - workflow map auto-heal', () => {
     }));
 
     const WF1_RENAMED = { ...WF1, name: 'Workflow One Renamed' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_RENAMED, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1_RENAMED : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     await runPull({ env: 'dev' });
 
@@ -1413,7 +1413,7 @@ describe('runPull - workflow map auto-heal', () => {
       },
     }));
 
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     await runPull({ env: 'dev' });
 
@@ -1434,9 +1434,9 @@ describe('runPull - workflow map auto-heal', () => {
     }));
 
     const WF1_RENAMED = { ...WF1, name: 'Workflow One Renamed' };
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_RENAMED) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_RENAMED) }) as never;
+    });
 
     await runPull({ env: 'dev', id: 'wf-1' });
 
@@ -1467,12 +1467,12 @@ describe('runPull - --verbose node groups through pager', () => {
       filters: { tag: null, pattern: null, onlyActive: false, id: null },
     });
 
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_CURR]),
         getWorkflow: vi.fn().mockResolvedValue(WF1_CURR),
-      }) as never,
-    );
+      }) as never;
+    });
 
     return WF1_CURR;
   }
@@ -1519,7 +1519,7 @@ describe('runPull - --verbose node groups through pager', () => {
 
   it('leaves first-pull path unaffected (still shows Workflows pulled:)', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1534,14 +1534,14 @@ describe('runPull - --verbose node groups through pager', () => {
   it('leaves no-change path unaffected (still shows Workflows pulled:)', async () => {
     setupProject();
     setupPreviousSnapshot();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
         getWorkflow: vi.fn().mockImplementation((id: string) =>
           Promise.resolve(id === 'wf-1' ? WF1 : WF2),
         ),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1558,9 +1558,9 @@ describe('runPull - server-side filter params', () => {
   it('calls listWorkflows with active=true when --only-active is set', async () => {
     setupProject();
     const listWorkflows = vi.fn().mockResolvedValue([WF1]);
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ listWorkflows, getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ listWorkflows, getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     await runPull({ env: 'dev', onlyActive: true });
 
@@ -1570,9 +1570,9 @@ describe('runPull - server-side filter params', () => {
   it('calls listWorkflows with tags when --tag is set', async () => {
     setupProject();
     const listWorkflows = vi.fn().mockResolvedValue([WF1]);
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({ listWorkflows, getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never,
-    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ listWorkflows, getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
 
     await runPull({ env: 'dev', tag: 'production' });
 
@@ -1583,13 +1583,13 @@ describe('runPull - server-side filter params', () => {
 describe('runPull - output mode validation', () => {
   it('does not throw when only --json is set', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
     await expect(runPull({ env: 'dev', json: true })).resolves.not.toThrow();
   });
 
   it('does not throw when only --name-only is set', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
     await expect(runPull({ env: 'dev', nameOnly: true })).resolves.not.toThrow();
   });
 });
@@ -1597,7 +1597,7 @@ describe('runPull - output mode validation', () => {
 describe('runPull - git sync runs regardless of output mode', () => {
   it('calls syncToRemote when --json mode', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     // We verify sync by checking that the audit entry is written (sync is the last step);
     // the simplest proxy is ensuring the command completes without error and the audit
@@ -1616,7 +1616,7 @@ describe('runPull - git sync runs regardless of output mode', () => {
 
   it('calls syncToRemote when --name-only mode', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     // Command should complete without error; sync doesn't print anything in name-only mode
     await expect(runPull({ env: 'dev', nameOnly: true })).resolves.not.toThrow();
@@ -1633,12 +1633,12 @@ describe('runPull - env-specific name detection', () => {
 
   it('prints a warning when a workflow name contains an env marker and is not mapped', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF_ENV]),
         getWorkflow: vi.fn().mockResolvedValue(WF_ENV),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1661,12 +1661,12 @@ describe('runPull - env-specific name detection', () => {
         },
       },
     }));
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF_ENV]),
         getWorkflow: vi.fn().mockResolvedValue(WF_ENV),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1679,7 +1679,7 @@ describe('runPull - env-specific name detection', () => {
 
   it('does not print env-specific warning when no workflow names have env markers', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
@@ -1692,12 +1692,12 @@ describe('runPull - env-specific name detection', () => {
 
   it('suppresses env-specific warning in --json mode', async () => {
     setupProject();
-    MockN8nClient.mockImplementation(() =>
-      makeClientMock({
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF_ENV]),
         getWorkflow: vi.fn().mockResolvedValue(WF_ENV),
-      }) as never,
-    );
+      }) as never;
+    });
 
     const logged: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));

@@ -72,7 +72,7 @@ function setTTY(value: true | undefined): void {
 describe('runInit', () => {
   it('throws UserError when project name is empty and prompt returns empty string', async () => {
     mockInput.mockResolvedValueOnce('   ');
-    await expect(runInit({})).rejects.toThrow(new UserError('Project name is required'));
+    await expect(runInit({})).rejects.toThrow('Project name is required');
   });
 
   // Limit check is commented out in init.ts until the license gate is wired up (see CLAUDE.md Phase 5)

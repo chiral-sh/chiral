@@ -170,7 +170,7 @@ describe('runEnvironmentConfigure', () => {
   describe('connection test', () => {
     it('tests the connection with the new key against the existing url', async () => {
       const testConnection = vi.fn().mockResolvedValue({ workflowCount: 3 });
-      MockN8nClient.mockImplementation(() => ({ testConnection }) as never);
+      MockN8nClient.mockImplementation(function() { return ({ testConnection }) as never; });
 
       await runEnvironmentConfigure('deva', { apiKey: 'new-key' });
 

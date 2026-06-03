@@ -78,9 +78,9 @@ function makeClientMock(overrides?: Partial<MockClient>): MockClient {
 }
 
 function setupTwoClientMocks(sourceMock: MockClient, targetMock: MockClient) {
-  MockN8nClient.mockImplementation((_env, envName) =>
-    (envName === 'dev' ? sourceMock : targetMock) as never,
-  );
+  MockN8nClient.mockImplementation(function(_env, envName) {
+    return (envName === 'dev' ? sourceMock : targetMock) as never;
+  });
 }
 
 beforeEach(() => {
