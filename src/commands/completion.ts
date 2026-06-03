@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { generateScript, getInstallPath, getChiralCommands } from '../lib/completion.js';
 import { loadConfigAndDir } from '../lib/config.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, ControlledExit } from '../lib/errors.js';
 
 const VERSION = '0.1.0';
 
@@ -57,7 +57,9 @@ export async function runCompleteEnvs(): Promise<void> {
     const { config } = loadConfigAndDir();
     process.stdout.write(Object.keys(config.environments).join('\n') + '\n');
   } catch {
-    process.exit(0);
+    // Completion callbacks must never print errors to stdout — that corrupts the shell's
+    // completion state. ControlledExit(0) exits cleanly via the top-level handler.
+    throw new ControlledExit(0);
   }
 }
 
@@ -65,6 +67,18 @@ export const completionCommand = new Command('completion')
   .description('Print shell completion script for bash, zsh, or fish')
   .argument('<shell>', 'Shell type: bash, zsh, or fish')
   .option('--install', 'Write the script to the user-local path instead of printing it')
+  .addHelpText('after', `
+Examples:
+  Print the bash script (redirect yourself):
+    chiral completion bash >> ~/.bash_completion
+
+  Install directly to the user-local path:
+    chiral completion zsh --install
+    chiral completion fish --install
+
+  Source bash completions in the current shell:
+    eval "$(chiral completion bash)"
+`)
   .action(async (shell: string, options: CompletionOptions) => {
     await runCompletion(shell, options);
   });

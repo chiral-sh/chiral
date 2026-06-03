@@ -22,6 +22,8 @@ export interface InitOptions {
   project?: string;
   noGit?: boolean;
   json?: boolean;
+  installCompletion?: boolean;
+  noInstallCompletion?: boolean;
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
@@ -140,16 +142,19 @@ export async function runInit(options: InitOptions): Promise<void> {
     console.log(`\n  ${chalk.green('✓')}  Git initialized → ${chalk.dim(projectDir)}`);
   }
 
-  if (process.stdout.isTTY && !options.json) {
+  if (!options.noInstallCompletion && !options.json) {
     const shellEnv = process.env['SHELL'];
     if (shellEnv) {
       const shellName = basename(shellEnv);
       if (['bash', 'zsh', 'fish'].includes(shellName)) {
         try {
-          const shouldInstall = await confirm({
-            message: 'Enable tab completion for chiral?',
-            default: true,
-          });
+          let shouldInstall = options.installCompletion ?? false;
+          if (!shouldInstall && process.stdout.isTTY) {
+            shouldInstall = await confirm({
+              message: 'Enable tab completion for chiral?',
+              default: true,
+            });
+          }
           if (shouldInstall) {
             const commands = getChiralCommands();
             const script = generateScript(shellName, commands, CHIRAL_VERSION);
@@ -185,6 +190,8 @@ export const initCommand = new Command('init')
   .option('--project <name>', 'Project name (alternative to positional argument)')
   .option('--no-git', 'Skip automatic git init inside the project folder')
   .option('--json', 'Output result as JSON')
+  .option('--install-completion', 'Install shell completion without prompting (non-interactive)')
+  .option('--no-install-completion', 'Skip the tab completion prompt')
   .addHelpText(
     'after',
     `
@@ -197,9 +204,12 @@ Examples:
 
   Create without running git init:
     chiral init my-n8n --no-git
+
+  Create and auto-install completion without prompting (CI / scripts):
+    chiral init my-n8n --install-completion
 `,
   )
-  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean }) => {
+  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean; installCompletion?: boolean; noInstallCompletion?: boolean }) => {
     const resolvedName = nameArg ?? options.project;
-    await runInit({ project: resolvedName, noGit: options.noGit, json: options.json });
+    await runInit({ project: resolvedName, noGit: options.noGit, json: options.json, installCompletion: options.installCompletion, noInstallCompletion: options.noInstallCompletion });
   });

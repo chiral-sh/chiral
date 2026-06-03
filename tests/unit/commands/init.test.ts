@@ -206,6 +206,22 @@ describe('completion prompt in runInit', () => {
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 
+  it('does not show completion prompt when --no-install-completion is set', async () => {
+    setTTY(true);
+    process.env['SHELL'] = '/bin/bash';
+    await runInit({ project: 'my-project', noInstallCompletion: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('installs bash completion without prompting when --install-completion is set', async () => {
+    setTTY(undefined);
+    process.env['SHELL'] = '/bin/bash';
+    await runInit({ project: 'my-project', installCompletion: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+    const expectedPath = `${os.homedir()}/.local/share/bash-completion/completions/chiral`;
+    expect(vol.existsSync(expectedPath)).toBe(true);
+  });
+
   it('does not show completion prompt when SHELL is unset', async () => {
     setTTY(true);
     delete process.env['SHELL'];

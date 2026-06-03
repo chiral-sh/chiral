@@ -12,7 +12,7 @@ vi.mock('node:child_process', () => ({
 
 import os from 'node:os';
 import { runCompletion, runCompleteEnvs } from '../../../src/commands/completion.js';
-import { UserError } from '../../../src/lib/errors.js';
+import { UserError, ControlledExit } from '../../../src/lib/errors.js';
 
 const GLOBAL_DIR = '/mock-global';
 const PROJECT_DIR = '/project';
@@ -179,24 +179,18 @@ describe('runCompleteEnvs', () => {
     expect(stdout.get().trim().split('\n')).toHaveLength(2);
   });
 
-  it('exits 0 silently when config cannot be loaded (no chiral dir)', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number | string) => {
-      throw new Error(`process.exit(${_code})`);
-    });
+  it('throws ControlledExit(0) silently when config cannot be loaded (no chiral dir)', async () => {
     const stdout = captureStdout();
-    let exitCode: number | undefined;
+    let thrown: unknown;
     try {
       await runCompleteEnvs();
     } catch (err) {
-      const msg = String(err);
-      if (msg.startsWith('Error: process.exit(')) {
-        exitCode = parseInt(msg.replace('Error: process.exit(', '').replace(')', ''), 10);
-      }
+      thrown = err;
     } finally {
       stdout.restore();
-      exitSpy.mockRestore();
     }
-    expect(exitCode).toBe(0);
+    expect(thrown).toBeInstanceOf(ControlledExit);
+    expect((thrown as ControlledExit).code).toBe(0);
     expect(stdout.get()).toBe('');
   });
 });
