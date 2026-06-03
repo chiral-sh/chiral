@@ -1208,3 +1208,89 @@ describe('runDiff - stat table human output', () => {
   });
 });
 
+// ── --explain flag ────────────────────────────────────────────────────────────
+
+describe('runDiff - --explain flag', () => {
+  it('prints grouped named nodes for a known modified workflow', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Order Pipeline', 'tgt-1', 'Order Pipeline');
+
+    const srcFull = {
+      nodes: [
+        { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+      ],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+        { id: 'node-b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: { url: 'https://example.com' } },
+      ],
+      connections: {},
+    };
+
+    const srcWf = makeSummary({ id: 'src-1', name: 'Order Pipeline', versionId: 'v1' });
+    const tgtWf = makeSummary({ id: 'tgt-1', name: 'Order Pipeline', versionId: 'v2' });
+
+    setupTwoClientMocks(
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([srcWf]),
+        getWorkflow: vi.fn().mockResolvedValue(srcFull),
+      }),
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([tgtWf]),
+        getWorkflow: vi.fn().mockResolvedValue(tgtFull),
+      }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod', explain: 'Order Pipeline' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Order Pipeline');
+    expect(joined).toContain('Logic changed');
+    expect(joined).toContain('HTTP Request');
+    expect(joined).not.toContain('is not a modified workflow');
+  });
+
+  it('prints friendly hint when explain name does not match a modified workflow', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await expect(
+      runDiff({ source: 'dev', target: 'prod', explain: 'Unknown Workflow' }),
+    ).resolves.toBeUndefined();
+
+    const joined = output.join('\n');
+    expect(joined).toContain('"Unknown Workflow" is not a modified workflow');
+    expect(joined).toContain('Modified: Workflow One');
+  });
+
+  it('prints no-modified hint when there are no modified workflows', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF2]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod', explain: 'Nonexistent' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('"Nonexistent" is not a modified workflow');
+    expect(joined).toContain('No modified workflows');
+  });
+});
+

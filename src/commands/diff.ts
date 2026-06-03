@@ -17,7 +17,7 @@ import {
   type Fingerprints,
 } from '../state/fingerprints.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
-import { renderStatTable, type StatRow } from '../lib/node-diff-render.js';
+import { renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 
 interface AddedEntry {
   name: string;
@@ -180,6 +180,7 @@ export interface DiffOptions {
   nameOnly?: boolean;
   json?: boolean;
   exitCode?: boolean;
+  explain?: string;
 }
 
 type OutputMode = 'human' | 'json' | 'name-only';
@@ -350,6 +351,23 @@ export async function runDiff(
             console.log(`  ${line}`);
           }
         }
+        if (options.explain !== undefined) {
+          const match = diff.modified.find((w) => w.targetName === options.explain);
+          if (match?.nodes) {
+            const groups = renderNodeGroups(match.nodes);
+            console.log();
+            console.log(`  ${options.explain}`);
+            console.log();
+            for (const line of groups.split('\n')) {
+              console.log(`  ${line}`);
+            }
+          } else {
+            const modifiedNames = diff.modified.map((w) => w.targetName).join(', ');
+            const suffix = modifiedNames ? `Modified: ${modifiedNames}.` : 'No modified workflows.';
+            console.log();
+            console.log(`  "${options.explain}" is not a modified workflow. ${suffix}`);
+          }
+        }
         if (options.showUnchanged) {
           for (const w of diff.unchanged) {
             console.log(`      ${w.name}    ${chalk.dim('(identical)')}`);
@@ -402,6 +420,7 @@ export const diffCommand = new Command('diff')
   .option('--show-unchanged', 'Include identical workflows in output')
   .addOption(new Option('--name-only', 'Print only differing workflow names, one per line - suitable for piping').conflicts('json'))
   .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
+  .addOption(new Option('--explain <workflow>', 'Drill into one modified workflow\'s named node changes, grouped by risk').conflicts('json').conflicts('nameOnly'))
   .option('--exit-code', 'Exit 1 if any differences found, 0 if environments are identical (CI use)')
   .addHelpText(
     'after',
