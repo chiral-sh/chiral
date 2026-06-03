@@ -17,7 +17,7 @@ import {
   type Fingerprints,
 } from '../state/fingerprints.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
-import { renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
 
 interface AddedEntry {
@@ -286,7 +286,7 @@ export async function runDiff(
             sourceClient.getWorkflow(entry.sourceId),
             targetClient.getWorkflow(entry.targetId),
           ]);
-          entry.nodes = diffWorkflowNodes(srcFull, tgtFull);
+          entry.nodes = diffWorkflowNodes(tgtFull, srcFull);
         }),
       );
     }
@@ -350,8 +350,27 @@ export async function runDiff(
             newNodeCount: w.nodes?.newNodeCount ?? 0,
             changeKind: w.changeKind,
           }));
-          for (const line of renderStatTable(statRows).split('\n')) {
-            console.log(`  ${line}`);
+          if (!options.verbose) {
+            for (const line of renderStatTable(statRows).split('\n')) {
+              console.log(`  ${line}`);
+            }
+          } else {
+            const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
+            const sections: string[] = [];
+            for (const { name, line } of renderStatRows(statRows)) {
+              const w = nodesByName.get(name);
+              if (!w?.nodes) continue;
+              const groups = renderNodeGroups(w.nodes);
+              sections.push(`  ${line}\n`);
+              if (groups) {
+                sections.push('\n');
+                sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
+              }
+              sections.push('\n\n');
+            }
+            if (sections.length > 0) {
+              await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
+            }
           }
         }
         if (options.explain !== undefined) {
@@ -359,7 +378,7 @@ export async function runDiff(
           if (match?.nodes) {
             const groups = renderNodeGroups(match.nodes);
             console.log();
-            console.log(`  ${options.explain}`);
+            console.log(`  ${chalk.bold(options.explain)}`);
             console.log();
             for (const line of groups.split('\n')) {
               console.log(`  ${line}`);
@@ -369,20 +388,6 @@ export async function runDiff(
             const suffix = modifiedNames ? `Modified: ${modifiedNames}.` : 'No modified workflows.';
             console.log();
             console.log(`  "${options.explain}" is not a modified workflow. ${suffix}`);
-          }
-        }
-        if (options.verbose && diff.modified.length > 0) {
-          const sections: string[] = [];
-          for (const w of diff.modified) {
-            if (w.nodes) {
-              const groups = renderNodeGroups(w.nodes);
-              sections.push(`  ${w.targetName}\n\n`);
-              sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
-              sections.push('\n\n');
-            }
-          }
-          if (sections.length > 0) {
-            await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
           }
         }
         if (options.showUnchanged) {

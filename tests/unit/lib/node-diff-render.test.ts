@@ -125,7 +125,7 @@ describe('renderNodeGroups', () => {
       added: [{ name: 'Get Data', type: 'n8n-nodes-base.httpRequest' }],
     });
     const output = renderNodeGroups(diff);
-    expect(output).toContain('+ n8n-nodes-base.httpRequest · "Get Data"');
+    expect(output).toContain('+ httpRequest · "Get Data"');
   });
 
   it('renders removed nodes with - symbol and type · "name" form', () => {
@@ -133,7 +133,7 @@ describe('renderNodeGroups', () => {
       removed: [{ name: 'Old Node', type: 'n8n-nodes-base.set' }],
     });
     const output = renderNodeGroups(diff);
-    expect(output).toContain('- n8n-nodes-base.set · "Old Node"');
+    expect(output).toContain('- set · "Old Node"');
   });
 
   it('renders a rename as ~ "old" → "new" exactly once (not as add + remove)', () => {
@@ -146,8 +146,8 @@ describe('renderNodeGroups', () => {
     expect(output).toContain('~ "Old Name" → "New Name"');
     const occurrences = output.split('~ "Old Name" → "New Name"').length - 1;
     expect(occurrences).toBe(1);
-    expect(output).not.toContain('+ n8n-nodes-base.set');
-    expect(output).not.toContain('- n8n-nodes-base.set');
+    expect(output).not.toContain('+ set · "New Name"');
+    expect(output).not.toContain('- set · "Old Name"');
   });
 
   it('renders a parameter-only change with (parameters changed) and no values', () => {
@@ -157,7 +157,7 @@ describe('renderNodeGroups', () => {
       ],
     });
     const output = renderNodeGroups(diff);
-    expect(output).toContain('n8n-nodes-base.httpRequest · "API Call" (parameters changed)');
+    expect(output).toContain('httpRequest · "API Call" (parameters changed)');
     expect(output).toContain('Config changed');
     expect(output).not.toContain('Logic changed');
   });
@@ -211,6 +211,33 @@ describe('renderNodeGroups', () => {
     const output = renderNodeGroups(diff);
     expect(output).toContain('1 connection added');
     expect(output).not.toContain('1 connections added');
+  });
+
+  it('renders an orphaned removed node in Cleanup section, not Logic changed', () => {
+    const diff = makeDiff({
+      removed: [{ name: 'Dead Node', type: 'n8n-nodes-base.set', orphaned: true }],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Cleanup');
+    expect(output).toContain('Dead Node');
+    expect(output).not.toContain('Logic changed');
+  });
+
+  it('renders connected removed nodes in Logic changed and orphaned in Cleanup when both exist', () => {
+    const diff = makeDiff({
+      removed: [
+        { name: 'Real Gone', type: 'n8n-nodes-base.set' },
+        { name: 'Dead Node', type: 'n8n-nodes-base.set', orphaned: true },
+      ],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Logic changed');
+    expect(output).toContain('Cleanup');
+    const logicIdx = output.indexOf('Logic changed');
+    const cleanupIdx = output.indexOf('Cleanup');
+    expect(logicIdx).toBeLessThan(cleanupIdx);
+    expect(output).toContain('set · "Real Gone"');
+    expect(output).toContain('Dead Node');
   });
 
   it('renders settings-only change as structural in Logic changed', () => {

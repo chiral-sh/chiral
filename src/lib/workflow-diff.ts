@@ -8,6 +8,7 @@ export type ChangeGroup = 'parameters' | 'credentials' | 'settings' | 'name' | '
 export type NodeSummary = {
   name: string;
   type: string;
+  orphaned?: boolean;
 };
 
 export type ModifiedNode = {
@@ -82,6 +83,28 @@ function classifyChangedGroups(a: RawNode, b: RawNode): ChangeGroup[] {
   return changed;
 }
 
+function extractConnectedNodeNames(wf: Record<string, unknown>): Set<string> {
+  const names = new Set<string>();
+  const connections = wf['connections'];
+  if (typeof connections !== 'object' || connections === null) return names;
+  for (const [source, outputs] of Object.entries(connections as Record<string, unknown>)) {
+    names.add(source);
+    if (typeof outputs !== 'object' || outputs === null) continue;
+    for (const groups of Object.values(outputs as Record<string, unknown>)) {
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        if (!Array.isArray(group)) continue;
+        for (const conn of group) {
+          if (typeof conn !== 'object' || conn === null) continue;
+          const target = (conn as Record<string, unknown>)['node'];
+          if (typeof target === 'string') names.add(target);
+        }
+      }
+    }
+  }
+  return names;
+}
+
 function extractEdges(wf: Record<string, unknown>): Set<string> {
   const edges = new Set<string>();
   const connections = wf['connections'];
@@ -115,6 +138,8 @@ export function diffWorkflowNodes(
   const added: NodeSummary[] = [];
   const removed: NodeSummary[] = [];
   const modified: ModifiedNode[] = [];
+
+  const connectedNamesA = extractConnectedNodeNames(a);
 
   const matchedA = new Set<number>();
   const matchedB = new Set<number>();
@@ -184,10 +209,21 @@ export function diffWorkflowNodes(
     const iA = nameMapA.get(name);
     if (iA === undefined) continue;
 
+    const na = nodesA[iA]!;
+
+    // Different type = replacement, not modification
+    if (nodeType(na) !== nodeType(nb)) {
+      matchedA.add(iA);
+      matchedB.add(j);
+      const orphaned = !connectedNamesA.has(nodeName(na));
+      removed.push({ name: nodeName(na), type: nodeType(na), ...(orphaned ? { orphaned: true } : {}) });
+      added.push({ name: nodeName(nb), type: nodeType(nb) });
+      continue;
+    }
+
     matchedA.add(iA);
     matchedB.add(j);
 
-    const na = nodesA[iA]!;
     if (stableStringify(normalizeNode(na)) !== stableStringify(normalizeNode(nb))) {
       const changed = classifyChangedGroups(na, nb);
       modified.push({ name: nodeName(nb), type: nodeType(nb), changed });
@@ -206,6 +242,15 @@ export function diffWorkflowNodes(
 
     const na = nodesA[iA]!;
     const nb = nodesB[j]!;
+
+    // Different type = replacement, not modification
+    if (nodeType(na) !== nodeType(nb)) {
+      const orphaned = !connectedNamesA.has(nodeName(na));
+      removed.push({ name: nodeName(na), type: nodeType(na), ...(orphaned ? { orphaned: true } : {}) });
+      added.push({ name: nodeName(nb), type: nodeType(nb) });
+      continue;
+    }
+
     if (stableStringify(normalizeNode(na)) !== stableStringify(normalizeNode(nb))) {
       const changed = classifyChangedGroups(na, nb);
       modified.push({ name: nodeName(nb), type: nodeType(nb), changed });
@@ -214,7 +259,11 @@ export function diffWorkflowNodes(
 
   // --- Collect unmatched as added / removed ---
   for (let i = 0; i < nodesA.length; i++) {
-    if (!matchedA.has(i)) removed.push({ name: nodeName(nodesA[i]!), type: nodeType(nodesA[i]!) });
+    if (!matchedA.has(i)) {
+      const name = nodeName(nodesA[i]!);
+      const orphaned = !connectedNamesA.has(name);
+      removed.push({ name, type: nodeType(nodesA[i]!), ...(orphaned ? { orphaned: true } : {}) });
+    }
   }
   for (let j = 0; j < nodesB.length; j++) {
     if (!matchedB.has(j)) added.push({ name: nodeName(nodesB[j]!), type: nodeType(nodesB[j]!) });

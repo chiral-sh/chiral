@@ -937,20 +937,20 @@ describe('runDiff - node diff in --json output', () => {
     // src has node-a only; tgt adds node-b and node-c.
     // node-a: matched by id, identical → unchanged
     // node-b, node-c: only in tgt, no match in src → 2 added
-    // connections: src has none, tgt has one edge a→b
+    // connections: src has one edge a→b, tgt has none (nodes added to dev)
     const srcFull = {
-      nodes: [
-        { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
-      ],
-      connections: {},
-    };
-    const tgtFull = {
       nodes: [
         { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
         { id: 'node-b', name: 'Slack', type: 'n8n-nodes-base.slack', parameters: {} },
         { id: 'node-c', name: 'Set Data', type: 'n8n-nodes-base.set', parameters: {} },
       ],
       connections: { Trigger: { main: [[{ node: 'Slack', type: 'main', index: 0 }]] } },
+    };
+    const tgtFull = {
+      nodes: [
+        { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+      ],
+      connections: {},
     };
 
     setupTwoClientMocks(
@@ -1067,14 +1067,14 @@ describe('runDiff - stat table human output', () => {
     setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
 
     const srcFull = {
-      nodes: [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }],
-      connections: {},
-    };
-    const tgtFull = {
       nodes: [
         { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
         { id: 'b', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', parameters: {} },
       ],
+      connections: {},
+    };
+    const tgtFull = {
+      nodes: [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }],
       connections: {},
     };
 
@@ -1231,7 +1231,7 @@ describe('runDiff - --explain flag', () => {
         { id: 'node-a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
         { id: 'node-b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: { url: 'https://example.com' } },
       ],
-      connections: {},
+      connections: { Trigger: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] } },
     };
 
     const srcWf = makeSummary({ id: 'src-1', name: 'Order Pipeline', versionId: 'v1' });
@@ -1317,7 +1317,7 @@ describe('runDiff - --verbose flag', () => {
         { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
         { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: {} },
       ],
-      connections: {},
+      connections: { Trigger: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] } },
     };
 
     setupTwoClientMocks(
@@ -1355,7 +1355,7 @@ describe('runDiff - --verbose flag', () => {
         { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
         { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: {} },
       ],
-      connections: {},
+      connections: { Trigger: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] } },
     };
 
     setupTwoClientMocks(
@@ -1389,7 +1389,7 @@ describe('runDiff - --verbose flag', () => {
         { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
         { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', parameters: {} },
       ],
-      connections: {},
+      connections: { Trigger: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] } },
     };
 
     setupTwoClientMocks(

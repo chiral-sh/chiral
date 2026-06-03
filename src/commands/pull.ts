@@ -28,7 +28,7 @@ import {
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
-import { renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -488,8 +488,9 @@ export async function runPull(
           for (const wf of delta.added) {
             console.log(`  ${chalk.green('+')} ${wf.name}  ${chalk.dim('(new)')}`);
           }
+          let updatedStatRows: StatRow[] = [];
           if (delta.updated.length > 0) {
-            const statRows: StatRow[] = delta.updated.map((wf) => {
+            updatedStatRows = delta.updated.map((wf) => {
               const prevEntry = prevFp.envs[options.env]?.[wf.id];
               const diffResult = delta.updatedNodes.get(wf.id);
               const changeKind: 'structural' | 'configuration' =
@@ -504,8 +505,10 @@ export async function runPull(
                 changeKind,
               };
             });
-            for (const line of renderStatTable(statRows).split('\n')) {
-              console.log(`  ${line}`);
+            if (!options.verbose) {
+              for (const line of renderStatTable(updatedStatRows).split('\n')) {
+                console.log(`  ${line}`);
+              }
             }
           }
           for (const wf of delta.deleted) {
@@ -518,28 +521,30 @@ export async function runPull(
           }
           console.log();
           console.log(`  ${plural(totalChanges, 'change')}.`);
-        }
 
-        if (options.verbose) {
-          if (!isFirstPull && delta && delta.updated.length > 0) {
+          if (options.verbose && delta.updated.length > 0) {
+            const nodesByName = new Map(delta.updated.map((wf) => [wf.name, wf]));
             const sections: string[] = [];
-            for (const wf of delta.updated) {
-              const diffResult = delta.updatedNodes.get(wf.id);
-              if (diffResult) {
-                const groups = renderNodeGroups(diffResult);
-                if (groups) {
-                  sections.push(`  ${wf.name}\n\n`);
-                  sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
-                  sections.push('\n\n');
-                }
+            for (const { name, line } of renderStatRows(updatedStatRows)) {
+              const wf = nodesByName.get(name);
+              const diffResult = wf ? delta.updatedNodes.get(wf.id) : undefined;
+              if (!diffResult) continue;
+              const groups = renderNodeGroups(diffResult);
+              sections.push(`  ${line}\n`);
+              if (groups) {
+                sections.push('\n');
+                sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
               }
+              sections.push('\n\n');
             }
             if (sections.length > 0) {
               await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
             }
-          } else {
-            printWorkflowList(workflows);
           }
+        }
+
+        if (options.verbose && (isFirstPull || !delta || delta.updated.length === 0)) {
+          printWorkflowList(workflows);
         }
         warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
         const hint = buildNextHint(config, options.env, hasChanges, isFirstPull, {

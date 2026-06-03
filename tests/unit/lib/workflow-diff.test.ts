@@ -145,6 +145,50 @@ describe('diffWorkflowNodes', () => {
     expect(result.modified).toHaveLength(0);
   });
 
+  it('treats same-name node with different type as remove + add, not modify (phase 2)', () => {
+    const nodeOld = makeNode({ id: 'n1', name: 'Processor', type: 'n8n-nodes-base.httpRequest' });
+    const nodeNew = { id: 'n2', name: 'Processor', type: 'n8n-nodes-base.code', parameters: {}, position: [0, 0] };
+    const result = diffWorkflowNodes(wf([nodeOld]), wf([nodeNew]));
+    expect(result.modified).toHaveLength(0);
+    expect(result.removed).toHaveLength(1);
+    expect(result.removed[0]).toMatchObject({ name: 'Processor', type: 'n8n-nodes-base.httpRequest' });
+    expect(result.added).toHaveLength(1);
+    expect(result.added[0]).toMatchObject({ name: 'Processor', type: 'n8n-nodes-base.code' });
+  });
+
+  it('marks orphaned replaced node correctly when the original had no connections', () => {
+    const nodeOld = makeNode({ id: 'n1', name: 'Processor', type: 'n8n-nodes-base.httpRequest' });
+    const nodeNew = { id: 'n2', name: 'Processor', type: 'n8n-nodes-base.code', parameters: {}, position: [0, 0] };
+    const result = diffWorkflowNodes(wf([nodeOld]), wf([nodeNew]));
+    expect(result.removed[0]?.orphaned).toBe(true);
+  });
+
+  it('does not mark replaced node as orphaned when the original had connections', () => {
+    const nodeOld = makeNode({ id: 'n1', name: 'Processor', type: 'n8n-nodes-base.httpRequest' });
+    const nodeNew = { id: 'n2', name: 'Processor', type: 'n8n-nodes-base.code', parameters: {}, position: [0, 0] };
+    const connections = { Processor: { main: [[{ node: 'Target', type: 'main', index: 0 }]] } };
+    const result = diffWorkflowNodes(wf([nodeOld], connections), wf([nodeNew]));
+    expect(result.removed[0]?.orphaned).not.toBe(true);
+  });
+
+  it('marks a purely removed node as orphaned when it had no connections', () => {
+    const kept = makeNode({ id: 'n1', name: 'Source', type: 'n8n-nodes-base.start' });
+    const orphaned = makeNode({ id: 'n2', name: 'Orphan', type: 'n8n-nodes-base.set' });
+    const connections = { Source: { main: [[{ node: 'DownstreamNode', type: 'main', index: 0 }]] } };
+    const result = diffWorkflowNodes(wf([kept, orphaned], connections), wf([kept], connections));
+    expect(result.removed).toHaveLength(1);
+    expect(result.removed[0]).toMatchObject({ name: 'Orphan', orphaned: true });
+  });
+
+  it('does not mark a removed node as orphaned when it had connections', () => {
+    const source = makeNode({ id: 'n1', name: 'Source', type: 'n8n-nodes-base.start' });
+    const target = makeNode({ id: 'n2', name: 'Target', type: 'n8n-nodes-base.set' });
+    const connections = { Source: { main: [[{ node: 'Target', type: 'main', index: 0 }]] } };
+    const result = diffWorkflowNodes(wf([source, target], connections), wf([source], connections));
+    expect(result.removed).toHaveLength(1);
+    expect(result.removed[0]!.orphaned).not.toBe(true);
+  });
+
   it('ignores credential id changes but detects credential name changes', () => {
     const nodeOld = makeNode({
       id: 'n1',
