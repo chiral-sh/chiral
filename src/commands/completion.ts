@@ -21,7 +21,14 @@ export async function runCompletion(shell: string, options: CompletionOptions): 
   }
 
   const installPath = getInstallPath(shell);
-  mkdirSync(path.dirname(installPath), { recursive: true });
+  const installDir = path.dirname(installPath);
+
+  try {
+    mkdirSync(installDir, { recursive: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new UserError(`Failed to create directory "${installDir}": ${msg}`);
+  }
 
   try {
     writeFileSync(installPath, script, 'utf-8');
