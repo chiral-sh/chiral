@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
 import { UserError } from '../../../src/lib/errors.js';
 
@@ -13,6 +13,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('@inquirer/prompts', () => ({
   input: vi.fn(),
+  confirm: vi.fn(),
 }));
 
 vi.mock('chalk', () => ({
@@ -27,109 +28,148 @@ vi.mock('chalk', () => ({
 import { execSync } from 'node:child_process';
 import { input } from '@inquirer/prompts';
 import { runInit } from '../../../src/commands/init.js';
+import { createChiralDirectory } from '../../../src/state/init.js';
 
 const mockExecSync = vi.mocked(execSync);
 const mockInput = vi.mocked(input);
 
+const GLOBAL_DIR = '/mock-global';
+const INDEX_PATH = `${GLOBAL_DIR}/projects/index.json`;
+const PROJECT_DIR = `${GLOBAL_DIR}/projects/my-project`;
+
+function emptyIndex(): string {
+  return JSON.stringify({ version: 1, projects: {} });
+}
+
+function oneProjectIndex(name = 'existing'): string {
+  return JSON.stringify({
+    version: 1,
+    projects: { [name]: { path: `${GLOBAL_DIR}/projects/${name}`, createdAt: '2024-01-01T00:00:00.000Z' } },
+  });
+}
+
 beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
+  process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
+  mockExecSync.mockImplementation((cmd: string) => {
+    if (String(cmd) === 'git config user.email') return 'test@example.com' as never;
+    return Buffer.from('') as never;
+  });
+  vol.fromJSON({ [INDEX_PATH]: emptyIndex() });
+});
+
+afterEach(() => {
+  delete process.env['CHIRAL_PROJECTS_DIR'];
 });
 
 describe('runInit', () => {
-  it('throws UserError when not inside a Git repository', async () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('not a git repo');
-    });
-
-    await expect(runInit({ project: 'my-project' }, '/no-git')).rejects.toThrow(
-      new UserError('flightdeck init must be run inside a Git repository'),
-    );
-  });
-
-  it('throws UserError when .flightdeck/ already exists', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-    vol.fromJSON({ '/project/.flightdeck/.gitignore': 'config.json\n' });
-
-    await expect(runInit({ project: 'my-project' }, '/project')).rejects.toThrow(
-      new UserError('Already initialized. Delete .flightdeck/ to start over.'),
-    );
-  });
-
   it('throws UserError when project name is empty and prompt returns empty string', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
     mockInput.mockResolvedValueOnce('   ');
-
-    await expect(runInit({}, '/project')).rejects.toThrow(
-      new UserError('Project name is required'),
-    );
+    await expect(runInit({})).rejects.toThrow(new UserError('Project name is required'));
   });
 
-  it('creates .flightdeck/ directory structure on success', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
+  // Limit check is commented out in init.ts until the license gate is wired up (see CLAUDE.md Phase 5)
+  it.skip('throws UserError when free tier limit is reached', async () => {
+    vol.fromJSON({ [INDEX_PATH]: oneProjectIndex() });
+    await expect(runInit({ project: 'new-project' })).rejects.toThrow(UserError);
+    await expect(runInit({ project: 'new-project' })).rejects.toThrow('Free tier allows 1 project');
+  });
 
-    await runInit({ project: 'my-project' }, '/project');
+  it('throws UserError when project directory already exists on disk', async () => {
+    vol.fromJSON({ [`${PROJECT_DIR}/.gitkeep`]: '' });
+    await expect(runInit({ project: 'my-project' })).rejects.toThrow(UserError);
+    await expect(runInit({ project: 'my-project' })).rejects.toThrow('already exists');
+  });
 
-    expect(vol.existsSync('/project/.flightdeck')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/locks')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/snapshots')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/config.example.json')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/.gitignore')).toBe(true);
-    expect(vol.existsSync('/project/.flightdeck/audit.jsonl')).toBe(true);
+  it('creates .chiral/ directory structure in global projects dir on success', async () => {
+    await runInit({ project: 'my-project' });
+
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral`)).toBe(true);
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/locks`)).toBe(true);
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/snapshots`)).toBe(true);
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/config.example.json`)).toBe(true);
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/.gitignore`)).toBe(true);
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/audit.jsonl`)).toBe(true);
   });
 
   it('uses project name from --project flag without prompting', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
-    await runInit({ project: 'flagged-project' }, '/project');
+    await runInit({ project: 'my-project' });
 
     expect(mockInput).not.toHaveBeenCalled();
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
-    expect(JSON.parse(raw).project).toBe('flagged-project');
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/config.example.json`, 'utf-8') as string;
+    expect(JSON.parse(raw).project).toBe('my-project');
   });
 
   it('prompts for project name when --project flag is not provided', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-    mockInput.mockResolvedValueOnce('prompted-name');
+    mockInput.mockResolvedValueOnce('my-project');
 
-    await runInit({}, '/project');
+    await runInit({});
 
     expect(mockInput).toHaveBeenCalledOnce();
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
-    expect(JSON.parse(raw).project).toBe('prompted-name');
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/config.example.json`, 'utf-8') as string;
+    expect(JSON.parse(raw).project).toBe('my-project');
   });
 
-  it('uses cwd basename as default for the project name prompt', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-    mockInput.mockResolvedValueOnce('my-repo');
+  it('registers project in index.json after successful init', async () => {
+    await runInit({ project: 'my-project' });
 
-    await runInit({}, '/home/user/my-repo');
-
-    expect(mockInput).toHaveBeenCalledWith(
-      expect.objectContaining({ default: 'my-repo' }),
-    );
+    const raw = vol.readFileSync(INDEX_PATH, 'utf-8') as string;
+    const index = JSON.parse(raw);
+    expect(index.projects['my-project']).toBeDefined();
+    expect(index.projects['my-project'].path).toBe(PROJECT_DIR);
   });
 
-  it('calls git rev-parse with the provided cwd', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
-    await runInit({ project: 'my-project' }, '/my-repo');
-
-    expect(mockExecSync).toHaveBeenCalledWith('git rev-parse --git-dir', {
-      cwd: '/my-repo',
-      stdio: 'pipe',
-    });
-  });
-
-  it('prints project name and next-step configure instruction', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('.git'));
-
+  it('prints project name and "chiral environment add dev" next-step hint', async () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
-    await runInit({ project: 'acme' }, '/project');
-    vi.mocked(console.log).mockRestore();
 
-    expect(output.some((l) => l.includes('acme'))).toBe(true);
-    expect(output.some((l) => l.includes('flightdeck configure'))).toBe(true);
+    await runInit({ project: 'my-project' });
+
+    vi.mocked(console.log).mockRestore();
+    expect(output.some((l) => l.includes('my-project'))).toBe(true);
+    expect(output.some((l) => l.includes('chiral environment add'))).toBe(true);
+  });
+
+  it('skips git init when --no-git is passed', async () => {
+    await runInit({ project: 'my-project', noGit: true });
+
+    const gitCalls = mockExecSync.mock.calls.map(([c]) => String(c));
+    expect(gitCalls.some((c) => c.includes('git init'))).toBe(false);
+  });
+
+  it('runs git init in the project directory when git is installed', async () => {
+    await runInit({ project: 'my-project' });
+
+    const gitInitCall = mockExecSync.mock.calls.find(([c]) => String(c) === 'git init');
+    expect(gitInitCall).toBeDefined();
+  });
+
+  it('creates team.json with actor email as owner after successful init', async () => {
+    await runInit({ project: 'my-project' });
+
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/team.json`)).toBe(true);
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/team.json`, 'utf-8') as string;
+    const team = JSON.parse(raw);
+    expect(team.version).toBe(1);
+    expect(team.members['test@example.com']).toBeDefined();
+    expect(team.members['test@example.com'].role).toBe('owner');
+    expect(team.members['test@example.com'].addedBy).toBe('test@example.com');
+    expect(typeof team.members['test@example.com'].addedAt).toBe('string');
+  });
+
+  it('throws UserError when git config user.email is not set', async () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (String(cmd) === 'git config user.email') throw new Error('exit code 1');
+      return Buffer.from('') as never;
+    });
+    await expect(runInit({ project: 'my-project' })).rejects.toThrow(UserError);
+    await expect(runInit({ project: 'my-project' })).rejects.toThrow('git config user.email');
+  });
+
+  it('does not create team.json when createChiralDirectory is called without ownerEmail', () => {
+    const chiralDir = `${PROJECT_DIR}/.chiral`;
+    createChiralDirectory(chiralDir, 'my-project', undefined, undefined);
+    expect(vol.existsSync(`${chiralDir}/team.json`)).toBe(false);
   });
 });

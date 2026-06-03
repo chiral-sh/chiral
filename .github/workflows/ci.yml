@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel superseded runs on the same ref so force-pushes and rapid commits
+# don't queue up redundant CI.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu mirrors where self-hosted n8n runs and where Windows devs
+        # operate via WSL2; macos catches APFS case-insensitivity bugs in our
+        # name-based workflow/credential mapping. Windows native is skipped on
+        # purpose, not part of the runtime audience.
+        os: [ubuntu-latest, macos-latest]
+        # 22 is our engines floor; 24 is current.
+        node: [22, 24]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # pnpm must be set up before setup-node so that `cache: pnpm` can resolve
+      # the store path. Version is read from the packageManager field in
+      # package.json (pnpm@10.19.0).
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Smoke test built binary
+        run: |
+          node dist/index.js --version
+          node dist/index.js --help

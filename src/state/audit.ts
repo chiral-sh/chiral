@@ -6,11 +6,14 @@ import { UserError } from '../lib/errors.js';
 export const AuditActionSchema = z.enum([
   'push',
   'pull',
+  'diff',
   'rollback',
   'lock',
   'unlock',
   'adopt',
   'init',
+  'map',
+  'unmap',
 ]);
 
 export const AuditEntrySchema = z.object({
@@ -25,14 +28,16 @@ export const AuditEntrySchema = z.object({
   workflow_ids: z.array(z.string()),
   result: z.enum(['success', 'failure', 'aborted']),
   error: z.string().nullable(),
-  flightdeck_version: z.string(),
+  chiral_version: z.string(),
+  match_method: z.enum(['manual', 'auto', 'fuzzy']).nullable().optional(),
+  match_score: z.number().min(0).max(1).nullable().optional(),
 });
 
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 
-export function writeAuditEntry(flightdeckDir: string, entry: AuditEntry): void {
-  const auditPath = join(flightdeckDir, 'audit.jsonl');
+export function writeAuditEntry(chiralDir: string, entry: AuditEntry): void {
+  const auditPath = join(chiralDir, 'audit.jsonl');
   const line = JSON.stringify(entry) + '\n';
   try {
     appendFileSync(auditPath, line, 'utf-8');
@@ -41,8 +46,8 @@ export function writeAuditEntry(flightdeckDir: string, entry: AuditEntry): void 
   }
 }
 
-export function readAuditLog(flightdeckDir: string): AuditEntry[] {
-  const auditPath = join(flightdeckDir, 'audit.jsonl');
+export function readAuditLog(chiralDir: string): AuditEntry[] {
+  const auditPath = join(chiralDir, 'audit.jsonl');
   if (!existsSync(auditPath)) return [];
 
   const lines = readFileSync(auditPath, 'utf-8')
@@ -62,4 +67,40 @@ export function readAuditLog(flightdeckDir: string): AuditEntry[] {
     }
     return result.data;
   });
+}
+
+export function readInitEvent(chiralDir: string): { actor: string; timestamp: string } | null {
+  const auditPath = join(chiralDir, 'audit.jsonl');
+  if (!existsSync(auditPath)) return null;
+
+  let content: string;
+  try {
+    content = readFileSync(auditPath, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split('\n').filter((line) => line.trim() !== '');
+  for (const line of lines) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      // silently skip malformed JSON lines
+      continue;
+    }
+    if (
+      typeof raw === 'object' &&
+      raw !== null &&
+      (raw as Record<string, unknown>)['action'] === 'init' &&
+      typeof (raw as Record<string, unknown>)['actor'] === 'string' &&
+      typeof (raw as Record<string, unknown>)['timestamp'] === 'string'
+    ) {
+      return {
+        actor: (raw as Record<string, unknown>)['actor'] as string,
+        timestamp: (raw as Record<string, unknown>)['timestamp'] as string,
+      };
+    }
+  }
+  return null;
 }

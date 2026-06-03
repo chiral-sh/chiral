@@ -1,0 +1,37 @@
+name: Security audit
+
+# Runs OUTSIDE the PR gate. A failure here notifies repo admins rather than
+# blocking a contributor's PR — third-party advisory data changes on its own
+# schedule, not with our commits, so it has no business failing unrelated PRs.
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Mondays 09:00 UTC
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: pnpm audit (production deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Scoped to --prod on purpose: a failure means something we actually
+      # ship in dist/ is vulnerable (high signal, rarely fires). Dev-tooling
+      # advisories (vitest, tsup, etc.) are surfaced as Dependabot PRs instead,
+      # so this job doesn't cry wolf every week over code users never run.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high

@@ -1,29 +1,39 @@
-import { execSync } from 'node:child_process';
+import chalk from 'chalk';
+import ora from 'ora';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
+import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError } from '../lib/errors.js';
-import { generateDeploymentId, writeSnapshot } from '../state/snapshots.js';
+import { getGitActor } from '../lib/git.js';
+import { failSpinner, plural, detectsEnvMarker } from '../lib/cli.js';
+import { generateDeploymentId, writeSnapshot, writeSnapshotMeta, computeSnapshotContentHash } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
+import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
+import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
 
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set — configure it before running flightdeck',
-    );
-  }
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface AdoptOptions {
+  env: string;
 }
 
+// ── Validation ────────────────────────────────────────────────────────────────
+
+// No invalid combinations currently exist for adopt.
+function validateOptions(_options: AdoptOptions): void { }
+
+// ── Run function ──────────────────────────────────────────────────────────────
+
 export async function runAdopt(
-  options: { env: string },
-  cwd: string = process.cwd(),
+  options: AdoptOptions,
 ): Promise<void> {
+  validateOptions(options);
+
   const actor = getGitActor();
-  const { config, flightdeckDir } = loadConfigAndDir(cwd);
+  const { config, chiralDir } = loadConfigAndDir();
   const env = resolveEnv(config, options.env);
   const client = new N8nClient(env, options.env);
+  client.warnIfExpiringSoon();
 
   const baseEntry = {
     event_id: crypto.randomUUID(),
@@ -34,56 +44,148 @@ export async function runAdopt(
     project: config.project,
     source_env: null,
     target_env: options.env,
-    workflow_ids: [],
-    flightdeck_version: '0.1.0',
+    workflow_ids: [] as string[],
+    chiral_version: '0.1.0',
   };
 
-  try {
-    console.log(`Connecting to ${options.env} (${env.url})...`);
+  console.log();
 
+  try {
+    // ── discover ──────────────────────────────────────────────────────────────
+    const spinner1 = ora({ text: `  Connecting to ${chalk.cyan(options.env)}…`, color: 'cyan' }).start();
     const [summaries, credentials, tags] = await Promise.all([
       client.listWorkflows(),
       client.listCredentials(),
       client.listTags(),
-    ]);
-
-    const workflows = await Promise.all(summaries.map((s) => client.getWorkflow(s.id)));
-
-    console.log(`✓ Discovered ${workflows.length} workflows`);
-    console.log(
-      `✓ Discovered ${credentials.length} credentials (names only — secrets are never read)`,
+    ]).catch((err) => failSpinner(spinner1, err));
+    spinner1.succeed(
+      chalk.green('  Connected') +
+      chalk.dim(
+        ` - ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
+      ),
     );
-    console.log(`✓ Discovered ${tags.length} tags`);
 
+    // ── fetch definitions ─────────────────────────────────────────────────────
+    const spinner2 = ora({ text: '  Fetching workflow definitions…', color: 'cyan' }).start();
+    const workflows = await Promise.all(summaries.map((s) => client.getWorkflow(s.id))).catch(
+      (err) => failSpinner(spinner2, err),
+    );
+    spinner2.succeed(
+      chalk.green(`  Fetched ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`),
+    );
+
+    // ── snapshot + fingerprints ───────────────────────────────────────────────
+    const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
     const deploymentId = generateDeploymentId();
+    const snapshotTimestamp = new Date().toISOString();
     for (const workflow of workflows) {
-      writeSnapshot(flightdeckDir, deploymentId, workflow);
+      writeSnapshot(chiralDir, deploymentId, workflow);
+    }
+    writeSnapshotMeta(chiralDir, deploymentId, {
+      deployment_id: deploymentId,
+      env: options.env,
+      command: 'adopt',
+      timestamp: snapshotTimestamp,
+      workflow_count: workflows.length,
+      content_hash: computeSnapshotContentHash(workflows),
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    const fingerprints = loadFingerprints(chiralDir);
+    if (!fingerprints.envs[options.env]) fingerprints.envs[options.env] = {};
+    for (const workflow of workflows) {
+      fingerprints.envs[options.env][workflow.id] = {
+        name: workflow.name,
+        versionId: workflow.versionId,
+        contentHash: computeContentHash(workflow),
+        structureHash: computeStructureHash(workflow),
+        updatedAt: snapshotTimestamp,
+      };
+    }
+    writeFingerprints(chiralDir, fingerprints);
+
+    spinner3.succeed(
+      chalk.green('  Snapshot saved') +
+      chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
+    );
+    console.log(
+      `${chalk.green('✔   Fingerprints saved')}` +
+      chalk.dim(` → .chiral/fingerprints.json  (${plural(workflows.length, 'workflow')})`),
+    );
+
+    // ── env-specific name detection ───────────────────────────────────────────
+    const wfMap = loadWorkflowMap(chiralDir);
+    const envSpecific = workflows.filter(
+      (wf) => detectsEnvMarker(wf.name, Object.keys(config.environments)) && !findLogicalByEnvAndName(wfMap, options.env, wf.name),
+    );
+    if (envSpecific.length > 0) {
+      const example = envSpecific[0].name;
+      const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
+      const targetHint = otherEnvs[0] ?? '<other-env>';
+      console.log(
+        `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
+      );
+      console.log(
+        chalk.dim(`     If they exist under different names in other environments, run:`),
+      );
+      console.log(
+        chalk.dim(`     chiral workflow match --source ${options.env} --target ${targetHint}`),
+      );
     }
 
-    console.log(`✓ Snapshot saved to .flightdeck/snapshots/${deploymentId}/`);
-    console.log('');
-    console.log('  Workflows:');
+    // ── workflow list ─────────────────────────────────────────────────────────
+    console.log(`\n  ${chalk.bold('Workflows')}`);
     for (const wf of workflows) {
-      console.log(`    - ${wf.name} (${wf.active ? 'active' : 'inactive'})`);
+      const badge = wf.active ? chalk.green('active') : chalk.dim('inactive');
+      console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
     }
-    console.log('');
-    console.log(`Run 'flightdeck pull --env ${options.env}' to keep snapshots up to date.`);
 
-    writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'success', error: null });
+    const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
+    if (otherEnvs.length > 0) {
+      console.log(`\n  ${chalk.dim('Next:')} chiral diff --source ${options.env} --target ${otherEnvs[0]}\n`);
+    } else {
+      console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
+    }
+
+    // Fix B1: record actual workflow IDs in the audit entry
+    baseEntry.workflow_ids = workflows.map((w) => w.id);
+    writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
+
+    const syncResult = await syncToRemote(
+      chiralDir, config, `chore(chiral): adopt ${options.env}`,
+    );
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+      }
+      console.log();
+    }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
-      writeAuditEntry(flightdeckDir, { ...baseEntry, result: 'failure', error: errorMsg });
+      writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
-      // best-effort — don't mask the original error
+      // best-effort - don't mask the original error
     }
     throw err;
   }
 }
 
+// ── Command definition ────────────────────────────────────────────────────────
+
 export const adoptCommand = new Command('adopt')
-  .description('Import an existing n8n instance into flightdeck state')
+  .description('Import an existing n8n instance into chiral state')
   .requiredOption('--env <env>', 'Environment name from config.json')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  Adopt a configured environment:
+    chiral adopt --env dev
+`,
+  )
   .action(async (options) => {
     await runAdopt(options);
   });

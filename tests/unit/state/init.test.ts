@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { vol } from 'memfs';
-import { createFlightdeckDirectory } from '../../../src/state/init.js';
+import { createChiralDirectory } from '../../../src/state/init.js';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
@@ -9,32 +9,32 @@ vi.mock('node:fs', async () => {
 
 beforeEach(() => vol.reset());
 
-describe('createFlightdeckDirectory', () => {
-  it('creates the .flightdeck directory', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'my-project');
-    expect(vol.existsSync('/project/.flightdeck')).toBe(true);
+describe('createChiralDirectory', () => {
+  it('creates the .chiral directory', () => {
+    createChiralDirectory('/project/.chiral', 'my-project');
+    expect(vol.existsSync('/project/.chiral')).toBe(true);
   });
 
   it('creates locks/ subdirectory', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'my-project');
-    expect(vol.existsSync('/project/.flightdeck/locks')).toBe(true);
+    createChiralDirectory('/project/.chiral', 'my-project');
+    expect(vol.existsSync('/project/.chiral/locks')).toBe(true);
   });
 
   it('creates snapshots/ subdirectory', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'my-project');
-    expect(vol.existsSync('/project/.flightdeck/snapshots')).toBe(true);
+    createChiralDirectory('/project/.chiral', 'my-project');
+    expect(vol.existsSync('/project/.chiral/snapshots')).toBe(true);
   });
 
   it('writes config.example.json with the given project name', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'my-agency-client');
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    createChiralDirectory('/project/.chiral', 'my-agency-client');
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
     const config = JSON.parse(raw);
     expect(config.project).toBe('my-agency-client');
   });
 
   it('writes config.example.json with version 1 and dev/prod environments', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'test');
-    const raw = vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string;
+    createChiralDirectory('/project/.chiral', 'test');
+    const raw = vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string;
     const config = JSON.parse(raw);
     expect(config.version).toBe(1);
     expect(config.environments).toHaveProperty('dev');
@@ -42,33 +42,33 @@ describe('createFlightdeckDirectory', () => {
   });
 
   it('writes .gitignore containing config.json', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'test');
-    const gitignore = vol.readFileSync('/project/.flightdeck/.gitignore', 'utf-8') as string;
+    createChiralDirectory('/project/.chiral', 'test');
+    const gitignore = vol.readFileSync('/project/.chiral/.gitignore', 'utf-8') as string;
     expect(gitignore).toContain('config.json');
   });
 
   it('creates empty audit.jsonl', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'test');
-    const audit = vol.readFileSync('/project/.flightdeck/audit.jsonl', 'utf-8') as string;
+    createChiralDirectory('/project/.chiral', 'test');
+    const audit = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     expect(audit).toBe('');
   });
 
   it('creates credentials.json with version 1 and empty credentials', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'test');
-    const raw = vol.readFileSync('/project/.flightdeck/credentials.json', 'utf-8') as string;
+    createChiralDirectory('/project/.chiral', 'test');
+    const raw = vol.readFileSync('/project/.chiral/credentials.json', 'utf-8') as string;
     const parsed = JSON.parse(raw);
     expect(parsed.version).toBe(1);
     expect(parsed.credentials).toEqual({});
   });
 
   it('does not mutate CONFIG_EXAMPLE_TEMPLATE across calls', () => {
-    createFlightdeckDirectory('/project/.flightdeck', 'project-a');
-    createFlightdeckDirectory('/project2/.flightdeck', 'project-b');
+    createChiralDirectory('/project/.chiral', 'project-a');
+    createChiralDirectory('/project2/.chiral', 'project-b');
     const a = JSON.parse(
-      vol.readFileSync('/project/.flightdeck/config.example.json', 'utf-8') as string,
+      vol.readFileSync('/project/.chiral/config.example.json', 'utf-8') as string,
     );
     const b = JSON.parse(
-      vol.readFileSync('/project2/.flightdeck/config.example.json', 'utf-8') as string,
+      vol.readFileSync('/project2/.chiral/config.example.json', 'utf-8') as string,
     );
     expect(a.project).toBe('project-a');
     expect(b.project).toBe('project-b');

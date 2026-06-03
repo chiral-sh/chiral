@@ -1,6 +1,6 @@
 version: '3.8'
 
-# Integration test environment — spins up a real n8n instance.
+# Integration test environment - spins up a real n8n instance.
 # Usage: docker compose -f tests/docker-compose.yml up -d
 # n8n UI: http://localhost:5678
 # n8n API key is set via N8N_API_KEY env var in tests.

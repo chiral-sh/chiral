@@ -1,14 +1,15 @@
 {
   "name": "n8n-env",
   "version": "0.1.0",
-  "description": "Safer production deployments for self-hosted n8n Community Edition",
+  "description": "CLI for promoting n8n workflows between dev, staging, and production environments",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "flightdeck": "dist/index.js"
+    "chiral": "dist/index.js"
   },
+  "packageManager": "pnpm@10.19.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsup",
@@ -23,23 +24,32 @@
     "workflow",
     "deployment",
     "environment",
-    "flightdeck"
+    "chiral"
   ],
   "author": "Purvesh Gandhi",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
+    "@inquirer/core": "^11.1.10",
     "@inquirer/prompts": "^8.4.3",
     "chalk": "^5.6.2",
     "commander": "^12.0.0",
+    "env-paths": "^4.0.0",
+    "fast-json-stable-stringify": "^2.1.0",
     "ora": "^9.4.0",
+    "simple-git": "^3.36.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/fast-json-stable-stringify": "^2.1.2",
     "@types/node": "^20.0.0",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
     "memfs": "^4.57.2",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.60.1",
     "vitest": "^1.6.0"
   }
 }
