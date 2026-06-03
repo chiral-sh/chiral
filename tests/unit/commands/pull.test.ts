@@ -15,10 +15,17 @@ vi.mock('../../../src/lib/n8n-client.js', () => ({
   N8nClient: vi.fn(),
 }));
 
+vi.mock('../../../src/lib/pager.js', () => ({
+  pageOutput: vi.fn().mockImplementation(async (text: string) => { console.log(text); }),
+}));
+
 import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
+import { pageOutput } from '../../../src/lib/pager.js';
 import { runPull } from '../../../src/commands/pull.js';
 import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.js';
+
+const mockPageOutput = vi.mocked(pageOutput);
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
@@ -657,7 +664,7 @@ describe('runPull - --verbose output', () => {
     expect(joined).toContain('Workflows pulled:');
   });
 
-  it('lists workflows when changes are found', async () => {
+  it('does not print workflow list when --verbose is set and there are updated workflows', async () => {
     setupProject();
     setupPreviousSnapshot();
 
@@ -678,9 +685,8 @@ describe('runPull - --verbose output', () => {
 
     const joined = output.join('\n');
     expect(joined).not.toContain('(updated)');
-    expect(joined).toContain('Workflows pulled:');
+    expect(joined).not.toContain('Workflows pulled:');
     expect(joined).toContain('Workflow One');
-    expect(joined).toContain('Workflow Two');
   });
 
   it('does not print workflow list without --verbose', async () => {
@@ -1438,6 +1444,113 @@ describe('runPull - workflow map auto-heal', () => {
     const map = JSON.parse(raw);
     expect(map.workflows['workflow-one']['dev'].name).toBe('Workflow One Renamed');
     expect(map.workflows['workflow-one']['dev'].id).toBe('wf-1');
+  });
+});
+
+describe('runPull - --verbose node groups through pager', () => {
+  function setupUpdatedWithNodes() {
+    const prevNodes = [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }];
+    const currNodes = [
+      { id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+      { id: 'b', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest' },
+    ];
+    const WF1_PREV = { ...WF1, versionId: 'v1', nodes: prevNodes };
+    const WF1_CURR = { ...WF1, versionId: 'v2', nodes: currNodes };
+
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF1_PREV);
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT,
+      env: 'dev',
+      command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z',
+      workflow_count: 1,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_CURR]),
+        getWorkflow: vi.fn().mockResolvedValue(WF1_CURR),
+      }) as never,
+    );
+
+    return WF1_CURR;
+  }
+
+  it('expands each updated workflow node changes through pageOutput', async () => {
+    setupProject();
+    setupUpdatedWithNodes();
+    mockPageOutput.mockResolvedValue(undefined);
+
+    await runPull({ env: 'dev', verbose: true });
+
+    expect(mockPageOutput).toHaveBeenCalledOnce();
+    const text = mockPageOutput.mock.calls[0]![0];
+    expect(text).toContain('Workflow One');
+    expect(text).toContain('Logic changed');
+    expect(text).toContain('HTTP Request');
+  });
+
+  it('passes noPager: true to pageOutput when noPager option is set', async () => {
+    setupProject();
+    setupUpdatedWithNodes();
+    mockPageOutput.mockResolvedValue(undefined);
+
+    await runPull({ env: 'dev', verbose: true, noPager: true });
+
+    expect(mockPageOutput).toHaveBeenCalledWith(expect.any(String), { noPager: true });
+  });
+
+  it('prints node groups plainly when pageOutput mock calls console.log', async () => {
+    setupProject();
+    setupUpdatedWithNodes();
+    mockPageOutput.mockImplementation(async (text: string) => { console.log(text); });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev', verbose: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflow One');
+    expect(joined).toContain('Logic changed');
+    expect(joined).toContain('HTTP Request');
+  });
+
+  it('leaves first-pull path unaffected (still shows Workflows pulled:)', async () => {
+    setupProject();
+    MockN8nClient.mockImplementation(() => makeClientMock() as never);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev', verbose: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflows pulled:');
+    expect(mockPageOutput).not.toHaveBeenCalled();
+  });
+
+  it('leaves no-change path unaffected (still shows Workflows pulled:)', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1 : WF2),
+        ),
+      }) as never,
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev', verbose: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Workflows pulled:');
+    expect(mockPageOutput).not.toHaveBeenCalled();
   });
 });
 

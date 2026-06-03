@@ -28,7 +28,8 @@ import {
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
-import { renderStatTable, type StatRow } from '../lib/node-diff-render.js';
+import { renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { pageOutput } from '../lib/pager.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ export interface PullOptions {
   onlyActive?: boolean;
   json?: boolean;
   verbose?: boolean;
+  noPager?: boolean;
   nameOnly?: boolean;
   exitCode?: boolean;
 }
@@ -518,7 +520,27 @@ export async function runPull(
           console.log(`  ${plural(totalChanges, 'change')}.`);
         }
 
-        if (options.verbose) printWorkflowList(workflows);
+        if (options.verbose) {
+          if (!isFirstPull && delta && delta.updated.length > 0) {
+            const sections: string[] = [];
+            for (const wf of delta.updated) {
+              const diffResult = delta.updatedNodes.get(wf.id);
+              if (diffResult) {
+                const groups = renderNodeGroups(diffResult);
+                if (groups) {
+                  sections.push(`  ${wf.name}\n\n`);
+                  sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
+                  sections.push('\n\n');
+                }
+              }
+            }
+            if (sections.length > 0) {
+              await pageOutput(sections.join('').trimEnd(), { noPager: options.noPager });
+            }
+          } else {
+            printWorkflowList(workflows);
+          }
+        }
         warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
         const hint = buildNextHint(config, options.env, hasChanges, isFirstPull, {
           tag: options.tag,
@@ -594,7 +616,8 @@ export const pullCommand = new Command('pull')
   .requiredOption('--env <env>', 'Environment to pull from')
   .addOption(new Option('--tag <tag>', 'Only pull workflows with this tag name').conflicts('id'))
   .addOption(new Option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")').conflicts('id'))
-  .option('--verbose', 'List every pulled workflow with its active/inactive status')
+  .option('--verbose', 'Expand updated workflows\' named node changes, grouped by risk, routed through pager')
+  .option('--no-pager', 'Disable the pager and print output directly to stdout')
   .addOption(new Option('--only-active', 'Only pull currently active workflows').conflicts('id'))
   .addOption(new Option('--id <workflow-id>', 'Pull a single workflow by its n8n ID').conflicts(['tag', 'pattern', 'onlyActive']))
   .addOption(new Option('--name-only', 'Print only changed workflow names, one per line - suitable for piping').conflicts('json'))
@@ -615,5 +638,5 @@ Examples:
 `,
   )
   .action(async (options) => {
-    await runPull(options);
+    await runPull({ ...options, noPager: options.pager === false });
   });
