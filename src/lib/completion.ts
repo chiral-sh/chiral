@@ -234,7 +234,7 @@ export function generateZshScript(commands: CommandInfo[], version: string): str
     .map((cmd) => {
       const flagDefs = cmd.flags
         .map((f) => {
-          const desc = f.description.replace(/'/g, '').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+          const desc = f.description.replace(/\\/g, '\\\\').replace(/'/g, '').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
           if (f.takesValue) {
             return `      '${f.long}[${desc}]:value:'`;
           }
