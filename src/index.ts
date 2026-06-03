@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module';
 import { Command, CommanderError } from 'commander';
 import chalk from 'chalk';
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json') as { version: string };
 import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
 import { printJsonError, isJsonFlagActive } from './lib/output.js';
@@ -19,6 +22,7 @@ import { environmentCommand } from './commands/environment.js';
 import { remoteCommand } from './commands/remote.js';
 import { statusCommand } from './commands/status.js';
 import { completionCommand, internalCompleteEnvsCommand } from './commands/completion.js';
+import { lockCommand, unlockCommand } from './commands/lock.js';
 
 const program = new Command();
 
@@ -32,7 +36,8 @@ function indentContinuation(message: string): string {
 program
   .name('chiral')
   .description('Safer production deployments for self-hosted n8n Community Edition')
-  .version('0.1.0');
+  .version(version)
+  .option('--debug', 'print full stack trace on unexpected errors');
 
 program.addCommand(initCommand);
 program.addCommand(cloneCommand);
@@ -46,6 +51,8 @@ program.addCommand(pullCommand);
 program.addCommand(diffCommand);
 program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
+program.addCommand(lockCommand);
+program.addCommand(unlockCommand);
 program.addCommand(credentialCommand);
 program.addCommand(teamCommand);
 program.addCommand(completionCommand);
@@ -115,11 +122,15 @@ try {
     }
     process.exit(1);
   }
+  const debug = process.argv.includes('--debug');
   const message = err instanceof Error ? err.message : String(err);
   if (isJsonFlagActive()) {
     printJsonError('unexpected_error', message, false);
   } else {
     console.error(`\n  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
+    if (debug && err instanceof Error && err.stack) {
+      console.error(chalk.dim(err.stack));
+    }
   }
   process.exit(2);
 }
