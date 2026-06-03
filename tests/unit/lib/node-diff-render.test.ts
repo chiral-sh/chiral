@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { renderStatTable, type StatRow } from '../../../src/lib/node-diff-render.js';
+import {
+  renderStatTable,
+  renderNodeGroups,
+  type StatRow,
+} from '../../../src/lib/node-diff-render.js';
+import type { WorkflowDiffResult } from '../../../src/lib/workflow-diff.js';
 
 function row(
   name: string,
@@ -92,5 +97,131 @@ describe('renderStatTable', () => {
     expect(output).toContain('-3');
     // bar should be present (6/10 = 60%, Math.round(0.6*5)=3)
     expect(output).toContain('███░░');
+  });
+});
+
+// ── renderNodeGroups ──────────────────────────────────────────────────────────
+
+function makeDiff(overrides: Partial<WorkflowDiffResult> = {}): WorkflowDiffResult {
+  return {
+    added: [],
+    removed: [],
+    modified: [],
+    connections: { added: 0, removed: 0 },
+    counts: { added: 0, modified: 0, removed: 0 },
+    oldNodeCount: 0,
+    newNodeCount: 0,
+    ...overrides,
+  };
+}
+
+describe('renderNodeGroups', () => {
+  it('returns empty string for an empty diff', () => {
+    expect(renderNodeGroups(makeDiff())).toBe('');
+  });
+
+  it('renders added nodes with + symbol and type · "name" form', () => {
+    const diff = makeDiff({
+      added: [{ name: 'Get Data', type: 'n8n-nodes-base.httpRequest' }],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('+ n8n-nodes-base.httpRequest · "Get Data"');
+  });
+
+  it('renders removed nodes with - symbol and type · "name" form', () => {
+    const diff = makeDiff({
+      removed: [{ name: 'Old Node', type: 'n8n-nodes-base.set' }],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('- n8n-nodes-base.set · "Old Node"');
+  });
+
+  it('renders a rename as ~ "old" → "new" exactly once (not as add + remove)', () => {
+    const diff = makeDiff({
+      modified: [
+        { name: 'New Name', type: 'n8n-nodes-base.set', changed: ['name'], previousName: 'Old Name' },
+      ],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('~ "Old Name" → "New Name"');
+    const occurrences = output.split('~ "Old Name" → "New Name"').length - 1;
+    expect(occurrences).toBe(1);
+    expect(output).not.toContain('+ n8n-nodes-base.set');
+    expect(output).not.toContain('- n8n-nodes-base.set');
+  });
+
+  it('renders a parameter-only change with (parameters changed) and no values', () => {
+    const diff = makeDiff({
+      modified: [
+        { name: 'API Call', type: 'n8n-nodes-base.httpRequest', changed: ['parameters'] },
+      ],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('n8n-nodes-base.httpRequest · "API Call" (parameters changed)');
+    expect(output).toContain('Config changed');
+    expect(output).not.toContain('Logic changed');
+  });
+
+  it('renders a credential-only change in Config changed section', () => {
+    const diff = makeDiff({
+      modified: [
+        { name: 'My Node', type: 'n8n-nodes-base.postgres', changed: ['credentials'] },
+      ],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Config changed');
+    expect(output).toContain('(credentials changed)');
+    expect(output).not.toContain('Logic changed');
+  });
+
+  it('places adds and removes in Logic changed section', () => {
+    const diff = makeDiff({
+      added: [{ name: 'New', type: 'n8n-nodes-base.set' }],
+      removed: [{ name: 'Old', type: 'n8n-nodes-base.set' }],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Logic changed');
+    expect(output).not.toContain('Config changed');
+  });
+
+  it('renders both Logic changed and Config changed sections when both exist', () => {
+    const diff = makeDiff({
+      added: [{ name: 'New Node', type: 'n8n-nodes-base.set' }],
+      modified: [
+        { name: 'Existing', type: 'n8n-nodes-base.httpRequest', changed: ['parameters'] },
+      ],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Logic changed');
+    expect(output).toContain('Config changed');
+  });
+
+  it('renders connection add/remove counts in Logic changed section', () => {
+    const diff = makeDiff({
+      connections: { added: 2, removed: 1 },
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Logic changed');
+    expect(output).toContain('2 connections added');
+    expect(output).toContain('1 connection removed');
+  });
+
+  it('uses singular "connection" for count of 1', () => {
+    const diff = makeDiff({ connections: { added: 1, removed: 0 } });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('1 connection added');
+    expect(output).not.toContain('1 connections added');
+  });
+
+  it('renders settings-only change as structural in Logic changed', () => {
+    const diff = makeDiff({
+      modified: [
+        { name: 'Worker', type: 'n8n-nodes-base.executeWorkflow', changed: ['settings'] },
+      ],
+    });
+    const output = renderNodeGroups(diff);
+    expect(output).toContain('Logic changed');
+    expect(output).not.toContain('Config changed');
+    expect(output).toContain('(settings changed)');
   });
 });
