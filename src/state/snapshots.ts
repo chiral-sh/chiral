@@ -12,9 +12,7 @@ import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
 
 // Minimal validation - snapshots store raw n8n workflow objects as-is
-const SnapshotWorkflowSchema = z
-  .object({ id: z.string(), name: z.string() })
-  .passthrough();
+const SnapshotWorkflowSchema = z.looseObject({ id: z.string(), name: z.string() });
 
 // ── Snapshot metadata ─────────────────────────────────────────────────────────
 

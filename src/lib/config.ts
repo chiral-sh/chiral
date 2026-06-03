@@ -11,7 +11,7 @@ export interface ConfigWithDir {
 }
 
 const EnvironmentSchema = z.object({
-  url: z.string().url(),
+  url: z.url(),
   apiKey: z.string().min(1),
 });
 
@@ -55,7 +55,7 @@ export function loadConfigAndDir(resolved?: ResolvedProject): ConfigWithDir {
 
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
-    const firstError = result.error.errors[0];
+    const firstError = result.error.issues[0];
     const field = firstError.path.join('.');
     throw new UserError(
       `Invalid config: ${field ? field + ': ' : ''}${firstError.message}`,

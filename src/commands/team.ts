@@ -150,7 +150,7 @@ export async function runTeamAdd(
     throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     throw new UserError(`Invalid email address: "${email}"`);
   }
 
@@ -230,7 +230,7 @@ export async function runTeamRemove(
     throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     throw new UserError(`Invalid email address: "${email}"`);
   }
 
@@ -326,7 +326,7 @@ export async function runTeamSetRole(
     throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     throw new UserError(`Invalid email address: "${email}"`);
   }
 

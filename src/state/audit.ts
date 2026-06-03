@@ -17,10 +17,10 @@ export const AuditActionSchema = z.enum([
 ]);
 
 export const AuditEntrySchema = z.object({
-  event_id: z.string().uuid(),
+  event_id: z.guid(),
   event_schema_version: z.literal(1),
   timestamp: z.string().datetime(),
-  actor: z.string().email(),
+  actor: z.email(),
   action: AuditActionSchema,
   project: z.string(),
   source_env: z.string().nullable(),
