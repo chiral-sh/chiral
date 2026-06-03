@@ -27,6 +27,7 @@ import {
 } from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
+import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ interface Delta {
   updated: WorkflowFull[];
   deleted: SnapshotWorkflow[];
   unchanged: number;
+  updatedNodes: Map<string, WorkflowDiffResult>;
 }
 
 function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): Delta {
@@ -73,6 +75,7 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
 
   const added: WorkflowFull[] = [];
   const updated: WorkflowFull[] = [];
+  const updatedNodes = new Map<string, WorkflowDiffResult>();
   let unchanged = 0;
 
   for (const wf of current) {
@@ -84,13 +87,14 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
       computeContentHash(prev) !== computeContentHash(wf)
     ) {
       updated.push(wf);
+      updatedNodes.set(wf.id, diffWorkflowNodes(prev, wf));
     } else {
       unchanged++;
     }
   }
 
   const deleted = previous.filter((p) => !currIds.has(p.id));
-  return { added, updated, deleted, unchanged };
+  return { added, updated, deleted, unchanged, updatedNodes };
 }
 
 function buildNextHint(
@@ -457,7 +461,9 @@ export async function runPull(
           active: activeCount,
           inactive: inactiveCount,
           new: (delta?.added ?? workflows).map((w) => w.name),
-          updated: delta?.updated.map((w) => w.name) ?? [],
+          updated: delta
+            ? delta.updated.map((w) => ({ name: w.name, nodes: delta.updatedNodes.get(w.id) }))
+            : [],
           deleted: delta?.deleted.map((w) => w.name) ?? [],
           unchanged: delta?.unchanged ?? 0,
         });

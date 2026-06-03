@@ -518,9 +518,101 @@ describe('runPull - --json output', () => {
     await runPull({ env: 'dev', json: true });
 
     const result = JSON.parse(logged[0]);
-    expect(result.data.updated).toContain('Workflow One');
+    expect(result.data.updated[0].name).toBe('Workflow One');
     expect(result.data.deleted).toContain('Workflow Two');
     expect(result.data.unchanged).toBe(0);
+  });
+
+  it('--json updated entries carry a nodes object computed from previous snapshot vs current', async () => {
+    setupProject();
+
+    const prevNodes = [{ id: 'n1', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest' }];
+    const currNodes = [
+      { id: 'n1', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest' },
+      { id: 'n2', name: 'Set', type: 'n8n-nodes-base.set' },
+    ];
+    const WF1_PREV = { ...WF1, versionId: 'v1', nodes: prevNodes };
+    const WF1_CURR = { ...WF1, versionId: 'v2', nodes: currNodes };
+
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF1_PREV);
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT,
+      env: 'dev',
+      command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z',
+      workflow_count: 1,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_CURR]),
+        getWorkflow: vi.fn().mockResolvedValue(WF1_CURR),
+      }) as never,
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    const result = JSON.parse(logged[0]);
+    const updatedEntry = result.data.updated[0];
+    expect(updatedEntry.name).toBe('Workflow One');
+    expect(updatedEntry.nodes).toBeDefined();
+    expect(updatedEntry.nodes.counts.added).toBe(1);
+    expect(updatedEntry.nodes.counts.removed).toBe(0);
+    expect(updatedEntry.nodes.added[0].name).toBe('Set');
+  });
+
+  it('does not make extra getWorkflow calls to compute node diff for updated entries', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+
+    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const getWorkflow = vi.fn().mockImplementation((id: string) =>
+      Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+    );
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow,
+      }) as never,
+    );
+
+    await runPull({ env: 'dev', json: true });
+
+    // getWorkflow is called once per workflow (for fetching content), never extra for diff
+    expect(getWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it('--json new/deleted/unchanged keys are unaffected by node diff change', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+
+    const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    MockN8nClient.mockImplementation(() =>
+      makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF3),
+        ),
+      }) as never,
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.new).toContain('Workflow Three');
+    expect(result.data.deleted).toContain('Workflow Two');
+    expect(result.data.unchanged).toBe(0);
+    // updated is now objects
+    expect(result.data.updated).toHaveLength(1);
+    expect(result.data.updated[0].name).toBe('Workflow One');
   });
 });
 
