@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { join } from 'node:path';
 import { readFileSync, existsSync, watch as fsWatch } from 'node:fs';
 import { loadConfigAndDir } from '../lib/config.js';
@@ -132,27 +133,44 @@ const FIELD_TO_COL: Partial<Record<FieldName, ColKey>> = {
   drift: 'drift',
 };
 
+// Strip ANSI escape codes so colored cells measure by visible width, not byte length.
+function visibleLen(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
+}
+
+function padRight(s: string, n: number): string {
+  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
+}
+
 function buildCellValues(row: EnvRow, noHumanize: boolean): Record<ColKey, string> {
   const lastPullCell = row.lastPull
-    ? humanize(row.lastPull, noHumanize) + (row.stale ? ' !' : '')
-    : 'never !';
+    ? humanize(row.lastPull, noHumanize) + (row.stale ? chalk.yellow(' !') : '')
+    : chalk.yellow('never !');
   return {
-    env: row.name,
+    env: chalk.cyan(row.name),
     lastPull: lastPullCell,
-    lastPush: row.lastPush ? humanize(row.lastPush, noHumanize) : '—',
-    workflows: row.workflowCount === null ? '—' : row.workflowCount === 0 ? '0 (!)' : String(row.workflowCount),
-    drift: row.drift ?? '—',
+    lastPush: row.lastPush ? humanize(row.lastPush, noHumanize) : chalk.dim('—'),
+    workflows:
+      row.workflowCount === null
+        ? chalk.dim('—')
+        : row.workflowCount === 0
+          ? chalk.yellow('0 (!)')
+          : String(row.workflowCount),
+    drift: row.drift ? chalk.yellow(row.drift) : chalk.dim('—'),
   };
 }
 
 function renderTable(rows: EnvRow[], noHumanize: boolean, cols: ColKey[] = COLUMN_ORDER): string[] {
   const allCells = rows.map(row => buildCellValues(row, noHumanize));
+  const headerCells: Record<ColKey, string> = Object.fromEntries(
+    cols.map(c => [c, chalk.dim(COLUMN_HEADERS[c])]),
+  ) as Record<ColKey, string>;
 
   const widths: Record<ColKey, number> = {} as Record<ColKey, number>;
   for (const col of cols) {
     widths[col] = Math.max(
       COLUMN_HEADERS[col].length,
-      ...allCells.map(c => c[col].length),
+      ...allCells.map(c => visibleLen(c[col])),
     );
   }
 
@@ -161,12 +179,12 @@ function renderTable(rows: EnvRow[], noHumanize: boolean, cols: ColKey[] = COLUM
   }
 
   function dataLine(vals: Record<ColKey, string>): string {
-    return '  │' + cols.map(c => ' ' + vals[c].padEnd(widths[c]) + ' ').join('│') + '│';
+    return '  │' + cols.map(c => ' ' + padRight(vals[c], widths[c]) + ' ').join('│') + '│';
   }
 
   const lines: string[] = [];
   lines.push(borderLine('┌', '┬', '┐'));
-  lines.push(dataLine(COLUMN_HEADERS));
+  lines.push(dataLine(headerCells));
   lines.push(borderLine('├', '┼', '┤'));
   for (const cell of allCells) {
     lines.push(dataLine(cell));
@@ -245,7 +263,10 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   const staleAfterExplicit = options.staleAfter !== undefined;
   const staleLockAfterMs = (options.staleLockAfter ?? 24) * 3_600_000;
 
-  if (options.verbose) console.error('  verbose: reading audit.jsonl');
+  if (options.verbose) {
+    console.error();
+    console.error('  verbose: reading audit.jsonl');
+  }
 
   let auditEntries: AuditEntry[] = [];
   try {
@@ -436,22 +457,22 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       : COLUMN_ORDER;
 
     console.log();
-    console.log(`  ${config.project}`);
+    console.log(`  ${chalk.bold(config.project)}`);
     console.log();
 
     for (const line of renderTable(envRows, noHumanize, tableCols)) console.log(line);
 
     for (const envName of zeroWorkflowEnvs) {
-      console.log(`\n  ⚠  ${envName} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
+      console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
     }
 
     if (locks.length > 0) {
-      console.log(`\n  Locks (${locks.length} active)`);
-      console.log('  ' + '─'.repeat(71));
+      console.log(`\n  ${chalk.bold(`Locks (${locks.length} active)`)}`);
+      console.log(chalk.dim('  ' + '─'.repeat(71)));
       for (const lock of locks) {
         const age = humanize(lock.since, false);
-        const staleLabel = lock.staleLock ? `   STALE (>${options.staleLockAfter ?? 24}h — may be abandoned)` : '';
-        console.log(`  ${lock.workflowId}   ${lock.actor} (${lock.hostname})   since ${age}${staleLabel}`);
+        const staleLabel = lock.staleLock ? chalk.yellow(`   STALE (>${options.staleLockAfter ?? 24}h — may be abandoned)`) : '';
+        console.log(`  ${chalk.cyan(lock.workflowId)}   ${lock.actor} ${chalk.dim(`(${lock.hostname})`)}   ${chalk.dim(`since ${age}`)}${staleLabel}`);
       }
     }
 

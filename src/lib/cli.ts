@@ -3,7 +3,12 @@ import type ora from 'ora';
 
 export function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
   const msg = err instanceof Error ? err.message : String(err);
-  spinner.fail(chalk.red(`  ${msg}`));
+  spinner.stop();
+  console.error(`  ${chalk.red('✗')}  ${msg}`);
+  console.error();
+  if (err instanceof Error) {
+    (err as unknown as Record<string, unknown>).__alreadyDisplayed = true;
+  }
   throw err;
 }
 

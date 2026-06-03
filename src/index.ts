@@ -21,6 +21,13 @@ import { statusCommand } from './commands/status.js';
 
 const program = new Command();
 
+// Align continuation lines under the first line's text. The "  ✗  " prefix is
+// 5 columns wide, so any newline-separated lines (e.g. Commander's "(Did you
+// mean ...?)" suggestion) must be indented 5 spaces to line up.
+function indentContinuation(message: string): string {
+  return message.replace(/\n/g, '\n     ');
+}
+
 program
   .name('chiral')
   .description('Safer production deployments for self-hosted n8n Community Edition')
@@ -88,17 +95,20 @@ try {
     if (isJsonFlagActive()) {
       printJsonError('usage_error', message, false);
     } else {
-      console.error(`\n  ${chalk.red('✗')}  ${message}\n`);
+      console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
     }
     process.exit(1);
   }
   if (err instanceof UserError) {
-    if (isJsonFlagActive()) {
-      printJsonError('user_error', err.message, false);
-    } else {
-      console.error(`\n  ${chalk.red('✗')}  ${err.message}`);
-      if (err.hint) console.error(chalk.dim(err.hint));
-      console.error();
+    const alreadyDisplayed = (err as unknown as Record<string, unknown>).__alreadyDisplayed === true;
+    if (!alreadyDisplayed) {
+      if (isJsonFlagActive()) {
+        printJsonError('user_error', err.message, false);
+      } else {
+        console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
+        if (err.hint) console.error(chalk.dim(err.hint));
+        console.error();
+      }
     }
     process.exit(1);
   }
