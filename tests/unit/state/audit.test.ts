@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { vol } from 'memfs';
-import { writeAuditEntry, readAuditLog, AuditEntry } from '../../../src/state/audit.js';
+import { writeAuditEntry, readAuditLog, readInitEvent, AuditEntry } from '../../../src/state/audit.js';
 import { UserError } from '../../../src/lib/errors.js';
 
 vi.mock('node:fs', async () => {
@@ -108,5 +108,44 @@ describe('readAuditLog', () => {
     writeAuditEntry('/project/.chiral', initEntry);
     const entries = readAuditLog('/project/.chiral');
     expect(entries[0].source_env).toBeNull();
+  });
+});
+
+describe('readInitEvent', () => {
+  it('returns { actor, timestamp } from the first init entry in a multi-line audit file', () => {
+    vol.fromJSON({ '/project/.chiral/': null });
+    const pushEntry = { ...VALID_ENTRY, action: 'push' as const };
+    const initEntry1 = { ...VALID_ENTRY, action: 'init' as const, actor: 'first@example.com', timestamp: '2024-01-01T12:00:00.000Z' };
+    const initEntry2 = { ...VALID_ENTRY, action: 'init' as const, actor: 'second@example.com' };
+    
+    writeAuditEntry('/project/.chiral', pushEntry);
+    writeAuditEntry('/project/.chiral', initEntry1);
+    writeAuditEntry('/project/.chiral', initEntry2);
+
+    expect(readInitEvent('/project/.chiral')).toEqual({
+      actor: 'first@example.com',
+      timestamp: '2024-01-01T12:00:00.000Z'
+    });
+  });
+
+  it('returns null when audit.jsonl does not exist', () => {
+    vol.fromJSON({ '/project/.chiral/': null });
+    expect(readInitEvent('/project/.chiral')).toBeNull();
+  });
+
+  it('returns null when the file is empty', () => {
+    vol.fromJSON({ '/project/.chiral/audit.jsonl': '' });
+    expect(readInitEvent('/project/.chiral')).toBeNull();
+  });
+
+  it('returns null when no line has action === "init"', () => {
+    vol.fromJSON({ '/project/.chiral/': null });
+    writeAuditEntry('/project/.chiral', { ...VALID_ENTRY, action: 'push' as const });
+    expect(readInitEvent('/project/.chiral')).toBeNull();
+  });
+
+  it('silently skips malformed JSON lines without throwing', () => {
+    vol.fromJSON({ '/project/.chiral/audit.jsonl': 'not-json\n{"action":"init","actor":"bob","timestamp":"time"}' });
+    expect(readInitEvent('/project/.chiral')).toEqual({ actor: 'bob', timestamp: 'time' });
   });
 });

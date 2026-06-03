@@ -104,7 +104,7 @@ describe('buildCredentialMap', () => {
     expect(map[0].sourceName).toBe('dev_postgres');
   });
 
-  it('handles empty credentials registry — all passthrough', () => {
+  it('handles empty credentials registry - all passthrough', () => {
     const nodes = [makeNode('dev_postgres')];
     const map = buildCredentialMap(nodes, 'dev', 'prod', EMPTY_CREDS);
     expect(map[0].status).toBe('passthrough');
@@ -134,7 +134,7 @@ describe('applyCredentialMap', () => {
     connections: {},
   };
 
-  it('returns a new object — does not mutate input', () => {
+  it('returns a new object - does not mutate input', () => {
     const map = [{ sourceName: 'dev_postgres', targetName: 'prod_postgres', logicalName: 'postgres', status: 'mapped' as const }];
     const result = applyCredentialMap(wf, map);
     expect(result).not.toBe(wf); // different object reference

@@ -138,7 +138,7 @@ function setupDivergentFingerprints(
 
 // ── setup errors ──────────────────────────────────────────────────────────────
 
-describe('runDiff — setup errors', () => {
+describe('runDiff - setup errors', () => {
   it('throws UserError when git user.email is not set', async () => {
     setupProject();
     mockExecSync.mockImplementation(() => { throw new Error('no email'); });
@@ -180,7 +180,7 @@ describe('runDiff — setup errors', () => {
 
 // ── diff symbols ──────────────────────────────────────────────────────────────
 
-describe('runDiff — diff symbols', () => {
+describe('runDiff - diff symbols', () => {
   it('shows + for workflow in source not in target', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -229,7 +229,7 @@ describe('runDiff — diff symbols', () => {
 
     expect(output.join('\n')).toContain('~');
     expect(output.join('\n')).toContain('Workflow One');
-    expect(output.join('\n')).toContain('(modified)');
+    expect(output.join('\n')).toContain('(logic changed)');
   });
 
   it('shows identical message when both envs match exactly', async () => {
@@ -246,7 +246,7 @@ describe('runDiff — diff symbols', () => {
 
     expect(output.join('\n')).toContain('identical');
     expect(output.join('\n')).not.toContain('+');
-    expect(output.join('\n')).not.toContain('-');
+    expect(output.join('\n')).not.toMatch(/^\s*-\s+/m);
     expect(output.join('\n')).not.toContain('~');
   });
 
@@ -288,7 +288,7 @@ describe('runDiff — diff symbols', () => {
 
 // ── --show-unchanged ──────────────────────────────────────────────────────────
 
-describe('runDiff — --show-unchanged', () => {
+describe('runDiff - --show-unchanged', () => {
   it('hides unchanged workflows by default', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -301,7 +301,7 @@ describe('runDiff — --show-unchanged', () => {
 
     await runDiff({ source: 'dev', target: 'prod' });
 
-    // SRC_WF1 / TGT_WF1 are identical — should not appear in output
+    // SRC_WF1 / TGT_WF1 are identical - should not appear in output
     expect(output.join('\n')).not.toContain('identical');
   });
 
@@ -340,7 +340,7 @@ describe('runDiff — --show-unchanged', () => {
 
 // ── workflows.json name resolution ────────────────────────────────────────────
 
-describe('runDiff — name resolution via workflows.json', () => {
+describe('runDiff - name resolution via workflows.json', () => {
   it('matches workflows by mapped name across environments', async () => {
     setupProject();
     vol.writeFileSync(
@@ -369,7 +369,7 @@ describe('runDiff — name resolution via workflows.json', () => {
     // Should resolve as identical, not as added/removed
     expect(output.join('\n')).toContain('identical');
     expect(output.join('\n')).not.toContain('+');
-    expect(output.join('\n')).not.toContain('-');
+    expect(output.join('\n')).not.toMatch(/^\s*-\s+/m);
   });
 
   it('shows ~ when mapped workflow has a different versionId', async () => {
@@ -405,7 +405,7 @@ describe('runDiff — name resolution via workflows.json', () => {
 
   it('falls back to exact name when no mapping exists', async () => {
     setupProject();
-    // workflows.json is absent — falls back to exact name matching
+    // workflows.json is absent - falls back to exact name matching
     const srcWf = makeSummary({ id: 'src-1', name: 'Workflow One', versionId: 'v1' });
     const tgtWf = makeSummary({ id: 'tgt-1', name: 'Workflow One', versionId: 'v1' });
 
@@ -425,7 +425,7 @@ describe('runDiff — name resolution via workflows.json', () => {
 
 // ── --json output ─────────────────────────────────────────────────────────────
 
-describe('runDiff — --json output', () => {
+describe('runDiff - --json output', () => {
   it('emits a single JSON object and no human text', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -516,7 +516,7 @@ describe('runDiff — --json output', () => {
 
 // ── --name-only output ────────────────────────────────────────────────────────
 
-describe('runDiff — --name-only output', () => {
+describe('runDiff - --name-only output', () => {
   it('prints only differing workflow names, one per line', async () => {
     setupProject();
     setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
@@ -553,7 +553,7 @@ describe('runDiff — --name-only output', () => {
 
 // ── --tag filter ──────────────────────────────────────────────────────────────
 
-describe('runDiff — --tag filter', () => {
+describe('runDiff - --tag filter', () => {
   it('passes tag to listWorkflows on both source and target', async () => {
     setupProject();
     const srcList = vi.fn().mockResolvedValue([]);
@@ -592,7 +592,7 @@ describe('runDiff — --tag filter', () => {
 
 // ── --pattern filter ──────────────────────────────────────────────────────────
 
-describe('runDiff — --pattern filter', () => {
+describe('runDiff - --pattern filter', () => {
   it('applies pattern to source workflow names only', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -606,7 +606,7 @@ describe('runDiff — --pattern filter', () => {
     // Pattern matches only "Workflow One"
     await runDiff({ source: 'dev', target: 'prod', pattern: 'Workflow O*', nameOnly: true });
 
-    // Only Workflow One is in scope from source — Workflow Two excluded by pattern
+    // Only Workflow One is in scope from source - Workflow Two excluded by pattern
     // TGT_WF3 is in target but not matched by any scoped source → removed
     expect(logged).not.toContain('Workflow Two');
   });
@@ -614,7 +614,7 @@ describe('runDiff — --pattern filter', () => {
 
 // ── --exit-code ───────────────────────────────────────────────────────────────
 
-describe('runDiff — --exit-code', () => {
+describe('runDiff - --exit-code', () => {
   it('throws ControlledExit(1) when differences exist', async () => {
     setupProject();
     setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
@@ -647,7 +647,7 @@ describe('runDiff — --exit-code', () => {
 
 // ── audit entries ─────────────────────────────────────────────────────────────
 
-describe('runDiff — audit entries', () => {
+describe('runDiff - audit entries', () => {
   it('writes a success audit entry with source_env and target_env', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -705,7 +705,7 @@ describe('runDiff — audit entries', () => {
 
 // ── fingerprint-based change detection ───────────────────────────────────────
 
-describe('runDiff — fingerprint-based change detection', () => {
+describe('runDiff - fingerprint-based change detection', () => {
   it('reports unchanged when fingerprints show identical content despite different versionId', async () => {
     setupProject();
     // Both envs have the SAME contentHash → identical despite versionId mismatch
@@ -732,7 +732,7 @@ describe('runDiff — fingerprint-based change detection', () => {
 
     await runDiff({ source: 'dev', target: 'prod' });
 
-    // Fingerprint fast path detected identical content — no API fetches
+    // Fingerprint fast path detected identical content - no API fetches
     expect(srcGetWorkflow).not.toHaveBeenCalled();
     expect(tgtGetWorkflow).not.toHaveBeenCalled();
     expect(output.join('\n')).toContain('identical');
@@ -757,11 +757,11 @@ describe('runDiff — fingerprint-based change detection', () => {
 
     await runDiff({ source: 'dev', target: 'prod' });
 
-    // Fallback path triggered — both sides fetched, content differs → modified
+    // Fallback path triggered - both sides fetched, content differs → configuration changed
     expect(srcGetWorkflow).toHaveBeenCalledWith(SRC_WF1.id);
     expect(tgtGetWorkflow).toHaveBeenCalledWith(TGT_WF1_UPDATED.id);
     expect(output.join('\n')).toContain('~');
-    expect(output.join('\n')).toContain('(modified)');
+    expect(output.join('\n')).toContain('(configuration changed)');
   });
 
   it('reports unchanged via fallback when full workflow content matches despite different versionId', async () => {
@@ -790,7 +790,7 @@ describe('runDiff — fingerprint-based change detection', () => {
 
 // ── + hint text ───────────────────────────────────────────────────────────────
 
-describe('runDiff — + hint text for added workflows', () => {
+describe('runDiff - + hint text for added workflows', () => {
   it('shows "will be created" for unmapped added workflow', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -835,7 +835,7 @@ describe('runDiff — + hint text for added workflows', () => {
     await runDiff({ source: 'dev', target: 'prod' });
 
     const joined = output.join('\n');
-    expect(joined).toContain('mapped to "Invoice Sync" in prod but not found — does it exist?');
+    expect(joined).toContain('mapped to "Invoice Sync" in prod but not found - does it exist?');
     expect(joined).not.toContain('in dev, not in prod');
     expect(joined).not.toContain('run: chiral workflow map');
   });
@@ -843,7 +843,7 @@ describe('runDiff — + hint text for added workflows', () => {
 
 // ── output mode ───────────────────────────────────────────────────────────────
 
-describe('runDiff — output mode selection', () => {
+describe('runDiff - output mode selection', () => {
   it('suppresses spinner and header when --json is set', async () => {
     setupProject();
     setupTwoClientMocks(
@@ -880,7 +880,7 @@ describe('runDiff — output mode selection', () => {
 
 // ── Next: hint ────────────────────────────────────────────────────────────────
 
-describe('runDiff — Next: hint', () => {
+describe('runDiff - Next: hint', () => {
   it('shows push --dry-run hint when differences found', async () => {
     setupProject();
     setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');

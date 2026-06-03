@@ -290,7 +290,7 @@ describe('runAdopt', () => {
   });
 });
 
-describe('runAdopt — audit workflow_ids', () => {
+describe('runAdopt - audit workflow_ids', () => {
   it('records adopted workflow IDs in the audit entry', async () => {
     setupChiralDir();
     const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
@@ -329,7 +329,7 @@ describe('runAdopt — audit workflow_ids', () => {
   });
 });
 
-describe('runAdopt — fingerprints summary output', () => {
+describe('runAdopt - fingerprints summary output', () => {
   it('prints a fingerprints saved confirmation line', async () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(() => makeClientMock() as never);
@@ -346,7 +346,7 @@ describe('runAdopt — fingerprints summary output', () => {
   });
 });
 
-describe('runAdopt — env-specific name detection', () => {
+describe('runAdopt - env-specific name detection', () => {
   const ENV_WORKFLOW_SUMMARY = {
     ...WORKFLOW_SUMMARY,
     id: 'wf-env',

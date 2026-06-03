@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
 
-// Minimal validation — snapshots store raw n8n workflow objects as-is
+// Minimal validation - snapshots store raw n8n workflow objects as-is
 const SnapshotWorkflowSchema = z
   .object({ id: z.string(), name: z.string() })
   .passthrough();
@@ -121,7 +121,7 @@ export function writeSnapshotMeta(
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
   } catch {
-    // best-effort — don't block the command if meta write fails
+    // best-effort - don't block the command if meta write fails
   }
 }
 
@@ -165,7 +165,7 @@ export function readAllWorkflowsInDeployment(
       const result = SnapshotWorkflowSchema.safeParse(raw);
       if (result.success) workflows.push(result.data);
     } catch {
-      // skip corrupted snapshot files — pull will overwrite them
+      // skip corrupted snapshot files - pull will overwrite them
     }
   }
   return workflows;

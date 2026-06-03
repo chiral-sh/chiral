@@ -129,7 +129,7 @@ export function unregisterProject(name: string): void {
   writeIndex(index);
 }
 
-export function renameProjectInIndex(oldName: string, newName: string): void {
+export function renameProjectInIndex(oldName: string, newName: string, newPath: string): void {
   const index = readIndex();
   const oldKey = findProjectKey(oldName, index);
   if (!oldKey) {
@@ -141,6 +141,7 @@ export function renameProjectInIndex(oldName: string, newName: string): void {
   }
   const entry = index.projects[oldKey]!;
   delete index.projects[oldKey];
+  entry.path = newPath;
   index.projects[newName] = entry;
   writeIndex(index);
 }
@@ -172,7 +173,7 @@ export function writeSession(ppid: number, projectName: string): void {
   writeFileSync(getSessionPath(ppid), JSON.stringify(session, null, 2) + '\n', 'utf-8');
 }
 
-// Updates lastUsedAt without blocking the caller — fire-and-forget.
+// Updates lastUsedAt without blocking the caller - fire-and-forget.
 // Writes to a .tmp file then renames atomically so concurrent readers never see a truncated file.
 function touchSession(ppid: number): void {
   const sessionPath = getSessionPath(ppid);
@@ -204,7 +205,7 @@ export function clearSessionsForProject(projectName: string): void {
       }
     }
   } catch {
-    // ignore — best-effort
+    // ignore - best-effort
   }
 }
 
@@ -219,12 +220,12 @@ export function pruneDeadSessions(): void {
       try {
         process.kill(pid, 0); // 0 = check existence only, no signal sent
       } catch {
-        // PID not alive — remove stale session file
+        // PID not alive - remove stale session file
         rmSync(join(sessionsDir, file), { force: true });
       }
     }
   } catch {
-    // ignore — best-effort GC
+    // ignore - best-effort GC
   }
 }
 
@@ -266,7 +267,7 @@ export function resolveActiveProject(): ResolvedProject {
           inactiveReminder: stale,
         };
       }
-      // Session points to a deleted project — fall through
+      // Session points to a deleted project - fall through
     }
   }
 

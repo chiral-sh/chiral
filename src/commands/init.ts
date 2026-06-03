@@ -18,9 +18,20 @@ import { createChiralDirectory } from '../state/init.js';
 export interface InitOptions {
   project?: string;
   noGit?: boolean;
+  json?: boolean;
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
+
+function getGitActor(): string {
+  try {
+    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch {
+    throw new UserError(
+      'git config user.email is not set - configure it before running chiral init',
+    );
+  }
+}
 
 function isGitInstalled(): boolean {
   try {
@@ -35,7 +46,7 @@ function runGitInit(dir: string): void {
   try {
     execSync('git init', { cwd: dir, stdio: 'pipe' });
   } catch {
-    // non-fatal — user can run git init themselves
+    // non-fatal - user can run git init themselves
   }
 }
 
@@ -60,7 +71,9 @@ export async function runInit(options: InitOptions): Promise<void> {
     throw new UserError(`Invalid project name: "${projectName}"`);
   }
 
-  // Free tier: enforce 1-project limit (no license check yet — placeholder)
+  const ownerEmail = getGitActor();
+
+  // Free tier: enforce 1-project limit (no license check yet - placeholder)
   // TODO: re-enable once paid tier / license gate is wired up (see CLAUDE.md Phase 5)
   // const projectCount = getProjectCount();
   // if (projectCount >= 1) {
@@ -89,7 +102,7 @@ export async function runInit(options: InitOptions): Promise<void> {
   mkdirSync(projectDir, { recursive: true });
 
   const chiralDir = join(projectDir, '.chiral');
-  createChiralDirectory(chiralDir, projectName);
+  createChiralDirectory(chiralDir, projectName, undefined, ownerEmail);
 
   // Register in global index and auto-select for this terminal session
   registerProject(projectName, projectDir);
@@ -104,11 +117,16 @@ export async function runInit(options: InitOptions): Promise<void> {
   }
 
   // ── Output ─────────────────────────────────────────────────────────────────
+  if (options.json) {
+    console.log(JSON.stringify({ status: 'ok', data: { project: projectName, path: projectDir, created: true } }));
+    return;
+  }
+
   const file = (path: string, note?: string) =>
-    `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('— ' + note) : ''}`;
+    `  ${chalk.green('✓')}  ${chalk.dim(path)}${note ? '  ' + chalk.dim('- ' + note) : ''}`;
 
   console.log(`\n  ${chalk.bold(projectName)}\n`);
-  console.log(file(`${projectDir}/.chiral/config.example.json`, 'fill in your environments here'));
+  console.log(file(`${projectDir}/.chiral/config.example.json`));
   console.log(file(`${projectDir}/.chiral/.gitignore`, 'keeps config.json out of git'));
   console.log(file(`${projectDir}/.chiral/credentials.json`));
   console.log(file(`${projectDir}/.chiral/audit.jsonl`));
@@ -127,6 +145,7 @@ export const initCommand = new Command('init')
   .argument('[name]', 'Project name (skips interactive prompt)')
   .option('--project <name>', 'Project name (alternative to positional argument)')
   .option('--no-git', 'Skip automatic git init inside the project folder')
+  .option('--json', 'Output result as JSON')
   .addHelpText(
     'after',
     `
@@ -141,7 +160,7 @@ Examples:
     chiral init my-n8n --no-git
 `,
   )
-  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean }) => {
+  .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean }) => {
     const resolvedName = nameArg ?? options.project;
-    await runInit({ project: resolvedName, noGit: options.noGit });
+    await runInit({ project: resolvedName, noGit: options.noGit, json: options.json });
   });

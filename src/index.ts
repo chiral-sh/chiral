@@ -3,12 +3,15 @@ import { Command, CommanderError } from 'commander';
 import chalk from 'chalk';
 import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
+import { cloneCommand } from './commands/clone.js';
 import { initCommand } from './commands/init.js';
 import { adoptCommand } from './commands/adopt.js';
 import { pullCommand } from './commands/pull.js';
 import { diffCommand } from './commands/diff.js';
 import { pushCommand } from './commands/push.js';
 import { workflowCommand } from './commands/workflow.js';
+import { credentialCommand } from './commands/credential.js';
+import { teamCommand } from './commands/team.js';
 import { useCommand } from './commands/use.js';
 import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
@@ -22,6 +25,7 @@ program
   .version('0.1.0');
 
 program.addCommand(initCommand);
+program.addCommand(cloneCommand);
 program.addCommand(useCommand);
 program.addCommand(projectCommand);
 program.addCommand(environmentCommand);
@@ -31,6 +35,8 @@ program.addCommand(pullCommand);
 program.addCommand(diffCommand);
 program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
+program.addCommand(credentialCommand);
+program.addCommand(teamCommand);
 
 // Global protection against Commander eagerly eating flags as option values.
 // Catches cases like `--remote --solo` where Commander assigns '--solo' as the
@@ -74,7 +80,7 @@ try {
   }
   if (err instanceof CommanderError) {
     if (err.exitCode === 0 || err.code === 'commander.help') process.exit(0); // --help, --version, no-subcommand: output already written
-    // Commander bakes "error: " into the message — strip it for our formatter
+    // Commander bakes "error: " into the message - strip it for our formatter
     const message = err.message.replace(/^error:\s*/, '');
     console.error(`\n  ${chalk.red('✗')}  ${message}\n`);
     process.exit(1);

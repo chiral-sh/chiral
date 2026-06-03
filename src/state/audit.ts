@@ -68,3 +68,39 @@ export function readAuditLog(chiralDir: string): AuditEntry[] {
     return result.data;
   });
 }
+
+export function readInitEvent(chiralDir: string): { actor: string; timestamp: string } | null {
+  const auditPath = join(chiralDir, 'audit.jsonl');
+  if (!existsSync(auditPath)) return null;
+
+  let content: string;
+  try {
+    content = readFileSync(auditPath, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split('\n').filter((line) => line.trim() !== '');
+  for (const line of lines) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      // silently skip malformed JSON lines
+      continue;
+    }
+    if (
+      typeof raw === 'object' &&
+      raw !== null &&
+      (raw as Record<string, unknown>)['action'] === 'init' &&
+      typeof (raw as Record<string, unknown>)['actor'] === 'string' &&
+      typeof (raw as Record<string, unknown>)['timestamp'] === 'string'
+    ) {
+      return {
+        actor: (raw as Record<string, unknown>)['actor'] as string,
+        timestamp: (raw as Record<string, unknown>)['timestamp'] as string,
+      };
+    }
+  }
+  return null;
+}

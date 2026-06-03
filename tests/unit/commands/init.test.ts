@@ -28,6 +28,7 @@ vi.mock('chalk', () => ({
 import { execSync } from 'node:child_process';
 import { input } from '@inquirer/prompts';
 import { runInit } from '../../../src/commands/init.js';
+import { createChiralDirectory } from '../../../src/state/init.js';
 
 const mockExecSync = vi.mocked(execSync);
 const mockInput = vi.mocked(input);
@@ -51,7 +52,10 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
-  mockExecSync.mockReturnValue(Buffer.from('') as never);
+  mockExecSync.mockImplementation((cmd: string) => {
+    if (String(cmd) === 'git config user.email') return 'test@example.com' as never;
+    return Buffer.from('') as never;
+  });
   vol.fromJSON({ [INDEX_PATH]: emptyIndex() });
 });
 
@@ -139,5 +143,33 @@ describe('runInit', () => {
 
     const gitInitCall = mockExecSync.mock.calls.find(([c]) => String(c) === 'git init');
     expect(gitInitCall).toBeDefined();
+  });
+
+  it('creates team.json with actor email as owner after successful init', async () => {
+    await runInit({ project: 'my-project' });
+
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/team.json`)).toBe(true);
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/team.json`, 'utf-8') as string;
+    const team = JSON.parse(raw);
+    expect(team.version).toBe(1);
+    expect(team.members['test@example.com']).toBeDefined();
+    expect(team.members['test@example.com'].role).toBe('owner');
+    expect(team.members['test@example.com'].addedBy).toBe('test@example.com');
+    expect(typeof team.members['test@example.com'].addedAt).toBe('string');
+  });
+
+  it('throws UserError when git config user.email is not set', async () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (String(cmd) === 'git config user.email') throw new Error('exit code 1');
+      return Buffer.from('') as never;
+    });
+    await expect(runInit({ project: 'my-project' })).rejects.toThrow(UserError);
+    await expect(runInit({ project: 'my-project' })).rejects.toThrow('git config user.email');
+  });
+
+  it('does not create team.json when createChiralDirectory is called without ownerEmail', () => {
+    const chiralDir = `${PROJECT_DIR}/.chiral`;
+    createChiralDirectory(chiralDir, 'my-project', undefined, undefined);
+    expect(vol.existsSync(`${chiralDir}/team.json`)).toBe(false);
   });
 });

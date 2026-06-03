@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
-import { loadConfig, resolveEnv } from '../../../src/lib/config.js';
+import { loadConfig, resolveEnv, parseConfigExample } from '../../../src/lib/config.js';
 import { UserError } from '../../../src/lib/errors.js';
 
 vi.mock('node:fs', async () => {
@@ -112,5 +112,74 @@ describe('resolveEnv', () => {
     expect(() => resolveEnv(config, 'staging')).toThrow(
       'Unknown environment "staging". Available: dev, prod',
     );
+  });
+});
+
+describe('parseConfigExample', () => {
+  it('returns a non-placeholder URL as-is', () => {
+    vol.fromJSON({
+      [`${PROJECT_DIR}/.chiral/config.example.json`]: JSON.stringify({
+        project: 'my-project',
+        environments: { dev: { url: 'https://dev.n8n.io', apiKey: 'key' } },
+      }),
+    });
+    const parsed = parseConfigExample(`${PROJECT_DIR}/.chiral`);
+    expect(parsed.envs['dev'].url).toBe('https://dev.n8n.io');
+  });
+
+  it('returns undefined for a URL containing your-domain / example.com / localhost', () => {
+    vol.fromJSON({
+      [`${PROJECT_DIR}/.chiral/config.example.json`]: JSON.stringify({
+        project: 'my-project',
+        environments: {
+          dev1: { url: 'https://your-domain.com', apiKey: 'key' },
+          dev2: { url: 'https://example.com/foo', apiKey: 'key' },
+          dev3: { url: 'http://localhost:5678', apiKey: 'key' },
+        },
+      }),
+    });
+    const parsed = parseConfigExample(`${PROJECT_DIR}/.chiral`);
+    expect(parsed.envs['dev1'].url).toBeUndefined();
+    expect(parsed.envs['dev2'].url).toBeUndefined();
+    expect(parsed.envs['dev3'].url).toBeUndefined();
+  });
+
+  it('returns undefined for URL when apiKey starts with YOUR_', () => {
+    vol.fromJSON({
+      [`${PROJECT_DIR}/.chiral/config.example.json`]: JSON.stringify({
+        project: 'my-project',
+        environments: { dev: { url: 'https://real.n8n.io', apiKey: 'YOUR_API_KEY_HERE' } },
+      }),
+    });
+    const parsed = parseConfigExample(`${PROJECT_DIR}/.chiral`);
+    expect(parsed.envs['dev'].url).toBeUndefined();
+  });
+
+  it('passes the gitSync block through verbatim', () => {
+    const gitSync = { enabled: true, remote: 'origin', branch: 'main' };
+    vol.fromJSON({
+      [`${PROJECT_DIR}/.chiral/config.example.json`]: JSON.stringify({
+        project: 'my-project',
+        environments: {},
+        gitSync,
+      }),
+    });
+    const parsed = parseConfigExample(`${PROJECT_DIR}/.chiral`);
+    expect(parsed.gitSync).toEqual(gitSync);
+  });
+
+  it('throws UserError with exact message when config.example.json is missing', () => {
+    vol.fromJSON({ [`${PROJECT_DIR}/.chiral/`]: null });
+    expect(() => parseConfigExample(`${PROJECT_DIR}/.chiral`)).toThrow(UserError);
+    expect(() => parseConfigExample(`${PROJECT_DIR}/.chiral`)).toThrow(
+      'Found .chiral/ but config.example.json is missing or invalid. Ask a teammate to share it.'
+    );
+  });
+
+  it('throws UserError when config.example.json is invalid JSON', () => {
+    vol.fromJSON({
+      [`${PROJECT_DIR}/.chiral/config.example.json`]: 'invalid json',
+    });
+    expect(() => parseConfigExample(`${PROJECT_DIR}/.chiral`)).toThrow(UserError);
   });
 });

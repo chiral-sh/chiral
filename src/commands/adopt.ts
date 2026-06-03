@@ -61,7 +61,7 @@ export async function runAdopt(
     spinner1.succeed(
       chalk.green('  Connected') +
       chalk.dim(
-        ` — ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
+        ` - ${summaries.length} workflows, ${credentials.length} credentials, ${tags.length} tags`,
       ),
     );
 
@@ -139,7 +139,12 @@ export async function runAdopt(
       console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
     }
 
-    console.log(`\n  ${chalk.dim('Next:')} chiral pull --env ${options.env}\n`);
+    const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
+    if (otherEnvs.length > 0) {
+      console.log(`\n  ${chalk.dim('Next:')} chiral diff --source ${options.env} --target ${otherEnvs[0]}\n`);
+    } else {
+      console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
+    }
 
     // Fix B1: record actual workflow IDs in the audit entry
     baseEntry.workflow_ids = workflows.map((w) => w.id);
@@ -162,7 +167,7 @@ export async function runAdopt(
     try {
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
     } catch {
-      // best-effort — don't mask the original error
+      // best-effort - don't mask the original error
     }
     throw err;
   }

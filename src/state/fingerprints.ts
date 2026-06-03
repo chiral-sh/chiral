@@ -27,7 +27,7 @@ export type Fingerprints = z.infer<typeof FingerprintsSchema>;
 
 // Must mirror the validSettings set in src/commands/push.ts sanitizeWorkflowForApi.
 // Fields not in this set are stripped before pushing, so they must not affect the
-// content hash — otherwise a round-trip push produces a false "would-update".
+// content hash - otherwise a round-trip push produces a false "would-update".
 const PUSH_VALID_SETTINGS = new Set([
   'saveExecutionProgress',
   'saveManualExecutions',
@@ -74,7 +74,7 @@ function normalizeForContent(wf: Record<string, unknown>): object {
       return { ...rest, credentials: normalizedCreds };
     });
 
-  // Only hash settings fields that survive sanitizeWorkflowForApi — fields stripped
+  // Only hash settings fields that survive sanitizeWorkflowForApi - fields stripped
   // before push must not influence the hash or a round-trip causes a false "would-update".
   const rawSettings =
     typeof wf['settings'] === 'object' && wf['settings'] !== null
@@ -154,7 +154,7 @@ export function loadFingerprints(chiralDir: string): Fingerprints {
   try {
     raw = JSON.parse(readFileSync(filePath, 'utf-8'));
   } catch {
-    throw new UserError(`Could not read ${filePath} — is it valid JSON?`);
+    throw new UserError(`Could not read ${filePath} - is it valid JSON?`);
   }
   const result = FingerprintsSchema.safeParse(raw);
   if (!result.success) {

@@ -27,10 +27,20 @@ function padRight(s: string, n: number): string {
 
 // ── project list ───────────────────────────────────────────────────────────────
 
-export async function runProjectList(): Promise<void> {
+export async function runProjectList(options: { json?: boolean } = {}): Promise<void> {
   pruneDeadSessions();
 
   const projects = listProjects();
+
+  if (options.json) {
+    const ppid = process.ppid;
+    const session = ppid ? readSession(ppid) : null;
+    const current = session?.project ?? (projects.length === 1 ? projects[0]!.name : null);
+    const data = projects.map((p) => ({ name: p.name, path: p.path, active: p.name === current }));
+    console.log(JSON.stringify({ status: 'ok', data }));
+    return;
+  }
+
   if (projects.length === 0) {
     console.log("\n  No projects. Run 'chiral init <name>' to create one.\n");
     return;
@@ -65,7 +75,7 @@ export async function runProjectList(): Promise<void> {
 
 // ── project current ────────────────────────────────────────────────────────────
 
-export async function runProjectCurrent(): Promise<void> {
+export async function runProjectCurrent(options: { json?: boolean } = {}): Promise<void> {
   pruneDeadSessions();
 
   const projects = listProjects();
@@ -77,11 +87,21 @@ export async function runProjectCurrent(): Promise<void> {
   const session = ppid ? readSession(ppid) : null;
 
   if (session?.project) {
+    const projectPath = getProjectPath(session.project);
+    if (options.json) {
+      console.log(JSON.stringify({ status: 'ok', data: { name: session.project, path: projectPath ?? null } }));
+      return;
+    }
     console.log(`\n  ${chalk.bold(session.project)} ${chalk.dim('(session)')}\n`);
     return;
   }
   if (projects.length === 1) {
-    console.log(`\n  ${chalk.bold(projects[0]!.name)} ${chalk.dim('(only project)')}\n`);
+    const p = projects[0]!;
+    if (options.json) {
+      console.log(JSON.stringify({ status: 'ok', data: { name: p.name, path: p.path } }));
+      return;
+    }
+    console.log(`\n  ${chalk.bold(p.name)} ${chalk.dim('(only project)')}\n`);
     return;
   }
   throw new UserError(
@@ -91,7 +111,7 @@ export async function runProjectCurrent(): Promise<void> {
 
 // ── project rename ─────────────────────────────────────────────────────────────
 
-export async function runProjectRename(oldName: string, newName: string): Promise<void> {
+export async function runProjectRename(oldName: string, newName: string, options: { json?: boolean } = {}): Promise<void> {
   const oldPath = getProjectPath(oldName);
   if (!oldPath) {
     throw new UserError(`Project "${oldName}" not found. Run 'chiral project list' to see projects.`);
@@ -110,7 +130,7 @@ export async function runProjectRename(oldName: string, newName: string): Promis
 
   // Update index (throws if name conflict)
   try {
-    renameProjectInIndex(oldName, newName);
+    renameProjectInIndex(oldName, newName, newPath);
   } catch (err) {
     // Roll back directory rename
     renameSync(newPath, oldPath);
@@ -120,6 +140,11 @@ export async function runProjectRename(oldName: string, newName: string): Promis
   // Update any session files pointing to the old name
   clearSessionsForProject(oldName);
 
+  if (options.json) {
+    console.log(JSON.stringify({ status: 'ok', data: { old_name: oldName, new_name: newName, path: newPath } }));
+    return;
+  }
+
   console.log(
     `\n  ${chalk.green('✓')}  Renamed ${chalk.bold(oldName)} → ${chalk.bold(newName)}\n`,
   );
@@ -127,13 +152,16 @@ export async function runProjectRename(oldName: string, newName: string): Promis
 
 // ── project delete ─────────────────────────────────────────────────────────────
 
-export async function runProjectDelete(name: string, options: { yes?: boolean }): Promise<void> {
+export async function runProjectDelete(name: string, options: { yes?: boolean; json?: boolean }): Promise<void> {
   const projectPath = getProjectPath(name);
   if (!projectPath) {
     throw new UserError(`Project "${name}" not found. Run 'chiral project list' to see projects.`);
   }
 
   if (!options.yes) {
+    if (options.json) {
+      throw new UserError(`Pass --yes to confirm deletion in non-interactive mode.`);
+    }
     const confirmed = await input({
       message: `Type "${name}" to confirm deletion:`,
       validate: (v) => v === name || `Type exactly "${name}" to confirm`,
@@ -155,6 +183,11 @@ export async function runProjectDelete(name: string, options: { yes?: boolean })
   // Clear sessions pointing to this project
   clearSessionsForProject(name);
 
+  if (options.json) {
+    console.log(JSON.stringify({ status: 'ok', data: { name, deleted: true } }));
+    return;
+  }
+
   console.log(`\n  ${chalk.green('✓')}  Deleted project ${chalk.bold(name)}\n`);
 }
 
@@ -166,43 +199,56 @@ export const projectCommand = new Command('project')
 projectCommand
   .command('list')
   .description('List all projects')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
 Examples:
   List all projects:
     chiral project list
+
+  Output as JSON:
+    chiral project list --json
 `)
-  .action(async () => {
-    await runProjectList();
+  .action(async (options: { json?: boolean }) => {
+    await runProjectList(options);
   });
 
 projectCommand
   .command('current')
   .description('Show the active project for this terminal session')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
 Examples:
   Show the active project:
     chiral project current
+
+  Output as JSON:
+    chiral project current --json
 `)
-  .action(async () => {
-    await runProjectCurrent();
+  .action(async (options: { json?: boolean }) => {
+    await runProjectCurrent(options);
   });
 
 projectCommand
   .command('rename <old-name> <new-name>')
   .description('Rename a project')
+  .option('--json', 'Output result as JSON')
   .addHelpText('after', `
 Examples:
   Rename a project:
     chiral project rename my-n8n production-n8n
+
+  Output as JSON:
+    chiral project rename my-n8n production-n8n --json
 `)
-  .action(async (oldName: string, newName: string) => {
-    await runProjectRename(oldName, newName);
+  .action(async (oldName: string, newName: string, options: { json?: boolean }) => {
+    await runProjectRename(oldName, newName, options);
   });
 
 projectCommand
   .command('delete <name>')
-  .description('Delete a project (removes all files — irreversible)')
+  .description('Delete a project (removes all files - irreversible)')
   .option('--yes', 'Skip type-to-confirm prompt')
+  .option('--json', 'Output result as JSON (requires --yes)')
   .addHelpText('after', `
 Examples:
   Delete a project (will prompt to type name to confirm):
@@ -210,7 +256,10 @@ Examples:
 
   Skip type-to-confirm:
     chiral project delete my-n8n --yes
+
+  Non-interactive (agent use):
+    chiral project delete my-n8n --yes --json
 `)
-  .action(async (name: string, options: { yes?: boolean }) => {
+  .action(async (name: string, options: { yes?: boolean; json?: boolean }) => {
     await runProjectDelete(name, options);
   });
