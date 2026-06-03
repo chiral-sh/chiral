@@ -7,7 +7,7 @@ import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.js';
 import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
-import { listLocks } from '../state/locks.js';
+import { listAllLocks } from '../state/locks.js';
 import { writeStatusSentinel } from '../state/sentinel.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -381,8 +381,9 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
   // Locks
   if (options.verbose) console.error('  verbose: reading locks');
-  const rawLocks = listLocks(chiralDir);
-  const locks = rawLocks.map(({ workflowId, lock }) => ({
+  const rawLocks = listAllLocks(chiralDir);
+  const locks = rawLocks.map(({ env, workflowId, lock }) => ({
+    env,
     workflowId,
     actor: lock.actor,
     hostname: lock.hostname,
@@ -439,6 +440,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       project: config.project,
       environments: envObjects,
       locks: locks.map(l => ({
+        env: l.env,
         workflow_id: l.workflowId,
         actor: l.actor,
         hostname: l.hostname,
@@ -472,7 +474,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       for (const lock of locks) {
         const age = humanize(lock.since, false);
         const staleLabel = lock.staleLock ? chalk.yellow(`   STALE (>${options.staleLockAfter ?? 24}h — may be abandoned)`) : '';
-        console.log(`  ${chalk.cyan(lock.workflowId)}   ${lock.actor} ${chalk.dim(`(${lock.hostname})`)}   ${chalk.dim(`since ${age}`)}${staleLabel}`);
+        console.log(`  ${chalk.cyan(lock.workflowId)} ${chalk.dim(`[${lock.env}]`)}   ${lock.actor} ${chalk.dim(`(${lock.hostname})`)}   ${chalk.dim(`since ${age}`)}${staleLabel}`);
       }
     }
 

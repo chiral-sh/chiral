@@ -323,7 +323,8 @@ describe('runStatus — locks', () => {
     const lockTs = '2026-06-02T11:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/wf-abc.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/dev/wf-abc.lock`]: JSON.stringify({
+        version: 1,
         actor: 'alice@example.com',
         hostname: 'laptop-pro',
         timestamp: lockTs,
@@ -347,7 +348,8 @@ describe('runStatus — locks', () => {
     const lockTs = '2026-06-02T11:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/wf-abc.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/dev/wf-abc.lock`]: JSON.stringify({
+        version: 1,
         actor: 'alice@example.com',
         hostname: 'laptop-pro',
         timestamp: lockTs,
@@ -373,7 +375,8 @@ describe('runStatus — locks', () => {
     const oldLockTs = '2026-05-30T08:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/wf-xyz.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/dev/wf-xyz.lock`]: JSON.stringify({
+        version: 1,
         actor: 'bob@example.com',
         hostname: 'workstation',
         timestamp: oldLockTs,
@@ -393,7 +396,8 @@ describe('runStatus — locks', () => {
     const oldLockTs = '2026-05-30T08:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/wf-xyz.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/dev/wf-xyz.lock`]: JSON.stringify({
+        version: 1,
         actor: 'bob@example.com',
         hostname: 'workstation',
         timestamp: oldLockTs,
