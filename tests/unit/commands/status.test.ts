@@ -818,6 +818,204 @@ function makeMeta(overrides: Partial<SnapshotMeta>): SnapshotMeta {
   };
 }
 
+describe('runStatus — --locks-only mode', () => {
+  it('prints "No active locks." and exits 0 when no locks exist', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    const { stdoutLines } = captureOutput();
+    await expect(runStatus({ locksOnly: true })).resolves.not.toThrow();
+
+    const output = stdoutLines.join('\n');
+    expect(output).toContain('No active locks.');
+    // No env table
+    expect(output).not.toContain('┌');
+    expect(output).not.toContain('last pull');
+  });
+
+  it('prints only the lock section (no env table) with active locks', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+    const lockTs = '2026-06-02T11:00:00.000Z';
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/locks/devstat1/wf-abc.lock`]: JSON.stringify({
+        version: 1,
+        actor: 'alice@example.com',
+        hostname: 'laptop-pro',
+        timestamp: lockTs,
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await expect(runStatus({ locksOnly: true })).resolves.not.toThrow();
+
+    const output = stdoutLines.join('\n');
+    // Lock section present
+    expect(output).toContain('Locks (1 active)');
+    expect(output).toContain('alice@example.com');
+    // No env table
+    expect(output).not.toContain('┌');
+    expect(output).not.toContain('last pull');
+  });
+
+  it('shows logical name for mapped workflow', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    const lockTs = '2026-06-02T11:00:00.000Z';
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/locks/devstat1/wf-mapped.lock`]: JSON.stringify({
+        version: 1,
+        actor: 'alice@example.com',
+        hostname: 'macbook',
+        timestamp: lockTs,
+      }),
+      [`${CHIRAL_DIR}/workflows.json`]: JSON.stringify({
+        version: 1,
+        workflows: {
+          'order-processor': {
+            dev: { name: 'Order Processor', id: 'wf-mapped' },
+          },
+        },
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ locksOnly: true });
+
+    const output = stdoutLines.join('\n');
+    expect(output).toContain('order-processor');
+    expect(output).not.toContain('(unmapped)');
+  });
+
+  it('shows raw ID with "(unmapped)" for unmapped workflow', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    const lockTs = '2026-06-02T11:00:00.000Z';
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/locks/devstat1/wf-xyz.lock`]: JSON.stringify({
+        version: 1,
+        actor: 'bob@example.com',
+        hostname: 'workstation',
+        timestamp: lockTs,
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ locksOnly: true });
+
+    const output = stdoutLines.join('\n');
+    expect(output).toContain('wf-xyz (unmapped)');
+  });
+
+  it('--locks-only --json emits only locks array (no environments or project)', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    const lockTs = '2026-06-02T11:00:00.000Z';
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/locks/devstat1/wf-abc.lock`]: JSON.stringify({
+        version: 1,
+        actor: 'alice@example.com',
+        hostname: 'laptop-pro',
+        timestamp: lockTs,
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ locksOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.status).toBe('ok');
+    expect(Array.isArray(parsed.data.locks)).toBe(true);
+    expect(parsed.data.environments).toBeUndefined();
+    expect(parsed.data.project).toBeUndefined();
+    expect(parsed.data.locks[0].workflow_id).toBe('wf-abc');
+    expect(parsed.data.locks[0].logical_name).toBeNull();
+    expect(parsed.data.locks[0].age_seconds).toBeGreaterThanOrEqual(0);
+    expect(parsed.data.locks[0].reason).toBeNull();
+  });
+
+  it('--locks-only --json with no locks emits empty locks array', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ locksOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.locks).toHaveLength(0);
+    expect(parsed.data.environments).toBeUndefined();
+  });
+
+  it('throws UserError when --locks-only is combined with --compact', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    await expect(runStatus({ locksOnly: true, compact: true })).rejects.toThrow(UserError);
+    await expect(runStatus({ locksOnly: true, compact: true })).rejects.toThrow(/--locks-only/);
+  });
+
+  it('throws UserError when --locks-only is combined with --summary', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    await expect(runStatus({ locksOnly: true, summary: true })).rejects.toThrow(UserError);
+    await expect(runStatus({ locksOnly: true, summary: true })).rejects.toThrow(/--locks-only/);
+  });
+});
+
+describe('runStatus — JSON lock fields', () => {
+  it('JSON locks include logical_name, age_seconds, and reason fields', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    const lockTs = '2026-06-02T11:00:00.000Z'; // 1h before FIXED_NOW
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/locks/devstat1/wf-mapped.lock`]: JSON.stringify({
+        version: 1,
+        actor: 'alice@example.com',
+        hostname: 'laptop-pro',
+        timestamp: lockTs,
+        reason: 'deploying hotfix',
+      }),
+      [`${CHIRAL_DIR}/workflows.json`]: JSON.stringify({
+        version: 1,
+        workflows: {
+          'order-processor': {
+            dev: { name: 'Order Processor', id: 'wf-mapped' },
+          },
+        },
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    const lock = parsed.data.locks[0];
+    expect(lock.logical_name).toBe('order-processor');
+    expect(lock.age_seconds).toBeGreaterThanOrEqual(3600);
+    expect(lock.reason).toBe('deploying hotfix');
+  });
+
+  it('logical_name is null for unmapped workflow in JSON output', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    const lockTs = '2026-06-02T11:00:00.000Z';
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/locks/devstat1/wf-unknown.lock`]: JSON.stringify({
+        version: 1,
+        actor: 'bob@example.com',
+        hostname: 'workstation',
+        timestamp: lockTs,
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.locks[0].logical_name).toBeNull();
+    expect(parsed.data.locks[0].reason).toBeNull();
+  });
+});
+
 describe('computeDrift', () => {
   it('returns null when both snapshots have the same content_hash', () => {
     const latest = makeMeta({ content_hash: 'abc123', workflow_count: 3 });

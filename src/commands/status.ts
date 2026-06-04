@@ -9,6 +9,7 @@ import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.
 import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
 import { listAllLocks } from '../state/locks.js';
 import { buildEnvIdToNameMap } from '../state/envs.js';
+import { loadWorkflowMap, findEntryByEnvId, type WorkflowMap } from '../state/workflows.js';
 import { writeStatusSentinel } from '../state/sentinel.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ export interface StatusOptions {
   summary?: boolean;
   fields?: string;
   watch?: boolean;
+  locksOnly?: boolean;
 }
 
 interface EnvRow {
@@ -33,6 +35,18 @@ interface EnvRow {
   workflowCount: number | null;
   stale: boolean;
   drift: string | null;
+}
+
+interface LockRow {
+  env: string;
+  workflowId: string;
+  logicalName: string | null;
+  actor: string;
+  hostname: string;
+  since: string;
+  ageSeconds: number;
+  staleLock: boolean;
+  reason: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -208,6 +222,17 @@ function findLatestDeploymentForEnvLenient(chiralDir: string, env: string): stri
   return undefined;
 }
 
+function renderLockSection(locks: LockRow[], staleLockAfter: number | undefined): void {
+  console.log(`\n  ${chalk.bold(`Locks (${locks.length} active)`)}`);
+  console.log(chalk.dim('  ' + '─'.repeat(71)));
+  for (const lock of locks) {
+    const displayName = lock.logicalName ?? `${lock.workflowId} (unmapped)`;
+    const age = humanize(lock.since, false);
+    const staleLabel = lock.staleLock ? chalk.yellow(`   STALE (>${staleLockAfter ?? 24}h — may be abandoned)`) : '';
+    console.log(`  ${chalk.cyan(lock.env)}   ${displayName}   ${lock.actor} ${chalk.dim(`(${lock.hostname})`)}   ${age}${staleLabel}`);
+  }
+}
+
 // ── Run function ──────────────────────────────────────────────────────────────
 
 export async function runStatus(options: StatusOptions): Promise<void> {
@@ -217,6 +242,12 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   }
   if (options.summary && options.json) {
     throw new UserError('--summary cannot be combined with --json');
+  }
+  if (options.locksOnly && options.compact) {
+    throw new UserError('--locks-only and --compact are mutually exclusive');
+  }
+  if (options.locksOnly && options.summary) {
+    throw new UserError('--locks-only and --summary are mutually exclusive');
   }
 
   async function doOnce(): Promise<void> {
@@ -380,20 +411,35 @@ export async function runStatus(options: StatusOptions): Promise<void> {
     envRows.push({ name: envName, lastPull, lastPush, workflowCount, stale, drift });
   }
 
-  // Locks
+  // Locks — load workflow map for logical name resolution (optional, tolerate missing/invalid)
   if (options.verbose) console.error('  verbose: reading locks');
+  let workflowMap: WorkflowMap = { version: 1, workflows: {} };
+  try {
+    workflowMap = loadWorkflowMap(chiralDir);
+  } catch {
+    // workflows.json invalid — skip logical name resolution
+  }
+
   const idToName = buildEnvIdToNameMap(chiralDir);
   const rawLocks = listAllLocks(chiralDir);
-  const locks = rawLocks
+  const locks: LockRow[] = rawLocks
     .filter(({ envId }) => idToName.has(envId))
-    .map(({ envId, workflowId, lock }) => ({
-      env: idToName.get(envId)!,
-      workflowId,
-      actor: lock.actor,
-      hostname: lock.hostname,
-      since: lock.timestamp,
-      staleLock: (Date.now() - new Date(lock.timestamp).getTime()) > staleLockAfterMs,
-    }));
+    .map(({ envId, workflowId, lock }) => {
+      const envName = idToName.get(envId)!;
+      const logicalName = findEntryByEnvId(workflowMap, envName, workflowId)?.logicalName ?? null;
+      const ageMs = Date.now() - new Date(lock.timestamp).getTime();
+      return {
+        env: envName,
+        workflowId,
+        logicalName,
+        actor: lock.actor,
+        hostname: lock.hostname,
+        since: lock.timestamp,
+        ageSeconds: Math.floor(ageMs / 1000),
+        staleLock: ageMs > staleLockAfterMs,
+        reason: lock.reason ?? null,
+      };
+    });
 
   const anyStale = envRows.some(r => r.stale);
 
@@ -424,65 +470,78 @@ export async function runStatus(options: StatusOptions): Promise<void> {
     return;
   }
 
-  if (options.json) {
-    const envObjects = envRows.map(r => {
-      const full: Record<string, unknown> = {
-        name: r.name,
-        last_pull: r.lastPull,
-        last_push: r.lastPush,
-        workflow_count: r.workflowCount,
-        stale: r.stale,
-        drift: r.drift,
-      };
-      if (requestedFields) {
-        return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields!.includes(k as FieldName)));
-      }
-      return full;
-    });
+  const lockJsonItems = locks.map(l => ({
+    workflow_id: l.workflowId,
+    logical_name: l.logicalName,
+    env: l.env,
+    actor: l.actor,
+    hostname: l.hostname,
+    since: l.since,
+    age_seconds: l.ageSeconds,
+    stale_lock: l.staleLock,
+    reason: l.reason,
+  }));
 
-    printJson({
-      project: config.project,
-      environments: envObjects,
-      locks: locks.map(l => ({
-        env: l.env,
-        workflow_id: l.workflowId,
-        actor: l.actor,
-        hostname: l.hostname,
-        since: l.since,
-        stale_lock: l.staleLock,
-      })),
-    });
+  if (options.json) {
+    if (options.locksOnly) {
+      printJson({ locks: lockJsonItems });
+    } else {
+      const envObjects = envRows.map(r => {
+        const full: Record<string, unknown> = {
+          name: r.name,
+          last_pull: r.lastPull,
+          last_push: r.lastPush,
+          workflow_count: r.workflowCount,
+          stale: r.stale,
+          drift: r.drift,
+        };
+        if (requestedFields) {
+          return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields!.includes(k as FieldName)));
+        }
+        return full;
+      });
+
+      printJson({
+        project: config.project,
+        environments: envObjects,
+        locks: lockJsonItems,
+      });
+    }
   } else {
     const noHumanize = options.noHumanize ?? false;
 
-    // Derive table columns from --fields if specified
-    const tableCols: ColKey[] = requestedFields
-      ? COLUMN_ORDER.filter(col =>
-          Object.entries(FIELD_TO_COL).some(([f, c]) => c === col && requestedFields!.includes(f as FieldName))
-        )
-      : COLUMN_ORDER;
+    if (!options.locksOnly) {
+      // Derive table columns from --fields if specified
+      const tableCols: ColKey[] = requestedFields
+        ? COLUMN_ORDER.filter(col =>
+            Object.entries(FIELD_TO_COL).some(([f, c]) => c === col && requestedFields!.includes(f as FieldName))
+          )
+        : COLUMN_ORDER;
 
-    console.log();
-    console.log(`  ${chalk.bold(config.project)}`);
-    console.log();
+      console.log();
+      console.log(`  ${chalk.bold(config.project)}`);
+      console.log();
 
-    for (const line of renderTable(envRows, noHumanize, tableCols)) console.log(line);
+      for (const line of renderTable(envRows, noHumanize, tableCols)) console.log(line);
 
-    for (const envName of zeroWorkflowEnvs) {
-      console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
-    }
-
-    if (locks.length > 0) {
-      console.log(`\n  ${chalk.bold(`Locks (${locks.length} active)`)}`);
-      console.log(chalk.dim('  ' + '─'.repeat(71)));
-      for (const lock of locks) {
-        const age = humanize(lock.since, false);
-        const staleLabel = lock.staleLock ? chalk.yellow(`   STALE (>${options.staleLockAfter ?? 24}h — may be abandoned)`) : '';
-        console.log(`  ${chalk.cyan(lock.workflowId)} ${chalk.dim(`[${lock.env}]`)}   ${lock.actor} ${chalk.dim(`(${lock.hostname})`)}   ${chalk.dim(`since ${age}`)}${staleLabel}`);
+      for (const envName of zeroWorkflowEnvs) {
+        console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
       }
     }
 
-    console.log();
+    if (options.locksOnly) {
+      if (locks.length === 0) {
+        console.log();
+        console.log('  No active locks.');
+        console.log();
+      } else {
+        renderLockSection(locks, options.staleLockAfter);
+        console.log();
+      }
+    } else if (locks.length > 0) {
+      renderLockSection(locks, options.staleLockAfter);
+      console.log();
+    }
   }
 
   writeStatusSentinel(chiralDir);
@@ -537,6 +596,7 @@ export const statusCommand = new Command('status')
   .option('--summary', 'Output a single summary line; exits 3 if any env is stale')
   .option('--fields <cols>', 'Comma-separated column selector (name,last_pull,last_push,workflow_count,stale,drift)')
   .option('--watch', 'Re-render on .chiral/ file changes; ignored when stdout is not a TTY')
+  .option('--locks-only', 'Suppress the env summary table and print only the lock section')
   .addHelpText(
     'after',
     `
@@ -561,6 +621,9 @@ Examples:
 
   Select specific columns:
     chiral status --fields name,last_pull,workflow_count
+
+  Show only active locks:
+    chiral status --locks-only
 `,
   )
   .action(async (opts: Record<string, unknown>) => {
