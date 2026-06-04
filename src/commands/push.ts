@@ -15,9 +15,12 @@ import {
   writeWorkflowMap,
   resolveTargetName,
   findLogicalByEnvAndName,
+  findEntryByEnvId,
   deriveSafeLogicalName,
   upsertEnvEntry,
+  type WorkflowMap,
 } from '../state/workflows.js';
+import { listLocksByEnv } from '../state/locks.js';
 import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
 import {
   findLatestDeploymentForEnv,
@@ -118,6 +121,86 @@ function transformCredentialReferences(nodes: unknown): unknown {
   });
 }
 
+// ── Lock check helpers ────────────────────────────────────────────────────────
+
+interface LockViolation {
+  workflowId: string;
+  logicalName: string;
+  actor: string;
+  ageSeconds: number;
+  stale: boolean;
+}
+
+function formatLockAge(ageSeconds: number): string {
+  if (ageSeconds < 3600) {
+    const mins = Math.floor(ageSeconds / 60);
+    return `${mins} ${mins === 1 ? 'minute' : 'minutes'} ago`;
+  }
+  if (ageSeconds < 86400) {
+    const hrs = Math.floor(ageSeconds / 3600);
+    return `${hrs} ${hrs === 1 ? 'hour' : 'hours'} ago`;
+  }
+  const days = Math.floor(ageSeconds / 86400);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
+function collectLockViolations(
+  chiralDir: string,
+  sourceEnv: string,
+  targetEnv: string,
+  classified: WorkflowClassification[],
+  workflowMap: WorkflowMap,
+  targetByName: Map<string, { id: string }>,
+  staleLockAfterHours: number,
+  outputMode: OutputMode,
+): LockViolation[] {
+  const targetLocks = listLocksByEnv(chiralDir, targetEnv);
+  const lockMap = new Map(targetLocks.map(({ workflowId, lock }) => [workflowId, lock]));
+  const staleLockAfterMs = staleLockAfterHours * 60 * 60 * 1000;
+  const violations: LockViolation[] = [];
+
+  for (const c of classified) {
+    if (c.action === 'skipped') continue;
+
+    let targetId: string | undefined;
+    let wfLogicalName: string | undefined;
+
+    if (c.action === 'would-update') {
+      targetId = targetByName.get(c.resolvedName)?.id;
+      if (targetId) {
+        const found = findEntryByEnvId(workflowMap, targetEnv, targetId);
+        wfLogicalName = found?.logicalName ?? c.resolvedName;
+      }
+    } else if (c.action === 'would-create') {
+      const logicalKey = findLogicalByEnvAndName(workflowMap, sourceEnv, c.workflow.name);
+      if (logicalKey) {
+        const targetEntry = workflowMap.workflows[logicalKey]?.[targetEnv];
+        if (targetEntry?.id) {
+          targetId = targetEntry.id;
+          wfLogicalName = logicalKey;
+        }
+      }
+    }
+
+    if (!targetId) {
+      if (outputMode === 'human') {
+        console.log(`  ${chalk.yellow('⚠')}  ${c.workflow.id}: cannot check for locks (not in workflow map)`);
+      }
+      continue;
+    }
+
+    const lock = lockMap.get(targetId);
+    if (!lock) continue;
+
+    const ageMs = Date.now() - new Date(lock.timestamp).getTime();
+    const ageSeconds = Math.floor(ageMs / 1000);
+    const stale = ageMs > staleLockAfterMs;
+    violations.push({ workflowId: targetId, logicalName: wfLogicalName!, actor: lock.actor, ageSeconds, stale });
+  }
+
+  return violations;
+}
+
 /** Width used for credential map column alignment */
 const CRED_COL_WIDTH = 24;
 
@@ -144,6 +227,8 @@ export interface PushOptions {
   noActivate?: boolean;
   json?: boolean;
   gated?: boolean;
+  check?: boolean;
+  staleLockAfter?: number;
 }
 
 interface WorkflowClassification {
@@ -183,7 +268,7 @@ export async function runPush(
   const outputMode = resolveOutputMode(options);
 
   // ── Header ────────────────────────────────────────────────────────────────
-  if (outputMode === 'human') {
+  if (outputMode === 'human' && !options.check) {
     console.log();
     const scopeLabel = [
       options.tag ? `tag: ${options.tag}` : '',
@@ -369,6 +454,37 @@ export async function runPush(
   const toUpdate = classified.filter((c) => c.action === 'would-update');
   const toSkip = classified.filter((c) => c.action === 'skipped');
 
+  // ── --check: lock check gate ─────────────────────────────────────────────
+  if (options.check) {
+    const violations = collectLockViolations(
+      chiralDir, options.source, options.target, classified, workflowMap,
+      targetByName, options.staleLockAfter ?? 24, outputMode,
+    );
+    const clear = violations.length === 0;
+
+    if (outputMode === 'json') {
+      printJson({ clear, blocking_locks: violations, blocking_protections: [] });
+    } else {
+      console.log();
+      console.log(`  Lock check: ${options.source} → ${options.target}`);
+      console.log();
+      if (clear) {
+        console.log(`  ${chalk.green('✓')} No active locks on in-scope workflows.`);
+      } else {
+        for (const v of violations) {
+          const staleNote = v.stale ? ' — may be abandoned' : '';
+          console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatLockAge(v.ageSeconds)}${staleNote}).`);
+        }
+        console.log();
+        const n = violations.length;
+        console.log(`  ${n} ${n === 1 ? 'workflow' : 'workflows'} blocked. Run 'chiral lock list --env ${options.target}' for details.`);
+      }
+      console.log();
+    }
+
+    throw new ControlledExit(clear ? 0 : 1);
+  }
+
   // ── JSON output ───────────────────────────────────────────────────────────
   if (outputMode === 'json') {
     printJson({
@@ -528,6 +644,31 @@ export async function runPush(
             message: 'Push anyway?',
             default: false,
           });
+          if (!proceed) throw new ControlledExit(0);
+        } catch (err) {
+          throw err;
+        }
+      }
+    }
+  }
+
+  // ── Lock check (live push) ────────────────────────────────────────────────
+  if (outputMode === 'human') {
+    const lockViolations = collectLockViolations(
+      chiralDir, options.source, options.target, classified, workflowMap,
+      targetByName, options.staleLockAfter ?? 24, outputMode,
+    );
+
+    if (lockViolations.length > 0) {
+      console.log();
+      for (const v of lockViolations) {
+        const staleNote = v.stale ? ` — may be abandoned` : '';
+        console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatLockAge(v.ageSeconds)}${staleNote}).`);
+      }
+
+      if (!options.yes) {
+        try {
+          const proceed = await confirm({ message: 'Push anyway?', default: false });
           if (!proceed) throw new ControlledExit(0);
         } catch (err) {
           throw err;
@@ -804,6 +945,12 @@ export const pushCommand = new Command('push')
   .addOption(new Option('--yes', 'Skip all confirmation prompts - for CI/scripted use').conflicts('dryRun'))
   .addOption(new Option('--no-activate', 'Do not reactivate workflows after push (leave them inactive)').conflicts('dryRun'))
   .option('--json', 'Output machine-readable JSON instead of human output')
+  .option('--check', 'Perform lock check and exit 0 (clear) or 1 (blocked) - no push executed')
+  .option('--stale-lock-after <hours>', 'Hours after which a lock is considered stale (default: 24)', (v) => {
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n <= 0) throw new Error('--stale-lock-after must be a positive integer (e.g. --stale-lock-after 24)');
+    return n;
+  })
   .option('--gated', 'Paid: gate push on smoke tests passing (requires licenseKey)')
   .addHelpText(
     'after',
