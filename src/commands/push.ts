@@ -21,6 +21,7 @@ import {
   type WorkflowMap,
 } from '../state/workflows.js';
 import { listLocksByEnv } from '../state/locks.js';
+import { resolveEnvId } from '../state/envs.js';
 import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
 import {
   findLatestDeploymentForEnv,
@@ -154,7 +155,7 @@ function collectLockViolations(
   staleLockAfterHours: number,
   outputMode: OutputMode,
 ): LockViolation[] {
-  const targetLocks = listLocksByEnv(chiralDir, targetEnv);
+  const targetLocks = listLocksByEnv(chiralDir, resolveEnvId(chiralDir, targetEnv));
   const lockMap = new Map(targetLocks.map(({ workflowId, lock }) => [workflowId, lock]));
   const staleLockAfterMs = staleLockAfterHours * 60 * 60 * 1000;
   const violations: LockViolation[] = [];

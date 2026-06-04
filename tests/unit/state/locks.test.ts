@@ -243,8 +243,8 @@ describe('listAllLocks', () => {
     writeLock('/fd', 'prod', 'wf-3', 'third@example.com', 'win');
     const locks = listAllLocks('/fd');
     expect(locks).toHaveLength(3);
-    const prodLocks = locks.filter(l => l.env === 'prod');
-    const stagingLocks = locks.filter(l => l.env === 'staging');
+    const prodLocks = locks.filter(l => l.envId === 'prod');
+    const stagingLocks = locks.filter(l => l.envId === 'staging');
     expect(prodLocks).toHaveLength(2);
     expect(stagingLocks).toHaveLength(1);
   });
@@ -261,7 +261,7 @@ describe('listAllLocks', () => {
     vol.fromJSON({ '/fd/': null });
     writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
     const locks = listAllLocks('/fd');
-    expect(locks[0].env).toBe('prod');
+    expect(locks[0].envId).toBe('prod');
     expect(locks[0].workflowId).toBe('wf-1');
   });
 });

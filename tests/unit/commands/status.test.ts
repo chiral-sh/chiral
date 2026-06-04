@@ -110,11 +110,14 @@ function writeProdSnapshot(workflowCount = 8) {
 
 // ── Setup helpers ──────────────────────────────────────────────────────────────
 
+const STATUS_ENVS_JSON = JSON.stringify({ version: 1, envs: { dev: 'devstat1', prod: 'prdstat1' } });
+
 function setupProject(config = VALID_CONFIG) {
   vol.fromJSON({
     [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
     [`${CHIRAL_DIR}/config.json`]: config,
     [`${CHIRAL_DIR}/audit.jsonl`]: '',
+    [`${CHIRAL_DIR}/envs.json`]: STATUS_ENVS_JSON,
   });
 }
 
@@ -323,7 +326,7 @@ describe('runStatus — locks', () => {
     const lockTs = '2026-06-02T11:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/dev/wf-abc.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/devstat1/wf-abc.lock`]: JSON.stringify({
         version: 1,
         actor: 'alice@example.com',
         hostname: 'laptop-pro',
@@ -348,7 +351,7 @@ describe('runStatus — locks', () => {
     const lockTs = '2026-06-02T11:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/dev/wf-abc.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/devstat1/wf-abc.lock`]: JSON.stringify({
         version: 1,
         actor: 'alice@example.com',
         hostname: 'laptop-pro',
@@ -375,7 +378,7 @@ describe('runStatus — locks', () => {
     const oldLockTs = '2026-05-30T08:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/dev/wf-xyz.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/devstat1/wf-xyz.lock`]: JSON.stringify({
         version: 1,
         actor: 'bob@example.com',
         hostname: 'workstation',
@@ -396,7 +399,7 @@ describe('runStatus — locks', () => {
     const oldLockTs = '2026-05-30T08:00:00.000Z';
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${CHIRAL_DIR}/locks/dev/wf-xyz.lock`]: JSON.stringify({
+      [`${CHIRAL_DIR}/locks/devstat1/wf-xyz.lock`]: JSON.stringify({
         version: 1,
         actor: 'bob@example.com',
         hostname: 'workstation',

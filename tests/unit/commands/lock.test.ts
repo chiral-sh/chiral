@@ -57,12 +57,18 @@ const WORKFLOWS_WITH_ID = JSON.stringify({
 
 const EMPTY_WORKFLOWS = JSON.stringify({ version: 1, workflows: {} });
 
+const DEV_ENV_ID = 'dev00001';
+const PROD_ENV_ID = 'prd00001';
+
+const VALID_ENVS = JSON.stringify({ version: 1, envs: { dev: DEV_ENV_ID, prod: PROD_ENV_ID } });
+
 function setupBase(workflowsContent = EMPTY_WORKFLOWS) {
   vol.fromJSON({
     [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
     [`${PROJECT_DIR}/.chiral/config.json`]: VALID_CONFIG,
     [`${PROJECT_DIR}/.chiral/workflows.json`]: workflowsContent,
     [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
+    [`${PROJECT_DIR}/.chiral/envs.json`]: VALID_ENVS,
   });
 }
 
@@ -106,7 +112,7 @@ describe('runLockClaim', () => {
     setupBase(WORKFLOWS_WITH_ID);
     await runLockClaim('order-processor', { env: 'prod' });
 
-    const lockPath = `${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`;
+    const lockPath = `${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`;
     const files = vol.toJSON();
     expect(files[lockPath]).toBeDefined();
     const lock = JSON.parse(files[lockPath]!);
@@ -120,7 +126,7 @@ describe('runLockClaim', () => {
     setupBase();
     await runLockClaim('unknown-wf', { env: 'prod' });
 
-    const lockPath = `${PROJECT_DIR}/.chiral/locks/prod/logical-unknown-wf.lock`;
+    const lockPath = `${PROJECT_DIR}/.chiral/locks/prd00001/logical-unknown-wf.lock`;
     const files = vol.toJSON();
     expect(files[lockPath]).toBeDefined();
     const lock = JSON.parse(files[lockPath]!);
@@ -131,7 +137,7 @@ describe('runLockClaim', () => {
     setupBase(WORKFLOWS_WITH_ID);
     await runLockClaim('order-processor', { env: 'prod', reason: 'deploying billing fix' });
 
-    const lockPath = `${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`;
+    const lockPath = `${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`;
     const lock = JSON.parse(vol.toJSON()[lockPath]!);
     expect(lock.reason).toBe('deploying billing fix');
   });
@@ -147,7 +153,7 @@ describe('runLockClaim', () => {
     });
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: existingLock,
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: existingLock,
     });
 
     try {
@@ -169,7 +175,7 @@ describe('runLockClaim', () => {
     });
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: existingLock,
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: existingLock,
     });
 
     try {
@@ -186,8 +192,8 @@ describe('runLockClaim', () => {
     await runLockClaim('order-processor', { allEnvs: true });
 
     const files = vol.toJSON();
-    expect(files[`${PROJECT_DIR}/.chiral/locks/dev/wf-abc123.lock`]).toBeDefined();
-    expect(files[`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]).toBeDefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]).toBeDefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeDefined();
   });
 
   it('--all-envs rolls back written locks when a later env has a conflict', async () => {
@@ -201,7 +207,7 @@ describe('runLockClaim', () => {
     });
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: existingLock,
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: existingLock,
     });
 
     try {
@@ -214,9 +220,9 @@ describe('runLockClaim', () => {
 
     // dev lock should have been rolled back
     const files = vol.toJSON();
-    expect(files[`${PROJECT_DIR}/.chiral/locks/dev/wf-abc123.lock`]).toBeUndefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]).toBeUndefined();
     // prod lock (pre-existing) should still be there
-    expect(files[`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]).toBeDefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeDefined();
   });
 
   it('calls syncToRemote after successful lock claim', async () => {
@@ -252,7 +258,7 @@ describe('runLockClaim', () => {
     });
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: existingLock,
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: existingLock,
     });
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -300,7 +306,7 @@ describe('runLockList', () => {
     const lockTimestamp = new Date(Date.now() - 7200_000).toISOString(); // 2h ago
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: lockTimestamp,
@@ -330,13 +336,13 @@ describe('runLockList', () => {
 
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: recentTimestamp,
         hostname: 'test-host',
       }),
-      [`${PROJECT_DIR}/.chiral/locks/dev/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: oldTimestamp,
@@ -370,7 +376,7 @@ describe('runLockList', () => {
     const oldTimestamp = new Date(Date.now() - 25 * 3600_000).toISOString(); // 25h ago
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: oldTimestamp,
@@ -412,7 +418,7 @@ describe('runUnlock', () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: new Date().toISOString(),
@@ -420,14 +426,14 @@ describe('runUnlock', () => {
       }),
     });
     await runUnlock('order-processor', { env: 'prod' });
-    expect(vol.toJSON()[`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]).toBeUndefined();
+    expect(vol.toJSON()[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeUndefined();
   });
 
   it('throws UserError when actor does not own the lock and --force is not set', async () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'bob@example.com',
         timestamp: new Date().toISOString(),
@@ -443,7 +449,7 @@ describe('runUnlock', () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: new Date().toISOString(),
@@ -453,14 +459,14 @@ describe('runUnlock', () => {
     await expect(
       runUnlock('order-processor', { env: 'prod', force: true }),
     ).resolves.not.toThrow();
-    expect(vol.toJSON()[`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]).toBeUndefined();
+    expect(vol.toJSON()[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeUndefined();
   });
 
   it('--force on another actor\'s lock throws UserError on free tier', async () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'bob@example.com',
         timestamp: new Date().toISOString(),
@@ -476,13 +482,13 @@ describe('runUnlock', () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/dev/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: new Date().toISOString(),
         hostname: 'test-host',
       }),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'bob@example.com',
         timestamp: new Date().toISOString(),
@@ -492,15 +498,15 @@ describe('runUnlock', () => {
     await runUnlock('order-processor', { allEnvs: true });
     const files = vol.toJSON();
     // dev lock removed (own), prod lock kept (other actor's)
-    expect(files[`${PROJECT_DIR}/.chiral/locks/dev/wf-abc123.lock`]).toBeUndefined();
-    expect(files[`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]).toBeDefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]).toBeUndefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeDefined();
   });
 
   it('emits JSON envelope on success with --json', async () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: new Date().toISOString(),
@@ -522,7 +528,7 @@ describe('runUnlock', () => {
     setupBase(WORKFLOWS_WITH_ID);
     vol.fromJSON({
       ...vol.toJSON(),
-      [`${PROJECT_DIR}/.chiral/locks/prod/wf-abc123.lock`]: JSON.stringify({
+      [`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]: JSON.stringify({
         version: 1,
         actor: 'actor@example.com',
         timestamp: new Date().toISOString(),

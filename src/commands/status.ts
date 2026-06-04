@@ -8,6 +8,7 @@ import { printJson } from '../lib/output.js';
 import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.js';
 import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
 import { listAllLocks } from '../state/locks.js';
+import { buildEnvIdToNameMap } from '../state/envs.js';
 import { writeStatusSentinel } from '../state/sentinel.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -381,15 +382,18 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
   // Locks
   if (options.verbose) console.error('  verbose: reading locks');
+  const idToName = buildEnvIdToNameMap(chiralDir);
   const rawLocks = listAllLocks(chiralDir);
-  const locks = rawLocks.map(({ env, workflowId, lock }) => ({
-    env,
-    workflowId,
-    actor: lock.actor,
-    hostname: lock.hostname,
-    since: lock.timestamp,
-    staleLock: (Date.now() - new Date(lock.timestamp).getTime()) > staleLockAfterMs,
-  }));
+  const locks = rawLocks
+    .filter(({ envId }) => idToName.has(envId))
+    .map(({ envId, workflowId, lock }) => ({
+      env: idToName.get(envId)!,
+      workflowId,
+      actor: lock.actor,
+      hostname: lock.hostname,
+      since: lock.timestamp,
+      staleLock: (Date.now() - new Date(lock.timestamp).getTime()) > staleLockAfterMs,
+    }));
 
   const anyStale = envRows.some(r => r.stale);
 

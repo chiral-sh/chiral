@@ -24,12 +24,12 @@ export const LockFileSchema = z.object({
 
 export type LockFile = z.infer<typeof LockFileSchema>;
 
-function lockPath(chiralDir: string, env: string, workflowId: string): string {
-  return join(chiralDir, 'locks', env, `${workflowId}.lock`);
+function lockPath(chiralDir: string, envId: string, workflowId: string): string {
+  return join(chiralDir, 'locks', envId, `${workflowId}.lock`);
 }
 
-export function readLock(chiralDir: string, env: string, workflowId: string): LockFile | null {
-  const filePath = lockPath(chiralDir, env, workflowId);
+export function readLock(chiralDir: string, envId: string, workflowId: string): LockFile | null {
+  const filePath = lockPath(chiralDir, envId, workflowId);
   if (!existsSync(filePath)) return null;
 
   let raw: unknown;
@@ -54,10 +54,10 @@ export function readLock(chiralDir: string, env: string, workflowId: string): Lo
 
 export function readLockWithExpiry(
   chiralDir: string,
-  env: string,
+  envId: string,
   workflowId: string,
 ): { data: LockFile | null; wasExpired: boolean } {
-  const filePath = lockPath(chiralDir, env, workflowId);
+  const filePath = lockPath(chiralDir, envId, workflowId);
   if (!existsSync(filePath)) return { data: null, wasExpired: false };
 
   let raw: unknown;
@@ -88,20 +88,20 @@ export interface WriteLockOptions {
 
 export function writeLock(
   chiralDir: string,
-  env: string,
+  envId: string,
   workflowId: string,
   actor: string,
   hostname: string,
   options: WriteLockOptions = {},
 ): void {
-  const existing = readLock(chiralDir, env, workflowId);
+  const existing = readLock(chiralDir, envId, workflowId);
   if (existing) {
     throw new UserError(
       `Workflow "${workflowId}" is locked by ${existing.actor} since ${existing.timestamp}`,
     );
   }
 
-  const locksEnvDir = join(chiralDir, 'locks', env);
+  const locksEnvDir = join(chiralDir, 'locks', envId);
   const lock: LockFile = {
     version: 1,
     actor,
@@ -113,7 +113,7 @@ export function writeLock(
     ...(options.resolved !== undefined && { resolved: options.resolved }),
   };
 
-  const finalPath = lockPath(chiralDir, env, workflowId);
+  const finalPath = lockPath(chiralDir, envId, workflowId);
   const tmpPath = `${finalPath}.tmp`;
 
   try {
@@ -126,8 +126,8 @@ export function writeLock(
   }
 }
 
-export function releaseLock(chiralDir: string, env: string, workflowId: string): void {
-  const filePath = lockPath(chiralDir, env, workflowId);
+export function releaseLock(chiralDir: string, envId: string, workflowId: string): void {
+  const filePath = lockPath(chiralDir, envId, workflowId);
   if (!existsSync(filePath)) {
     throw new UserError(`Workflow "${workflowId}" is not locked`);
   }
@@ -140,16 +140,16 @@ export function releaseLock(chiralDir: string, env: string, workflowId: string):
 
 export function listLocksByEnv(
   chiralDir: string,
-  env: string,
+  envId: string,
 ): Array<{ workflowId: string; lock: LockFile }> {
-  const locksEnvDir = join(chiralDir, 'locks', env);
+  const locksEnvDir = join(chiralDir, 'locks', envId);
   if (!existsSync(locksEnvDir)) return [];
 
   return readdirSync(locksEnvDir)
     .filter((f) => f.endsWith('.lock'))
     .map((f) => {
       const workflowId = f.replace(/\.lock$/, '');
-      const lock = readLock(chiralDir, env, workflowId);
+      const lock = readLock(chiralDir, envId, workflowId);
       return lock ? { workflowId, lock } : null;
     })
     .filter((entry): entry is { workflowId: string; lock: LockFile } => entry !== null);
@@ -157,16 +157,16 @@ export function listLocksByEnv(
 
 export function listAllLocks(
   chiralDir: string,
-): Array<{ env: string; workflowId: string; lock: LockFile }> {
+): Array<{ envId: string; workflowId: string; lock: LockFile }> {
   const locksDir = join(chiralDir, 'locks');
   if (!existsSync(locksDir)) return [];
 
-  const results: Array<{ env: string; workflowId: string; lock: LockFile }> = [];
+  const results: Array<{ envId: string; workflowId: string; lock: LockFile }> = [];
   for (const entry of readdirSync(locksDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const env = entry.name;
-    for (const { workflowId, lock } of listLocksByEnv(chiralDir, env)) {
-      results.push({ env, workflowId, lock });
+    const envId = entry.name;
+    for (const { workflowId, lock } of listLocksByEnv(chiralDir, envId)) {
+      results.push({ envId, workflowId, lock });
     }
   }
   return results;

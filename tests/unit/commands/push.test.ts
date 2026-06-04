@@ -130,11 +130,15 @@ afterEach(() => {
   delete process.env['CHIRAL_PROJECT'];
 });
 
+const PUSH_ENV_IDS = { dev: 'devpush1', prod: 'prdpush1' };
+const PUSH_ENVS_JSON = JSON.stringify({ version: 1, envs: PUSH_ENV_IDS });
+
 function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflows: WorkflowSummary[] = []) {
   vol.fromJSON({
     [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
     [`${PROJECT_DIR}/.chiral/config.json`]: VALID_CONFIG,
     [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
+    [`${PROJECT_DIR}/.chiral/envs.json`]: PUSH_ENVS_JSON,
     [`${PROJECT_DIR}/.chiral/credentials.json`]: JSON.stringify({
       version: 1,
       credentials: {
@@ -1008,9 +1012,10 @@ function writeLockFile(
   ageMs: number,
   env = 'prod',
 ): void {
-  vol.mkdirSync(`${PROJECT_DIR}/.chiral/locks/${env}`, { recursive: true });
+  const envId = PUSH_ENV_IDS[env as keyof typeof PUSH_ENV_IDS] ?? env;
+  vol.mkdirSync(`${PROJECT_DIR}/.chiral/locks/${envId}`, { recursive: true });
   vol.writeFileSync(
-    `${PROJECT_DIR}/.chiral/locks/${env}/${workflowId}.lock`,
+    `${PROJECT_DIR}/.chiral/locks/${envId}/${workflowId}.lock`,
     JSON.stringify({
       version: 1,
       actor,

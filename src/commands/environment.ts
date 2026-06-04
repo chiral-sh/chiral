@@ -18,6 +18,7 @@ import { UserError } from '../lib/errors.js';
 import { loadCredentials, writeCredentials } from '../state/credentials.js';
 import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
 import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
+import { loadEnvs, writeEnvs, generateEnvId } from '../state/envs.js';
 
 // ── Output mode ───────────────────────────────────────────────────────────────
 
@@ -264,6 +265,12 @@ export async function runEnvironmentAdd(
   state.environments[name] = { url: normalizedUrl, apiKey };
   saveState(state);
 
+  const envsRegistry = loadEnvs(state.chiralDir);
+  if (!envsRegistry.envs[name]) {
+    envsRegistry.envs[name] = generateEnvId();
+    writeEnvs(state.chiralDir, envsRegistry);
+  }
+
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     envs[name] = { url: normalizedUrl, apiKey: `YOUR_${name.toUpperCase()}_API_KEY` };
   });
@@ -459,6 +466,13 @@ export async function runEnvironmentRename(
   renameInFile(join(chiralDir, 'workflows.json'));
   renameInFile(join(chiralDir, 'fingerprints.json'));
 
+  // Migrate envs.json: keep the same ID so lock paths are unaffected
+  const envsRegistry = loadEnvs(chiralDir);
+  const existingId = envsRegistry.envs[oldName] ?? generateEnvId();
+  delete envsRegistry.envs[oldName];
+  envsRegistry.envs[newName] = existingId;
+  writeEnvs(chiralDir, envsRegistry);
+
   // Update config
   const envData = state.environments[oldName];
   delete state.environments[oldName];
@@ -618,6 +632,10 @@ export async function runEnvironmentDelete(
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     delete envs[envName];
   });
+
+  const envsRegistry = loadEnvs(state.chiralDir);
+  delete envsRegistry.envs[envName];
+  writeEnvs(state.chiralDir, envsRegistry);
 
   purgeEnvFromStateFiles(state.chiralDir, envName);
 

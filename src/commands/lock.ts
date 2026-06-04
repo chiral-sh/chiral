@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
+import { resolveEnvId, buildEnvIdToNameMap } from '../state/envs.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-sync.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
@@ -133,10 +134,23 @@ export async function runLockClaim(
     );
   }
 
+  if (resolved) {
+    const map = loadWorkflowMap(chiralDir);
+    const envEntries = map.workflows[logicalName];
+    for (const env of targetEnvs) {
+      if (!envEntries?.[env]?.id) {
+        throw new UserError(
+          `"${logicalName}" is not mapped to environment "${env}". Run 'chiral workflow map' to add it.`,
+        );
+      }
+    }
+  }
+
   const writtenEnvs: string[] = [];
 
   for (const env of targetEnvs) {
-    const existing = readLock(chiralDir, env, workflowId);
+    const envId = resolveEnvId(chiralDir, env);
+    const existing = readLock(chiralDir, envId, workflowId);
     if (existing) {
       const ageSeconds = Math.floor(
         (Date.now() - new Date(existing.timestamp).getTime()) / 1000,
@@ -146,7 +160,7 @@ export async function runLockClaim(
       // Rollback previously written locks
       for (const rollbackEnv of writtenEnvs) {
         try {
-          releaseLock(chiralDir, rollbackEnv, workflowId);
+          releaseLock(chiralDir, resolveEnvId(chiralDir, rollbackEnv), workflowId);
         } catch {
           // best effort
         }
@@ -171,7 +185,7 @@ export async function runLockClaim(
         );
       } else if (targetEnvs.length === 1) {
         console.error(
-          `\n  ${chalk.red('✗')} ${logicalName} is already locked in ${env} by ${existing.actor} (${age} ago)`,
+          `  ${chalk.red('✗')} ${logicalName} is already locked in ${env} by ${existing.actor} (${age} ago)`,
         );
         console.error(
           chalk.dim(
@@ -188,7 +202,7 @@ export async function runLockClaim(
     }
 
     const timestamp = new Date().toISOString();
-    writeLock(chiralDir, env, workflowId, actor, host, {
+    writeLock(chiralDir, envId, workflowId, actor, host, {
       reason: options.reason,
       resolved,
     });
@@ -291,13 +305,21 @@ function buildLockList(
 
   let rawLocks: Array<{ env: string; workflowId: string; lock: LockFile }>;
   if (options.env) {
-    rawLocks = listLocksByEnv(chiralDir, options.env).map(({ workflowId, lock }) => ({
+    const envId = resolveEnvId(chiralDir, options.env);
+    rawLocks = listLocksByEnv(chiralDir, envId).map(({ workflowId, lock }) => ({
       env: options.env!,
       workflowId,
       lock,
     }));
   } else {
-    rawLocks = listAllLocks(chiralDir);
+    const idToName = buildEnvIdToNameMap(chiralDir);
+    rawLocks = listAllLocks(chiralDir)
+      .filter(({ envId }) => idToName.has(envId))
+      .map(({ envId, workflowId, lock }) => ({
+        env: idToName.get(envId)!,
+        workflowId,
+        lock,
+      }));
   }
 
   const now = Date.now();
@@ -503,7 +525,8 @@ export async function runUnlock(
   const skippedEnvs: Array<{ env: string; reason: string }> = [];
 
   for (const env of targetEnvs) {
-    const lock = readLock(chiralDir, env, workflowId);
+    const envId = resolveEnvId(chiralDir, env);
+    const lock = readLock(chiralDir, envId, workflowId);
 
     if (!lock) {
       if (options.allEnvs) continue; // silently skip
@@ -526,7 +549,7 @@ export async function runUnlock(
       );
     }
 
-    releaseLock(chiralDir, env, workflowId);
+    releaseLock(chiralDir, envId, workflowId);
     releasedEnvs.push(env);
 
     if (!options.json) {
@@ -613,6 +636,7 @@ Examples:
 export const lockCommand = new Command('lock')
   .description('Claim a workflow lock to signal active editing')
   .argument('[workflow]', 'Logical workflow name (from workflows.json)')
+  .enablePositionalOptions()
   .option('--env <env>', 'Environment to lock the workflow in')
   .option('--all-envs', 'Lock the workflow in every configured environment atomically')
   .option('--reason <text>', 'Human-readable reason stored in the lock file')
