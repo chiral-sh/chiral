@@ -447,6 +447,13 @@ _chiral_compgen() {
           })
           .join('\n');
 
+        // When a workflow name is typed at position 2 (not a subcommand), fall back to
+        // offering the top-level command flags (e.g. lock webhook-caller --env <TAB>).
+        const fallbackCase =
+          cmd.workflowPositional && cmd.flags.length > 0
+            ? `\n        *)\n${bashFlagCase(cmd.flags, '        ')}\n          ;;`
+            : '';
+
         // For commands that also have top-level flags (e.g. lock), offer them at depth 2 too
         const depth2Choices =
           cmd.flags.length > 0
@@ -475,7 +482,7 @@ ${depth2CompLine}
         return
       fi
       case "${dollar}{COMP_WORDS[2]}" in
-${subCases}
+${subCases}${fallbackCase}
       esac
       ;;`;
       } else {
