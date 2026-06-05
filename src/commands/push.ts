@@ -8,7 +8,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, formatAge } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMap,
@@ -130,19 +130,6 @@ interface LockViolation {
   actor: string;
   ageSeconds: number;
   stale: boolean;
-}
-
-function formatLockAge(ageSeconds: number): string {
-  if (ageSeconds < 3600) {
-    const mins = Math.floor(ageSeconds / 60);
-    return `${mins} ${mins === 1 ? 'minute' : 'minutes'} ago`;
-  }
-  if (ageSeconds < 86400) {
-    const hrs = Math.floor(ageSeconds / 3600);
-    return `${hrs} ${hrs === 1 ? 'hour' : 'hours'} ago`;
-  }
-  const days = Math.floor(ageSeconds / 86400);
-  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
 }
 
 function collectLockViolations(
@@ -474,7 +461,7 @@ export async function runPush(
       } else {
         for (const v of violations) {
           const staleNote = v.stale ? ' — may be abandoned' : '';
-          console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatLockAge(v.ageSeconds)}${staleNote}).`);
+          console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatAge(v.ageSeconds, 'long')}${staleNote}).`);
         }
         console.log();
         const n = violations.length;
@@ -664,7 +651,7 @@ export async function runPush(
       console.log();
       for (const v of lockViolations) {
         const staleNote = v.stale ? ` — may be abandoned` : '';
-        console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatLockAge(v.ageSeconds)}${staleNote}).`);
+        console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatAge(v.ageSeconds, 'long')}${staleNote}).`);
       }
 
       if (!options.yes) {

@@ -4,6 +4,7 @@ import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import {
   listProjects,
   unregisterProject,
@@ -14,16 +15,6 @@ import {
   getProjectPath,
   getProjectsDir,
 } from '../lib/projects.js';
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
-}
 
 // ── project list ───────────────────────────────────────────────────────────────
 

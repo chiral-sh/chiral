@@ -5,6 +5,7 @@ import { readFileSync, existsSync, watch as fsWatch } from 'node:fs';
 import { loadConfigAndDir } from '../lib/config.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.js';
 import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
 import { listAllLocks } from '../state/locks.js';
@@ -147,15 +148,6 @@ const FIELD_TO_COL: Partial<Record<FieldName, ColKey>> = {
   workflow_count: 'workflows',
   drift: 'drift',
 };
-
-// Strip ANSI escape codes so colored cells measure by visible width, not byte length.
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
-}
 
 function buildCellValues(row: EnvRow, noHumanize: boolean): Record<ColKey, string> {
   const lastPullCell = row.lastPull

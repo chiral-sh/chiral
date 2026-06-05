@@ -5,7 +5,7 @@ import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, formatAge } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
@@ -23,17 +23,7 @@ import { listLocksByEnv, type LockFile } from '../state/locks.js';
 
 function formatLockBadgeAge(timestamp: string): { label: string; stale: boolean } {
   const ageSeconds = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
-  const stale = ageSeconds > 24 * 3600;
-  let label: string;
-  if (ageSeconds < 3600) {
-    label = `${Math.max(1, Math.floor(ageSeconds / 60))}m`;
-  } else if (ageSeconds < 86400) {
-    label = `${Math.floor(ageSeconds / 3600)}h`;
-  } else {
-    const days = Math.floor(ageSeconds / 86400);
-    label = `${days} ${days === 1 ? 'day' : 'days'}`;
-  }
-  return { label, stale };
+  return { label: formatAge(ageSeconds, 'short'), stale: ageSeconds > 24 * 3600 };
 }
 
 function renderLockBadge(lock: LockFile): string {

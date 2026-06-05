@@ -15,6 +15,7 @@ import {
 import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import { loadCredentials, writeCredentials } from '../state/credentials.js';
 import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
 import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
@@ -42,14 +43,6 @@ function truncateUrl(url: string, max = 36): string {
 
 function validateUrl(val: string): string | boolean {
   try { new URL(val); return true; } catch { return 'Enter a valid URL (e.g. https://n8n.example.com)'; }
-}
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
 }
 
 // ── Summary table ─────────────────────────────────────────────────────────────

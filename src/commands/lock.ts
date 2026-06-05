@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import { watch } from 'node:fs';
 import { hostname as osHostname } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +8,8 @@ import { resolveEnvId, buildEnvIdToNameMap } from '../state/envs.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-sync.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
+import { getGitActor } from '../lib/git.js';
+import { visibleLen, padRight, formatAge } from '../lib/cli.js';
 import {
   writeLock,
   readLock,
@@ -22,16 +23,6 @@ import { loadWorkflowMap } from '../state/workflows.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set — configure it before running chiral',
-    );
-  }
-}
-
 function parseDuration(s: string): number {
   const match = /^(\d+)(h|m|d)$/.exec(s);
   if (!match) {
@@ -43,21 +34,6 @@ function parseDuration(s: string): number {
   if (n <= 0) throw new UserError('--stale value must be greater than zero (e.g. --stale 2h)');
   const multipliers: Record<string, number> = { h: 3600, m: 60, d: 86400 };
   return n * (multipliers[match[2]!] ?? 3600);
-}
-
-function formatAge(seconds: number): string {
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  const days = Math.floor(seconds / 86400);
-  return `${days} day${days !== 1 ? 's' : ''}`;
-}
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
 }
 
 function resolveWorkflowId(
