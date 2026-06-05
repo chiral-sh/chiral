@@ -21,7 +21,7 @@ import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
 import { remoteCommand } from './commands/remote.js';
 import { statusCommand } from './commands/status.js';
-import { completionCommand, internalCompleteEnvsCommand } from './commands/completion.js';
+import { completionCommand, internalCompleteEnvsCommand, internalCompleteWorkflowsCommand } from './commands/completion.js';
 import { lockCommand, unlockCommand } from './commands/lock.js';
 
 const program = new Command();
@@ -37,7 +37,8 @@ program
   .name('chiral')
   .description('Safer production deployments for self-hosted n8n Community Edition')
   .version(version)
-  .option('--debug', 'print full stack trace on unexpected errors');
+  .option('--debug', 'print full stack trace on unexpected errors')
+  .enablePositionalOptions();
 
 program.addCommand(initCommand);
 program.addCommand(cloneCommand);
@@ -57,6 +58,7 @@ program.addCommand(credentialCommand);
 program.addCommand(teamCommand);
 program.addCommand(completionCommand);
 program.addCommand(internalCompleteEnvsCommand);
+program.addCommand(internalCompleteWorkflowsCommand);
 
 // Global protection against Commander eagerly eating flags as option values.
 // Catches cases like `--remote --solo` where Commander assigns '--solo' as the
@@ -105,7 +107,7 @@ try {
     if (isJsonFlagActive()) {
       printJsonError('usage_error', message, false);
     } else {
-      console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
+      console.error(`  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
     }
     process.exit(1);
   }
@@ -115,7 +117,7 @@ try {
       if (isJsonFlagActive()) {
         printJsonError('user_error', err.message, false);
       } else {
-        console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
+        console.error(`  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
         if (err.hint) console.error(chalk.dim(err.hint));
         console.error();
       }
@@ -127,7 +129,7 @@ try {
   if (isJsonFlagActive()) {
     printJsonError('unexpected_error', message, false);
   } else {
-    console.error(`\n  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
+    console.error(`  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
     if (debug && err instanceof Error && err.stack) {
       console.error(chalk.dim(err.stack));
     }

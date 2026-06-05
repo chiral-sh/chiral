@@ -4,6 +4,7 @@ import path from 'node:path';
 import { generateScript, getInstallPath, getChiralCommands } from '../lib/completion.js';
 import { loadConfigAndDir } from '../lib/config.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
+import { loadWorkflowMap } from '../state/workflows.js';
 
 const VERSION = '0.1.0';
 
@@ -63,6 +64,21 @@ export async function runCompleteEnvs(): Promise<void> {
   }
 }
 
+export async function runCompleteWorkflows(env?: string): Promise<void> {
+  try {
+    const { chiralDir } = loadConfigAndDir();
+    const map = loadWorkflowMap(chiralDir);
+    const names = Object.entries(map.workflows)
+      .filter(([, envMap]) => !env || env in envMap)
+      .map(([logical]) => logical);
+    if (names.length > 0) {
+      process.stdout.write(names.join('\n') + '\n');
+    }
+  } catch {
+    throw new ControlledExit(0);
+  }
+}
+
 export const completionCommand = new Command('completion')
   .description('Print shell completion script for bash, zsh, or fish')
   .argument('<shell>', 'Shell type: bash, zsh, or fish')
@@ -88,4 +104,12 @@ export const internalCompleteEnvsCommand = new Command('_complete_envs')
   .addHelpCommand(false)
   .action(async () => {
     await runCompleteEnvs();
+  });
+
+export const internalCompleteWorkflowsCommand = new Command('_complete_workflows')
+  .helpOption(false)
+  .addHelpCommand(false)
+  .option('--env <env>', 'Filter to workflows with an entry for this environment')
+  .action(async (options: { env?: string }) => {
+    await runCompleteWorkflows(options.env);
   });
