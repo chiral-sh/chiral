@@ -23,6 +23,15 @@ import { remoteCommand } from './commands/remote.js';
 import { statusCommand } from './commands/status.js';
 import { completionCommand, internalCompleteEnvsCommand, internalCompleteWorkflowsCommand } from './commands/completion.js';
 import { lockCommand, unlockCommand } from './commands/lock.js';
+import { logCommand } from './commands/log.js';
+
+// Track whether any stdout output was written before an error fires.
+// The error handler uses this to add a leading blank line only when needed:
+// commands that print nothing before throwing look jarring without it;
+// commands that end their output with console.log() already have the blank.
+let didPrintOutput = false;
+const _origLog = console.log.bind(console);
+console.log = (...args: unknown[]) => { didPrintOutput = true; _origLog(...args); };
 
 const program = new Command();
 
@@ -54,6 +63,7 @@ program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
 program.addCommand(lockCommand);
 program.addCommand(unlockCommand);
+program.addCommand(logCommand);
 program.addCommand(credentialCommand);
 program.addCommand(teamCommand);
 program.addCommand(completionCommand);
@@ -107,7 +117,8 @@ try {
     if (isJsonFlagActive()) {
       printJsonError('usage_error', message, false);
     } else {
-      console.error(`  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
+      const sep = didPrintOutput ? '' : '\n';
+      console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
     }
     process.exit(1);
   }
@@ -117,7 +128,8 @@ try {
       if (isJsonFlagActive()) {
         printJsonError('user_error', err.message, false);
       } else {
-        console.error(`  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
+        const sep = didPrintOutput ? '' : '\n';
+        console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
         if (err.hint) console.error(chalk.dim(err.hint));
         console.error();
       }

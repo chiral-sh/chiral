@@ -6,6 +6,7 @@ export interface FlagInfo {
   long: string;
   description: string;
   takesValue: boolean;
+  values?: string[];
 }
 
 export interface CommandInfo {
@@ -14,6 +15,8 @@ export interface CommandInfo {
   flags: FlagInfo[];
   subcommands?: CommandInfo[];
   workflowPositional?: boolean;
+  envNamePositional?: boolean;
+  envNamePositionalCount?: number;
 }
 
 export function getChiralCommands(): CommandInfo[] {
@@ -97,6 +100,7 @@ export function getChiralCommands(): CommandInfo[] {
         {
           name: 'configure',
           description: 'Update URL or API key for an existing environment',
+          envNamePositional: true,
           flags: [
             { long: '--url', description: 'New n8n instance URL', takesValue: true },
             { long: '--api-key', description: 'New n8n API key', takesValue: true },
@@ -114,6 +118,8 @@ export function getChiralCommands(): CommandInfo[] {
         {
           name: 'rename',
           description: 'Rename an environment',
+          envNamePositional: true,
+          envNamePositionalCount: 2,
           flags: [
             { long: '--json', description: 'Output result as JSON', takesValue: false },
           ],
@@ -121,6 +127,7 @@ export function getChiralCommands(): CommandInfo[] {
         {
           name: 'delete',
           description: 'Delete an environment',
+          envNamePositional: true,
           flags: [
             { long: '--yes', description: 'Skip confirmation prompt', takesValue: false },
             { long: '--dry-run', description: 'Show what would be deleted without making changes', takesValue: false },
@@ -386,6 +393,22 @@ export function getChiralCommands(): CommandInfo[] {
       ],
     },
     {
+      name: 'log',
+      description: 'Show audit log of all operations recorded in .chiral/audit.jsonl',
+      flags: [
+        { long: '--env', description: 'Filter by source or target environment name', takesValue: true },
+        { long: '--action', description: 'Filter by action type', takesValue: true, values: ['push', 'pull', 'diff', 'rollback', 'lock', 'unlock', 'adopt', 'init', 'map', 'unmap'] },
+        { long: '--actor', description: 'Filter by actor email', takesValue: true },
+        { long: '--result', description: 'Filter by result', takesValue: true, values: ['success', 'failure', 'aborted'] },
+        { long: '--since', description: 'Show entries after this point (e.g. 7d, 2h, last-status)', takesValue: true },
+        { long: '--limit', description: 'Maximum entries to show (default 50)', takesValue: true },
+        { long: '--all', description: 'Show all matching entries, removing the count cap', takesValue: false },
+        { long: '--no-humanize', description: 'Show ISO-8601 timestamps instead of relative age', takesValue: false },
+        { long: '--watch', description: 'Re-render on audit.jsonl changes', takesValue: false },
+        { long: '--json', description: 'Emit standard JSON envelope to stdout', takesValue: false },
+      ],
+    },
+    {
       name: 'completion',
       description: 'Print shell completion script for bash, zsh, or fish',
       flags: [
@@ -401,12 +424,16 @@ const ENV_FLAGS = new Set(['--env', '--source', '--target']);
 
 function bashFlagCase(flags: FlagInfo[], indent: string): string {
   const envFlags = flags.filter((f) => ENV_FLAGS.has(f.long));
+  const valFlags = flags.filter((f) => !ENV_FLAGS.has(f.long) && f.values && f.values.length > 0);
   const flagNames = flags.map((f) => f.long).join(' ');
   const lines: string[] = [];
-  if (envFlags.length > 0) {
+  if (envFlags.length > 0 || valFlags.length > 0) {
     lines.push(`${indent}case "$prev" in`);
     for (const f of envFlags) {
       lines.push(`${indent}  ${f.long}) _chiral_complete_envs "$cur"; return;;`);
+    }
+    for (const f of valFlags) {
+      lines.push(`${indent}  ${f.long}) COMPREPLY=($(_chiral_compgen "${f.values!.join(' ')}" "$cur")); return;;`);
     }
     lines.push(`${indent}esac`);
   }
@@ -443,6 +470,14 @@ _chiral_compgen() {
         const subCases = cmd.subcommands
           .map((sub) => {
             const body = bashFlagCase(sub.flags, '        ');
+            if (sub.envNamePositional) {
+              const count = sub.envNamePositionalCount ?? 1;
+              const depthCheck =
+                count >= 2
+                  ? `[[ ${dollar}COMP_CWORD -eq 3 || ${dollar}COMP_CWORD -eq 4 ]]`
+                  : `[[ ${dollar}COMP_CWORD -eq 3 ]]`;
+              return `        ${sub.name})\n          if ${depthCheck}; then\n            _chiral_complete_envs "${dollar}cur"\n            return\n          fi\n${body}\n          ;;`;
+            }
             return `        ${sub.name})\n${body}\n          ;;`;
           })
           .join('\n');
@@ -538,6 +573,9 @@ function zshFlagDefs(flags: FlagInfo[], indent: string): string {
       if (ENV_FLAGS.has(f.long)) {
         return `${indent}'${f.long}[${desc}]:env:($(chiral _complete_envs 2>/dev/null))'`;
       }
+      if (f.values && f.values.length > 0) {
+        return `${indent}'${f.long}[${desc}]:value:(${f.values.join(' ')})'`;
+      }
       if (f.takesValue) {
         return `${indent}'${f.long}[${desc}]:value:'`;
       }
@@ -560,11 +598,19 @@ export function generateZshScript(commands: CommandInfo[], version: string): str
 
         const subCases = cmd.subcommands
           .map((sub) => {
-            if (sub.flags.length === 0) {
+            const envCount = sub.envNamePositional ? (sub.envNamePositionalCount ?? 1) : 0;
+            const envPositionalArg =
+              envCount >= 2
+                ? `          ':old-env:($(chiral _complete_envs 2>/dev/null))' \\\n          ':new-env:($(chiral _complete_envs 2>/dev/null))' \\\n`
+                : envCount === 1
+                  ? `          ':env:($(chiral _complete_envs 2>/dev/null))' \\\n`
+                  : '';
+            if (sub.flags.length === 0 && !sub.envNamePositional) {
               return `        (${sub.name})\n          ;;`;
             }
-            const defs = zshFlagDefs(sub.flags, '          ');
-            return `        (${sub.name})\n          _arguments \\\n${defs}\n          ;;`;
+            const defs = sub.flags.length > 0 ? zshFlagDefs(sub.flags, '          ') : '';
+            const argBlock = defs ? `${envPositionalArg}${defs}` : envPositionalArg.trimEnd();
+            return `        (${sub.name})\n          _arguments \\\n${argBlock}\n          ;;`;
           })
           .join('\n');
 
@@ -681,7 +727,11 @@ export function generateFishScript(commands: CommandInfo[], version: string): st
           const flagName = flag.long.replace(/^--/, '');
           const desc = flag.description.replace(/'/g, '');
           const valPart = flag.takesValue ? ' -r' : '';
-          const envPart = ENV_FLAGS.has(flag.long) ? ` -a '(__chiral_complete_envs)'` : '';
+          const envPart = ENV_FLAGS.has(flag.long)
+            ? ` -a '(__chiral_complete_envs)'`
+            : flag.values && flag.values.length > 0
+              ? ` -a '${flag.values.join(' ')}'`
+              : '';
           lines.push(
             `complete -c chiral -n '__fish_seen_subcommand_from ${cmd.name}; and not __fish_seen_subcommand_from ${subNames}'${valPart} -l '${flagName}' -d '${desc}'${envPart}`,
           );
@@ -689,6 +739,13 @@ export function generateFishScript(commands: CommandInfo[], version: string): st
       }
 
       for (const sub of cmd.subcommands) {
+        if (sub.envNamePositional) {
+          lines.push('');
+          lines.push(`# ${cmd.name} ${sub.name} env name (positional)`);
+          lines.push(
+            `complete -c chiral -n '__fish_seen_subcommand_from ${cmd.name}; and __fish_seen_subcommand_from ${sub.name}' -a '(__chiral_complete_envs)' -d 'Environment name'`,
+          );
+        }
         if (sub.flags.length === 0) continue;
         lines.push('');
         lines.push(`# ${cmd.name} ${sub.name} flags`);
@@ -696,7 +753,11 @@ export function generateFishScript(commands: CommandInfo[], version: string): st
           const flagName = flag.long.replace(/^--/, '');
           const desc = flag.description.replace(/'/g, '');
           const valPart = flag.takesValue ? ' -r' : '';
-          const envPart = ENV_FLAGS.has(flag.long) ? ` -a '(__chiral_complete_envs)'` : '';
+          const envPart = ENV_FLAGS.has(flag.long)
+            ? ` -a '(__chiral_complete_envs)'`
+            : flag.values && flag.values.length > 0
+              ? ` -a '${flag.values.join(' ')}'`
+              : '';
           lines.push(
             `complete -c chiral -n '__fish_seen_subcommand_from ${cmd.name}; and __fish_seen_subcommand_from ${sub.name}'${valPart} -l '${flagName}' -d '${desc}'${envPart}`,
           );
@@ -725,7 +786,11 @@ export function generateFishScript(commands: CommandInfo[], version: string): st
         const flagName = flag.long.replace(/^--/, '');
         const desc = flag.description.replace(/'/g, '');
         const valPart = flag.takesValue ? ' -r' : '';
-        const envPart = ENV_FLAGS.has(flag.long) ? ` -a '(__chiral_complete_envs)'` : '';
+        const envPart = ENV_FLAGS.has(flag.long)
+          ? ` -a '(__chiral_complete_envs)'`
+          : flag.values && flag.values.length > 0
+            ? ` -a '${flag.values.join(' ')}'`
+            : '';
         lines.push(
           `complete -c chiral -n '__fish_seen_subcommand_from ${cmd.name}'${valPart} -l '${flagName}' -d '${desc}'${envPart}`,
         );
