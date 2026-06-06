@@ -177,6 +177,13 @@ export class N8nClient {
     return this.listAll<CredentialSummary>('/credentials', 'credential:list');
   }
 
+  async getDataTable(id: string): Promise<{ id: string; name: string; projectId: string }> {
+    return this.request<{ id: string; name: string; projectId: string }>(
+      `/data-tables/${id}`,
+      { scope: 'datatable:read' },
+    );
+  }
+
   async listTags(): Promise<TagSummary[]> {
     return this.listAll<TagSummary>('/tags', 'tag:list');
   }
