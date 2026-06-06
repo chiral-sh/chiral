@@ -89,6 +89,7 @@ export class N8nClient {
       scope?: string;
       method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
       body?: string;
+      on404?: string;
     } = {},
   ): Promise<T> {
     const expiry = N8nClient.parseJwtExpiry(this.apiKey);
@@ -125,6 +126,9 @@ export class N8nClient {
         `API key for ${this.envName} is invalid or expired`,
         `  Run: chiral environment configure ${this.envName} to save a new key`,
       );
+    }
+    if (response.status === 404 && options.on404) {
+      throw new UserError(options.on404);
     }
     if (response.status === 403) {
       const scopePart = options.scope
@@ -180,7 +184,7 @@ export class N8nClient {
   async getDataTable(id: string): Promise<{ id: string; name: string; projectId: string }> {
     return this.request<{ id: string; name: string; projectId: string }>(
       `/data-tables/${id}`,
-      { scope: 'datatable:read' },
+      { scope: 'datatable:read', on404: `Table ID ${id} not found in ${this.envName} — check the ID in the n8n Data Tables UI` },
     );
   }
 
