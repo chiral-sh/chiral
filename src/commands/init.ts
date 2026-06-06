@@ -125,6 +125,7 @@ export async function runInit(options: InitOptions): Promise<void> {
   console.log(file(`${projectDir}/.chiral/config.example.json`));
   console.log(file(`${projectDir}/.chiral/.gitignore`, 'keeps config.json out of git'));
   console.log(file(`${projectDir}/.chiral/credentials.json`));
+  console.log(file(`${projectDir}/.chiral/tables.json`));
   console.log(file(`${projectDir}/.chiral/audit.jsonl`));
   console.log(file(`${projectDir}/.chiral/locks/`));
   console.log(file(`${projectDir}/.chiral/snapshots/`));
