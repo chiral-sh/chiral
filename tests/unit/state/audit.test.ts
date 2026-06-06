@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { vol } from 'memfs';
-import { writeAuditEntry, readAuditLog, readInitEvent, AuditEntry } from '../../../src/state/audit.js';
+import { writeAuditEntry, readAuditLog, readInitEvent, AuditEntry, AuditEntrySchema } from '../../../src/state/audit.js';
 import { UserError } from '../../../src/lib/errors.js';
+import { STAGED_RELATIVE } from '../../../src/lib/git-sync.js';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
@@ -108,6 +109,36 @@ describe('readAuditLog', () => {
     writeAuditEntry('/project/.chiral', initEntry);
     const entries = readAuditLog('/project/.chiral');
     expect(entries[0].source_env).toBeNull();
+  });
+});
+
+describe('AuditEntrySchema resource field', () => {
+  it('parses entry with resource: table', () => {
+    const result = AuditEntrySchema.safeParse({ ...VALID_ENTRY, resource: 'table' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.resource).toBe('table');
+  });
+
+  it('parses entry without resource field (backward compat)', () => {
+    const result = AuditEntrySchema.safeParse(VALID_ENTRY);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.resource).toBeUndefined();
+  });
+
+  it('parses entry with resource: workflow', () => {
+    const result = AuditEntrySchema.safeParse({ ...VALID_ENTRY, resource: 'workflow' });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses entry with resource: credential', () => {
+    const result = AuditEntrySchema.safeParse({ ...VALID_ENTRY, resource: 'credential' });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('STAGED_RELATIVE', () => {
+  it('includes tables.json', () => {
+    expect(STAGED_RELATIVE).toContain('tables.json');
   });
 });
 

@@ -31,6 +31,7 @@ export const AuditEntrySchema = z.object({
   chiral_version: z.string(),
   match_method: z.enum(['manual', 'auto', 'fuzzy']).nullable().optional(),
   match_score: z.number().min(0).max(1).nullable().optional(),
+  resource: z.enum(['workflow', 'credential', 'table']).optional(),
 });
 
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
