@@ -1202,3 +1202,250 @@ describe('runPush - lock check integration', () => {
     );
   });
 });
+
+// ── Data Table ID substitution ────────────────────────────────────────────────
+
+function makeSnapshotWfWithDataTable(
+  id: string,
+  name: string,
+  versionId: string,
+  tableNodes: Array<{ nodeName: string; tableId: string; cachedResultName?: string; cachedResultUrl?: string }>,
+): SnapshotWorkflow {
+  const nodes = tableNodes.map((t) => ({
+    id: `node-${t.nodeName}`,
+    name: t.nodeName,
+    type: 'n8n-nodes-base.datatable',
+    parameters: {
+      dataTableId: {
+        __rl: true,
+        value: t.tableId,
+        mode: 'list',
+        ...(t.cachedResultName ? { cachedResultName: t.cachedResultName } : {}),
+        ...(t.cachedResultUrl ? { cachedResultUrl: t.cachedResultUrl } : {}),
+      },
+    },
+  }));
+  return {
+    id,
+    name,
+    versionId,
+    active: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+    tags: [],
+    nodes,
+    connections: {},
+  };
+}
+
+function setupProjectWithTables(
+  snapshotWorkflows: SnapshotWorkflow[],
+  targetWorkflows: WorkflowSummary[],
+  tablesJson: object,
+): void {
+  setupProject(snapshotWorkflows, targetWorkflows);
+  vol.writeFileSync(
+    `${PROJECT_DIR}/.chiral/tables.json`,
+    JSON.stringify(tablesJson),
+  );
+}
+
+describe('runPush - Data Table ID substitution', () => {
+  it('replaces dataTableId.value with target env ID from tables.json', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'dev-table-id', cachedResultName: 'My Table' },
+    ]);
+    setupProjectWithTables([wf], [], {
+      version: 1,
+      tables: {
+        contacts: {
+          dev: { id: 'dev-table-id', name: 'Contacts Dev' },
+          prod: { id: 'prod-table-id', name: 'Contacts Prod' },
+        },
+      },
+    });
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
+    const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
+    const dtId = (nodes[0]['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
+    expect(dtId['value']).toBe('prod-table-id');
+  });
+
+  it('deletes cachedResultUrl from substituted datatable node', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'dev-table-id', cachedResultUrl: 'https://dev.n8n/data-tables/dev-table-id', cachedResultName: 'My Table' },
+    ]);
+    setupProjectWithTables([wf], [], {
+      version: 1,
+      tables: {
+        contacts: {
+          dev: { id: 'dev-table-id', name: 'Contacts Dev' },
+          prod: { id: 'prod-table-id', name: 'Contacts Prod' },
+        },
+      },
+    });
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
+    const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
+    const dtId = (nodes[0]['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
+    expect(dtId).not.toHaveProperty('cachedResultUrl');
+  });
+
+  it('leaves cachedResultName untouched on substituted node', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'dev-table-id', cachedResultName: 'Contacts Dev', cachedResultUrl: 'https://dev/...' },
+    ]);
+    setupProjectWithTables([wf], [], {
+      version: 1,
+      tables: {
+        contacts: {
+          dev: { id: 'dev-table-id', name: 'Contacts Dev' },
+          prod: { id: 'prod-table-id', name: 'Contacts Prod' },
+        },
+      },
+    });
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
+    const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
+    const dtId = (nodes[0]['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
+    expect(dtId['cachedResultName']).toBe('Contacts Dev');
+  });
+
+  it('passes source ID through unchanged when no tables.json mapping exists', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'unmapped-id' },
+    ]);
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
+    const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
+    const dtId = (nodes[0]['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
+    expect(dtId['value']).toBe('unmapped-id');
+  });
+
+  it('emits warning per unmapped table ID with affected nodes and fix command', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'unmapped-id' },
+    ]);
+    setupProject([wf], []);
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('unmapped-id');
+    expect(joined).toContain('Get Row');
+    expect(joined).toContain('chiral table map');
+  });
+
+  it('dry-run includes table warnings in output', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Upsert Row', tableId: 'unmapped-dev-id' },
+    ]);
+    setupProject([wf], []);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    expect(output.join('\n')).toContain('unmapped-dev-id');
+    expect(output.join('\n')).toContain('⚠');
+  });
+
+  it('json output includes table_warnings field', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'unmapped-id' },
+    ]);
+    setupProject([wf], []);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+
+    expect(output).toHaveLength(1);
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.table_warnings).toEqual([
+      { sourceId: 'unmapped-id', affectedNodes: ['Get Row'] },
+    ]);
+  });
+
+  it('json output table_warnings is empty when all table IDs are mapped', async () => {
+    const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
+      { nodeName: 'Get Row', tableId: 'dev-table-id' },
+    ]);
+    setupProjectWithTables([wf], [], {
+      version: 1,
+      tables: {
+        contacts: {
+          dev: { id: 'dev-table-id', name: 'Contacts' },
+          prod: { id: 'prod-table-id', name: 'Contacts' },
+        },
+      },
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.table_warnings).toEqual([]);
+  });
+});
