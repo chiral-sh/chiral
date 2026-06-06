@@ -55,6 +55,15 @@ const WORKFLOWS_WITH_ID = JSON.stringify({
   },
 });
 
+const WORKFLOWS_DEV_ONLY = JSON.stringify({
+  version: 1,
+  workflows: {
+    'order-processor': {
+      dev: { name: 'Order Processor', id: 'wf-abc123' },
+    },
+  },
+});
+
 const EMPTY_WORKFLOWS = JSON.stringify({ version: 1, workflows: {} });
 
 const DEV_ENV_ID = 'dev00001';
@@ -92,25 +101,25 @@ describe('runLockClaim', () => {
   it('throws UserError when --env and --all-envs are both set', async () => {
     setupBase();
     await expect(
-      runLockClaim('order-processor', { env: 'prod', allEnvs: true }),
+      runLockClaim('order-processor', { env: 'prod', allEnvs: true }, PROJECT_DIR),
     ).rejects.toThrow(UserError);
   });
 
   it('throws UserError when neither --env nor --all-envs is set', async () => {
     setupBase();
-    await expect(runLockClaim('order-processor', {})).rejects.toThrow(UserError);
+    await expect(runLockClaim('order-processor', {}, PROJECT_DIR)).rejects.toThrow(UserError);
   });
 
   it('throws UserError for unknown --env value', async () => {
     setupBase();
     await expect(
-      runLockClaim('order-processor', { env: 'staging' }),
+      runLockClaim('order-processor', { env: 'staging' }, PROJECT_DIR),
     ).rejects.toThrow(UserError);
   });
 
   it('writes lock file under locks/<env>/<id>.lock for resolved workflow', async () => {
     setupBase(WORKFLOWS_WITH_ID);
-    await runLockClaim('order-processor', { env: 'prod' });
+    await runLockClaim('order-processor', { env: 'prod' }, PROJECT_DIR);
 
     const lockPath = `${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`;
     const files = vol.toJSON();
@@ -124,7 +133,7 @@ describe('runLockClaim', () => {
 
   it('writes lock file with logical-<name> key when workflow not in workflows.json', async () => {
     setupBase();
-    await runLockClaim('unknown-wf', { env: 'prod' });
+    await runLockClaim('unknown-wf', { env: 'prod' }, PROJECT_DIR);
 
     const lockPath = `${PROJECT_DIR}/.chiral/locks/prd00001/logical-unknown-wf.lock`;
     const files = vol.toJSON();
@@ -135,7 +144,7 @@ describe('runLockClaim', () => {
 
   it('stores reason in lock file when --reason is provided', async () => {
     setupBase(WORKFLOWS_WITH_ID);
-    await runLockClaim('order-processor', { env: 'prod', reason: 'deploying billing fix' });
+    await runLockClaim('order-processor', { env: 'prod', reason: 'deploying billing fix' }, PROJECT_DIR);
 
     const lockPath = `${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`;
     const lock = JSON.parse(vol.toJSON()[lockPath]!);
@@ -157,7 +166,7 @@ describe('runLockClaim', () => {
     });
 
     try {
-      await runLockClaim('order-processor', { env: 'prod' });
+      await runLockClaim('order-processor', { env: 'prod' }, PROJECT_DIR);
       expect.fail('should have thrown ControlledExit');
     } catch (err) {
       expect(err).toBeInstanceOf(ControlledExit);
@@ -179,7 +188,7 @@ describe('runLockClaim', () => {
     });
 
     try {
-      await runLockClaim('order-processor', { env: 'prod' });
+      await runLockClaim('order-processor', { env: 'prod' }, PROJECT_DIR);
       expect.fail('should have thrown ControlledExit');
     } catch (err) {
       expect(err).toBeInstanceOf(ControlledExit);
@@ -189,7 +198,7 @@ describe('runLockClaim', () => {
 
   it('--all-envs writes locks for all configured envs', async () => {
     setupBase(WORKFLOWS_WITH_ID);
-    await runLockClaim('order-processor', { allEnvs: true });
+    await runLockClaim('order-processor', { allEnvs: true }, PROJECT_DIR);
 
     const files = vol.toJSON();
     expect(files[`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]).toBeDefined();
@@ -211,7 +220,7 @@ describe('runLockClaim', () => {
     });
 
     try {
-      await runLockClaim('order-processor', { allEnvs: true });
+      await runLockClaim('order-processor', { allEnvs: true }, PROJECT_DIR);
       expect.fail('should have thrown ControlledExit');
     } catch (err) {
       expect(err).toBeInstanceOf(ControlledExit);
@@ -225,16 +234,44 @@ describe('runLockClaim', () => {
     expect(files[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeDefined();
   });
 
+  it('--all-envs skips unmapped envs and locks only where mapped', async () => {
+    setupBase(WORKFLOWS_DEV_ONLY);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runLockClaim('order-processor', { allEnvs: true }, PROJECT_DIR);
+    consoleSpy.mockRestore();
+
+    const files = vol.toJSON();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]).toBeDefined();
+    expect(files[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeUndefined();
+  });
+
+  it('--all-envs shows skipped envs message and does not throw when no env is mapped', async () => {
+    const noMappingWorkflows = JSON.stringify({ version: 1, workflows: { 'order-processor': {} } });
+    setupBase(noMappingWorkflows);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await expect(
+      runLockClaim('order-processor', { allEnvs: true }, PROJECT_DIR),
+    ).resolves.toBeUndefined();
+    consoleSpy.mockRestore();
+  });
+
+  it('--env throws UserError when workflow not mapped to that env', async () => {
+    setupBase(WORKFLOWS_DEV_ONLY);
+    await expect(
+      runLockClaim('order-processor', { env: 'prod' }, PROJECT_DIR),
+    ).rejects.toThrow(UserError);
+  });
+
   it('calls syncToRemote after successful lock claim', async () => {
     setupBase(WORKFLOWS_WITH_ID);
-    await runLockClaim('order-processor', { env: 'prod' });
+    await runLockClaim('order-processor', { env: 'prod' }, PROJECT_DIR);
     expect(mockSyncToRemote).toHaveBeenCalledOnce();
   });
 
   it('emits JSON envelope on success with --json', async () => {
     setupBase(WORKFLOWS_WITH_ID);
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runLockClaim('order-processor', { env: 'prod', json: true });
+    await runLockClaim('order-processor', { env: 'prod', json: true }, PROJECT_DIR);
 
     const calls = consoleSpy.mock.calls.map((c) => c[0] as string);
     const jsonLine = calls.find((c) => c.startsWith('{'));
@@ -262,7 +299,7 @@ describe('runLockClaim', () => {
     });
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      await runLockClaim('order-processor', { env: 'prod', json: true });
+      await runLockClaim('order-processor', { env: 'prod', json: true }, PROJECT_DIR);
     } catch {
       // expected ControlledExit(6)
     }
@@ -282,7 +319,7 @@ describe('runLockList', () => {
   it('prints "No active locks." when no locks exist', async () => {
     setupBase();
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runLockList({});
+    await runLockList({}, PROJECT_DIR);
     const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
     expect(output).toContain('No active locks.');
     consoleSpy.mockRestore();
@@ -291,7 +328,7 @@ describe('runLockList', () => {
   it('returns JSON envelope with empty locks array when no locks', async () => {
     setupBase();
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runLockList({ json: true });
+    await runLockList({ json: true }, PROJECT_DIR);
     const calls = consoleSpy.mock.calls.map((c) => c[0] as string);
     const jsonLine = calls.find((c) => c.startsWith('{'));
     expect(jsonLine).toBeDefined();
@@ -314,7 +351,7 @@ describe('runLockList', () => {
       }),
     });
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runLockList({ json: true });
+    await runLockList({ json: true }, PROJECT_DIR);
     const calls = consoleSpy.mock.calls.map((c) => c[0] as string);
     const jsonLine = calls.find((c) => c.startsWith('{'));
     const parsed = JSON.parse(jsonLine!);
@@ -351,7 +388,7 @@ describe('runLockList', () => {
     });
 
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runLockList({ json: true, stale: '2h' });
+    await runLockList({ json: true, stale: '2h' }, PROJECT_DIR);
     const calls = consoleSpy.mock.calls.map((c) => c[0] as string);
     const jsonLine = calls.find((c) => c.startsWith('{'));
     const parsed = JSON.parse(jsonLine!);
@@ -363,12 +400,12 @@ describe('runLockList', () => {
 
   it('throws UserError for invalid --stale duration', async () => {
     setupBase();
-    await expect(runLockList({ stale: 'invalid' })).rejects.toThrow(UserError);
+    await expect(runLockList({ stale: 'invalid' }, PROJECT_DIR)).rejects.toThrow(UserError);
   });
 
   it('throws UserError for unknown --env value', async () => {
     setupBase();
-    await expect(runLockList({ env: 'staging' })).rejects.toThrow(UserError);
+    await expect(runLockList({ env: 'staging' }, PROJECT_DIR)).rejects.toThrow(UserError);
   });
 
   it('shows stale:true for locks older than 24h threshold', async () => {
@@ -384,7 +421,7 @@ describe('runLockList', () => {
       }),
     });
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runLockList({ json: true });
+    await runLockList({ json: true }, PROJECT_DIR);
     const calls = consoleSpy.mock.calls.map((c) => c[0] as string);
     const parsed = JSON.parse(calls.find((c) => c.startsWith('{'))!);
     expect(parsed.data.locks[0].stale).toBe(true);
@@ -398,19 +435,19 @@ describe('runUnlock', () => {
   it('throws UserError when --env and --all-envs are both set', async () => {
     setupBase();
     await expect(
-      runUnlock('order-processor', { env: 'prod', allEnvs: true }),
+      runUnlock('order-processor', { env: 'prod', allEnvs: true }, PROJECT_DIR),
     ).rejects.toThrow(UserError);
   });
 
   it('throws UserError when neither --env nor --all-envs is set', async () => {
     setupBase();
-    await expect(runUnlock('order-processor', {})).rejects.toThrow(UserError);
+    await expect(runUnlock('order-processor', {}, PROJECT_DIR)).rejects.toThrow(UserError);
   });
 
   it('throws UserError when workflow is not locked in the target env', async () => {
     setupBase(WORKFLOWS_WITH_ID);
     await expect(
-      runUnlock('order-processor', { env: 'prod' }),
+      runUnlock('order-processor', { env: 'prod' }, PROJECT_DIR),
     ).rejects.toThrow(UserError);
   });
 
@@ -425,7 +462,7 @@ describe('runUnlock', () => {
         hostname: 'test-host',
       }),
     });
-    await runUnlock('order-processor', { env: 'prod' });
+    await runUnlock('order-processor', { env: 'prod' }, PROJECT_DIR);
     expect(vol.toJSON()[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeUndefined();
   });
 
@@ -441,7 +478,7 @@ describe('runUnlock', () => {
       }),
     });
     await expect(
-      runUnlock('order-processor', { env: 'prod' }),
+      runUnlock('order-processor', { env: 'prod' }, PROJECT_DIR),
     ).rejects.toThrow(UserError);
   });
 
@@ -457,7 +494,7 @@ describe('runUnlock', () => {
       }),
     });
     await expect(
-      runUnlock('order-processor', { env: 'prod', force: true }),
+      runUnlock('order-processor', { env: 'prod', force: true }, PROJECT_DIR),
     ).resolves.not.toThrow();
     expect(vol.toJSON()[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeUndefined();
   });
@@ -474,7 +511,7 @@ describe('runUnlock', () => {
       }),
     });
     await expect(
-      runUnlock('order-processor', { env: 'prod', force: true }),
+      runUnlock('order-processor', { env: 'prod', force: true }, PROJECT_DIR),
     ).rejects.toThrow(UserError);
   });
 
@@ -495,11 +532,19 @@ describe('runUnlock', () => {
         hostname: 'other-host',
       }),
     });
-    await runUnlock('order-processor', { allEnvs: true });
+    await runUnlock('order-processor', { allEnvs: true }, PROJECT_DIR);
     const files = vol.toJSON();
     // dev lock removed (own), prod lock kept (other actor's)
     expect(files[`${PROJECT_DIR}/.chiral/locks/dev00001/wf-abc123.lock`]).toBeUndefined();
     expect(files[`${PROJECT_DIR}/.chiral/locks/prd00001/wf-abc123.lock`]).toBeDefined();
+  });
+
+  it('prints nothing-to-unlock message when --all-envs finds no locks', async () => {
+    setupBase(WORKFLOWS_WITH_ID);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runUnlock('order-processor', { allEnvs: true }, PROJECT_DIR);
+    const output = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
+    expect(output).toContain('nothing to unlock');
   });
 
   it('emits JSON envelope on success with --json', async () => {
@@ -514,7 +559,7 @@ describe('runUnlock', () => {
       }),
     });
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runUnlock('order-processor', { env: 'prod', json: true });
+    await runUnlock('order-processor', { env: 'prod', json: true }, PROJECT_DIR);
     const calls = consoleSpy.mock.calls.map((c) => c[0] as string);
     const jsonLine = calls.find((c) => c.startsWith('{'));
     expect(jsonLine).toBeDefined();
@@ -535,7 +580,7 @@ describe('runUnlock', () => {
         hostname: 'test-host',
       }),
     });
-    await runUnlock('order-processor', { env: 'prod' });
+    await runUnlock('order-processor', { env: 'prod' }, PROJECT_DIR);
     expect(mockSyncToRemote).toHaveBeenCalledOnce();
   });
 });

@@ -9,7 +9,8 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-s
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { getGitActor } from '../lib/git.js';
-import { visibleLen, padRight, formatAge } from '../lib/cli.js';
+import { formatAge } from '../lib/cli.js';
+import { renderLockTable, type LockListEntry } from '../lib/lock-render.js';
 import {
   writeLock,
   readLock,
@@ -61,27 +62,100 @@ function buildReverseWorkflowMap(chiralDir: string): Map<string, string> {
   return reverse;
 }
 
-// ── runLockClaim ──────────────────────────────────────────────────────────────
+// ── Options interfaces ────────────────────────────────────────────────────────
 
-export async function runLockClaim(
-  logicalName: string,
-  options: { env?: string; allEnvs?: boolean; reason?: string; json?: boolean },
-): Promise<void> {
+export interface LockClaimOptions {
+  env?: string;
+  allEnvs?: boolean;
+  reason?: string;
+  json?: boolean;
+}
+
+export interface LockListOptions {
+  env?: string;
+  stale?: string;
+  json?: boolean;
+  watch?: boolean;
+}
+
+export interface UnlockOptions {
+  env?: string;
+  allEnvs?: boolean;
+  force?: boolean;
+  yes?: boolean;
+  json?: boolean;
+}
+
+// ── Validators ────────────────────────────────────────────────────────────────
+
+/*
+ * Flag interaction matrix for lock claim:
+ *
+ *   --env          --all-envs   : mutually exclusive; exactly one required
+ *   --reason                    : stored in lock file; optional
+ *   --json                      : suppresses human output and Next: hint
+ */
+function validateLockClaimOptions(options: LockClaimOptions): void {
   if (options.env && options.allEnvs) {
     throw new UserError('--env and --all-envs are mutually exclusive');
   }
   if (!options.env && !options.allEnvs) {
     throw new UserError('Specify --env <env> or --all-envs');
   }
+}
+
+/*
+ * Flag interaction matrix for lock list:
+ *
+ *   --env                       : filter to one environment; validated against config
+ *   --stale <duration>          : filter to locks older than threshold (e.g. 2h, 30m, 1d)
+ *   --json                      : emit JSON envelope
+ *   --watch        --json       : streams JSON lines when stdout is not a TTY; clears screen on TTY
+ */
+
+/*
+ * Flag interaction matrix for unlock:
+ *
+ *   --env          --all-envs   : mutually exclusive; exactly one required
+ *   --force                     : free tier: override own lock; paid: override any lock
+ *   --force        --yes        : skip confirmation prompt (paid tier; on free tier --force only
+ *                                 applies to own locks so confirmation is not required)
+ *   --json                      : suppresses human output and Next: hint
+ *   --all-envs     (no --force) : silently skips envs held by other actors
+ */
+function validateUnlockOptions(options: UnlockOptions): void {
+  if (options.env && options.allEnvs) {
+    throw new UserError('--env and --all-envs are mutually exclusive');
+  }
+  if (!options.env && !options.allEnvs) {
+    throw new UserError('Specify --env <env> or --all-envs');
+  }
+}
+
+// ── Output mode ───────────────────────────────────────────────────────────────
+
+function resolveOutputMode(options: { json?: boolean }): 'human' | 'json' {
+  return options.json ? 'json' : 'human';
+}
+
+// ── runLockClaim ──────────────────────────────────────────────────────────────
+
+export async function runLockClaim(
+  logicalName: string,
+  options: LockClaimOptions,
+  cwd = process.cwd(),
+): Promise<void> {
+  validateLockClaimOptions(options);
+  const outputMode = resolveOutputMode(options);
 
   const actor = getGitActor();
   const host = osHostname();
-  const chiralDir = findChiralDir();
+  const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
     throw new UserError("No active project found. Run 'chiral init <name>' first.");
   }
 
-  const { config } = loadConfigAndDir();
+  const { config } = loadConfigAndDir(join(chiralDir, '..'));
   const envs = Object.keys(config.environments);
 
   let targetEnvs: string[];
@@ -99,7 +173,7 @@ export async function runLockClaim(
 
   const { workflowId, resolved } = resolveWorkflowId(chiralDir, logicalName);
 
-  if (!resolved && !options.json) {
+  if (!resolved && outputMode === 'human') {
     console.log(
       chalk.yellow(
         `  ⚠ "${logicalName}" not found in workflows.json — lock written with unresolved key.`,
@@ -110,13 +184,39 @@ export async function runLockClaim(
     );
   }
 
+  const unmappedEnvs: string[] = [];
+
   if (resolved) {
     const map = loadWorkflowMap(chiralDir);
     const envEntries = map.workflows[logicalName];
-    for (const env of targetEnvs) {
-      if (!envEntries?.[env]?.id) {
+    if (options.allEnvs) {
+      targetEnvs = targetEnvs.filter((env) => {
+        if (!envEntries?.[env]?.id) {
+          unmappedEnvs.push(env);
+          return false;
+        }
+        return true;
+      });
+      if (targetEnvs.length === 0) {
+        if (outputMode === 'human') {
+          console.log();
+          console.log(
+            chalk.yellow(`  ⚠ "${logicalName}" is not mapped to any configured environment.`),
+          );
+          console.log(
+            chalk.dim("    Run 'chiral workflow map' to add it."),
+          );
+          console.log();
+        } else {
+          printJson({ locked: [], skipped: unmappedEnvs, reason: 'not_mapped' });
+        }
+        return;
+      }
+    } else {
+      const envName = targetEnvs[0]!;
+      if (!envEntries?.[envName]?.id) {
         throw new UserError(
-          `"${logicalName}" is not mapped to environment "${env}". Run 'chiral workflow map' to add it.`,
+          `"${logicalName}" is not mapped to environment "${envName}". Run 'chiral workflow map' to add it.`,
         );
       }
     }
@@ -124,6 +224,7 @@ export async function runLockClaim(
 
   const writtenEnvs: string[] = [];
 
+  if (outputMode === 'human') console.log();
   for (const env of targetEnvs) {
     const envId = resolveEnvId(chiralDir, env);
     const existing = readLock(chiralDir, envId, workflowId);
@@ -142,13 +243,13 @@ export async function runLockClaim(
         }
       }
 
-      if (writtenEnvs.length > 0 && !options.json) {
+      if (writtenEnvs.length > 0 && outputMode === 'human') {
         console.log();
         const rollbackList = writtenEnvs.map((e) => `lock in ${e}`).join(', ');
         console.log(`  Rolled back: removed ${rollbackList}.`);
       }
 
-      if (options.json) {
+      if (outputMode === 'json') {
         console.error(
           JSON.stringify({
             status: 'error',
@@ -184,12 +285,12 @@ export async function runLockClaim(
     });
     writtenEnvs.push(env);
 
-    if (!options.json) {
-      console.log(`  ${chalk.green('✓')} Locked ${logicalName} in ${env}   (${actor})`);
+    if (outputMode === 'human') {
+      console.log(`  ${chalk.green('✓')} Locked ${logicalName} in ${env}`);
     }
 
     // Store timestamp for single-env JSON output
-    if (!options.allEnvs && options.json) {
+    if (!options.allEnvs && outputMode === 'json') {
       writeAuditEntry(chiralDir, {
         event_id: crypto.randomUUID(),
         event_schema_version: 1,
@@ -239,8 +340,16 @@ export async function runLockClaim(
     chiral_version: '0.1.0',
   });
 
-  if (options.json) {
-    printJson({ locked: writtenEnvs, skipped: [] });
+  if (outputMode === 'human' && unmappedEnvs.length > 0) {
+    for (const env of unmappedEnvs) {
+      console.log(
+        `  ${chalk.dim('─')} ${logicalName} in ${env}  (not mapped — skipped)`,
+      );
+    }
+  }
+
+  if (outputMode === 'json') {
+    printJson({ locked: writtenEnvs, skipped: unmappedEnvs });
   }
 
   const syncResult = await syncToRemote(
@@ -248,29 +357,22 @@ export async function runLockClaim(
     config,
     `chore(chiral): lock ${logicalName}`,
   );
-  if (!options.json && !syncResult.skipped && !syncResult.nothingToCommit) {
-    if (syncResult.success) {
-      console.log(formatSyncSuccess(syncResult));
-    } else {
-      for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+  if (outputMode === 'human') {
+    console.log();
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+      }
+      console.log();
     }
+    console.log(`  ${chalk.dim('Next:')} chiral lock list`);
     console.log();
   }
 }
 
 // ── runLockList ───────────────────────────────────────────────────────────────
-
-interface LockListEntry {
-  workflowId: string;
-  logicalName: string;
-  env: string;
-  actor: string;
-  hostname: string;
-  timestamp: string;
-  ageSeconds: number;
-  reason?: string;
-  stale: boolean;
-}
 
 function buildLockList(
   chiralDir: string,
@@ -323,77 +425,18 @@ function buildLockList(
   return entries;
 }
 
-function renderLockTable(entries: LockListEntry[]): void {
-  if (entries.length === 0) {
-    console.log('\n  No active locks.\n');
-    return;
-  }
-
-  const hasReason = entries.some((e) => e.reason);
-
-  const C_ENV = Math.max('ENV'.length, ...entries.map((e) => e.env.length));
-  const C_WF = Math.max(
-    'WORKFLOW'.length,
-    ...entries.map((e) => visibleLen(e.logicalName + (e.stale ? ' ⚠' : ''))),
-  );
-  const C_ACTOR = Math.max('ACTOR'.length, ...entries.map((e) => e.actor.length));
-  const C_AGE = Math.max('AGE'.length, ...entries.map((e) => formatAge(e.ageSeconds).length));
-  const widths: number[] = hasReason
-    ? [
-        C_ENV,
-        C_WF,
-        C_ACTOR,
-        C_AGE,
-        Math.max('REASON'.length, ...entries.map((e) => (e.reason ?? '').length)),
-      ]
-    : [C_ENV, C_WF, C_ACTOR, C_AGE];
-
-  const headers = hasReason
-    ? ['ENV', 'WORKFLOW', 'ACTOR', 'AGE', 'REASON']
-    : ['ENV', 'WORKFLOW', 'ACTOR', 'AGE'];
-
-  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-  const headerRow =
-    '  │ ' +
-    widths.map((w, i) => padRight(chalk.dim(headers[i]!), w)).join(' │ ') +
-    ' │';
-
-  console.log('\n  Active locks\n');
-  console.log(top);
-  console.log(headerRow);
-  console.log(sep);
-
-  for (const entry of entries) {
-    const wfDisplay = entry.stale
-      ? `${entry.logicalName} ${chalk.yellow('⚠')}`
-      : entry.logicalName;
-    const cells = [
-      padRight(entry.env, widths[0]!),
-      padRight(wfDisplay, widths[1]!),
-      padRight(entry.actor, widths[2]!),
-      padRight(formatAge(entry.ageSeconds), widths[3]!),
-      ...(hasReason ? [padRight(entry.reason ?? '', widths[4]!)] : []),
-    ];
-    console.log('  │ ' + cells.join(' │ ') + ' │');
-  }
-
-  console.log(bot);
-  console.log();
-}
-
 export async function runLockList(
-  options: { env?: string; stale?: string; json?: boolean; watch?: boolean },
+  options: LockListOptions,
+  cwd = process.cwd(),
 ): Promise<void> {
-  const chiralDir = findChiralDir();
+  const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
     throw new UserError("No active project found. Run 'chiral init <name>' first.");
   }
 
   if (options.env) {
     try {
-      const { config } = loadConfigAndDir();
+      const { config } = loadConfigAndDir(join(chiralDir, '..'));
       if (!(options.env in config.environments)) {
         const available = Object.keys(config.environments).join(', ');
         throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
@@ -443,13 +486,16 @@ export async function runLockList(
   };
 
   try {
-    const watcher = watch(locksDir, { recursive: true }, onEvent);
-    process.on('SIGINT', () => {
-      watcher.close();
-      console.log('  Stopped watching.');
-      process.exit(0);
+    await new Promise<void>((resolve) => {
+      const watcher = watch(locksDir, { recursive: true }, onEvent);
+      process.once('SIGINT', () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        watcher.close();
+        process.stdout.write('\n  Stopped watching.\n');
+        process.exitCode = 130;
+        resolve();
+      });
     });
-    await new Promise<void>(() => {}); // keep alive
   } catch {
     // locks dir doesn't exist; single render already done above
   }
@@ -459,28 +505,19 @@ export async function runLockList(
 
 export async function runUnlock(
   logicalName: string,
-  options: {
-    env?: string;
-    allEnvs?: boolean;
-    force?: boolean;
-    yes?: boolean;
-    json?: boolean;
-  },
+  options: UnlockOptions,
+  cwd = process.cwd(),
 ): Promise<void> {
-  if (options.env && options.allEnvs) {
-    throw new UserError('--env and --all-envs are mutually exclusive');
-  }
-  if (!options.env && !options.allEnvs) {
-    throw new UserError('Specify --env <env> or --all-envs');
-  }
+  validateUnlockOptions(options);
+  const outputMode = resolveOutputMode(options);
 
   const actor = getGitActor();
-  const chiralDir = findChiralDir();
+  const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
     throw new UserError("No active project found. Run 'chiral init <name>' first.");
   }
 
-  const { config } = loadConfigAndDir();
+  const { config } = loadConfigAndDir(join(chiralDir, '..'));
   const envs = Object.keys(config.environments);
 
   let targetEnvs: string[];
@@ -500,6 +537,7 @@ export async function runUnlock(
   const releasedEnvs: string[] = [];
   const skippedEnvs: Array<{ env: string; reason: string }> = [];
 
+  if (outputMode === 'human') console.log();
   for (const env of targetEnvs) {
     const envId = resolveEnvId(chiralDir, env);
     const lock = readLock(chiralDir, envId, workflowId);
@@ -528,12 +566,12 @@ export async function runUnlock(
     releaseLock(chiralDir, envId, workflowId);
     releasedEnvs.push(env);
 
-    if (!options.json) {
+    if (outputMode === 'human') {
       console.log(`  ${chalk.green('✓')} Unlocked ${logicalName} in ${env}`);
     }
   }
 
-  if (!options.json) {
+  if (outputMode === 'human') {
     for (const { env, reason } of skippedEnvs) {
       console.log(
         `  ${chalk.dim('─')} ${logicalName} in ${env}  (${reason} — skipped)`,
@@ -542,7 +580,11 @@ export async function runUnlock(
   }
 
   if (releasedEnvs.length === 0) {
-    if (options.json) printJson({ unlocked: [], skipped: skippedEnvs.map((s) => s.env) });
+    if (outputMode === 'human' && skippedEnvs.length === 0) {
+      console.log(`  No locks found for "${logicalName}" — nothing to unlock.`);
+      console.log();
+    }
+    if (outputMode === 'json') printJson({ unlocked: [], skipped: skippedEnvs.map((s) => s.env) });
     return;
   }
 
@@ -561,7 +603,7 @@ export async function runUnlock(
     chiral_version: '0.1.0',
   });
 
-  if (options.json) {
+  if (outputMode === 'json') {
     printJson({ unlocked: releasedEnvs, skipped: skippedEnvs.map((s) => s.env) });
   }
 
@@ -570,12 +612,17 @@ export async function runUnlock(
     config,
     `chore(chiral): unlock ${logicalName}`,
   );
-  if (!options.json && !syncResult.skipped && !syncResult.nothingToCommit) {
-    if (syncResult.success) {
-      console.log(formatSyncSuccess(syncResult));
-    } else {
-      for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+  if (outputMode === 'human') {
+    console.log();
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+      }
+      console.log();
     }
+    console.log(`  ${chalk.dim('Next:')} chiral lock list`);
     console.log();
   }
 }
@@ -606,7 +653,7 @@ Examples:
 `,
   )
   .action(async (options) => {
-    await runLockList(options);
+    await runLockList(options, process.cwd());
   });
 
 export const lockCommand = new Command('lock')
@@ -636,7 +683,7 @@ Examples:
       lockCommand.outputHelp();
       return;
     }
-    await runLockClaim(workflow, options);
+    await runLockClaim(workflow, options, process.cwd());
   });
 
 lockCommand.addCommand(lockListCmd);
@@ -658,8 +705,12 @@ Examples:
 
   Unlock across all owned environments:
     chiral unlock order-processor --all-envs
+
+Note: --force + --yes bypasses the confirmation prompt when overriding a lock.
+On the free tier, --force only applies to your own locks; overriding another actor's
+lock requires a paid license.
 `,
   )
   .action(async (workflow: string, options) => {
-    await runUnlock(workflow, options);
+    await runUnlock(workflow, options, process.cwd());
   });

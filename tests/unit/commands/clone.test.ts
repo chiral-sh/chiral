@@ -10,13 +10,13 @@ vi.mock('node:fs', async () => {
   return { ...fs };
 });
 
-// ── Mock child_process (exec async for git clone) ─────────────────────────────
-type ExecCallback = (err: Error | null, stdout: string, stderr: string) => void;
-const { mockExec } = vi.hoisted(() => ({
-  mockExec: vi.fn<[string, unknown, ExecCallback], void>(),
+// ── Mock child_process (execFile async for git clone) ────────────────────────
+type ExecFileCallback = (err: Error | null, stdout: string, stderr: string) => void;
+const { mockExecFile } = vi.hoisted(() => ({
+  mockExecFile: vi.fn<[string, string[], unknown, ExecFileCallback], void>(),
 }));
 vi.mock('node:child_process', () => ({
-  exec: mockExec,
+  execFile: mockExecFile,
 }));
 
 // ── Mock N8nClient ────────────────────────────────────────────────────────────
@@ -92,8 +92,8 @@ function setupCloneFs(opts: { chiralDir?: boolean; configJson?: boolean } = {}) 
 }
 
 function mockGitCloneSuccess() {
-  mockExec.mockImplementation((cmd: string, _opts: unknown, callback: ExecCallback) => {
-    if (cmd.startsWith('git clone')) {
+  mockExecFile.mockImplementation((cmd: string, args: string[], _opts: unknown, callback: ExecFileCallback) => {
+    if (cmd === 'git' && args[0] === 'clone') {
       vol.mkdirSync(CHIRAL_DIR, { recursive: true });
     }
     callback(null, '', '');
@@ -137,13 +137,14 @@ beforeEach(() => {
 describe('runClone', () => {
 
   describe('git clone invocation', () => {
-    it('calls exec with git clone <repoUrl> <targetDir>', async () => {
+    it('calls execFile with git clone args', async () => {
       mockGitCloneSuccess();
 
       await runClone(REPO_URL, { skipTest: true, json: false });
 
-      expect(mockExec).toHaveBeenCalledWith(
-        `git clone ${REPO_URL} ${TARGET_DIR}`,
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['clone', REPO_URL, TARGET_DIR],
         expect.objectContaining({ cwd: expect.any(String) }),
         expect.any(Function),
       );
@@ -162,7 +163,7 @@ describe('runClone', () => {
 
   describe('git clone failure', () => {
     it('throws UserError containing guidance when git fails', async () => {
-      mockExec.mockImplementation((_cmd: string, _opts: unknown, callback: ExecCallback) => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: unknown, callback: ExecFileCallback) => {
         callback(new Error('repository not found'), '', '');
       });
 
@@ -176,7 +177,7 @@ describe('runClone', () => {
 
   describe('missing .chiral/ directory', () => {
     it('throws UserError with exact message when .chiral/ is absent', async () => {
-      mockExec.mockImplementation((_cmd: string, _opts: unknown, callback: ExecCallback) => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: unknown, callback: ExecFileCallback) => {
         // Clone succeeds but no .chiral/ is created
         vol.mkdirSync(TARGET_DIR, { recursive: true });
         callback(null, '', '');
@@ -211,7 +212,7 @@ describe('runClone', () => {
     it('calls registerProject but skips writeConfig and prompts', async () => {
       mockGitCloneSuccess();
       // After clone, config.json already exists (idempotency scenario)
-      mockExec.mockImplementation((_cmd: string, _opts: unknown, callback: ExecCallback) => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: unknown, callback: ExecFileCallback) => {
         vol.mkdirSync(CHIRAL_DIR, { recursive: true });
         vol.writeFileSync(
           `${CHIRAL_DIR}/config.json`,
@@ -380,7 +381,7 @@ describe('runClone', () => {
     });
 
     it('throws UserError (exit 1) on git failure', async () => {
-      mockExec.mockImplementation((_cmd: string, _opts: unknown, callback: ExecCallback) => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: unknown, callback: ExecFileCallback) => {
         callback(new Error('permission denied'), '', '');
       });
 
@@ -389,7 +390,7 @@ describe('runClone', () => {
     });
 
     it('throws UserError (exit 1) on missing .chiral/', async () => {
-      mockExec.mockImplementation((_cmd: string, _opts: unknown, callback: ExecCallback) => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: unknown, callback: ExecFileCallback) => {
         vol.mkdirSync(TARGET_DIR, { recursive: true });
         callback(null, '', '');
       });

@@ -338,10 +338,9 @@ describe('runStatus — locks', () => {
     await runStatus({});
 
     const output = stdoutLines.join('\n');
-    expect(output).toContain('Locks (1 active)');
+    expect(output).toContain('Active locks');
     expect(output).toContain('wf-abc');
     expect(output).toContain('alice@example.com');
-    expect(output).toContain('laptop-pro');
   });
 
   it('shows lock in JSON data.locks', async () => {
@@ -390,8 +389,7 @@ describe('runStatus — locks', () => {
     await runStatus({});
 
     const output = stdoutLines.join('\n');
-    expect(output).toContain('STALE');
-    expect(output).toContain('may be abandoned');
+    expect(output).toContain('⚠');
   });
 
   it('marks stale_lock: true in JSON for an old lock', async () => {
@@ -854,10 +852,10 @@ describe('runStatus — --locks-only mode', () => {
 
     const output = stdoutLines.join('\n');
     // Lock section present
-    expect(output).toContain('Locks (1 active)');
+    expect(output).toContain('Active locks');
     expect(output).toContain('alice@example.com');
-    // No env table
-    expect(output).not.toContain('┌');
+    // Lock table has box-drawing; no env table columns
+    expect(output).toContain('┌');
     expect(output).not.toContain('last pull');
   });
 

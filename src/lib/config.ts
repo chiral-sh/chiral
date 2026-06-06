@@ -37,9 +37,19 @@ export type Config = z.infer<typeof ConfigSchema>;
 export type Environment = z.infer<typeof EnvironmentSchema>;
 export type GitSync = z.infer<typeof GitSyncSchema>;
 
-export function loadConfigAndDir(resolved?: ResolvedProject): ConfigWithDir {
-  const active = resolved ?? resolveActiveProject();
-  const chiralDir = active.chiralDir;
+export function loadConfigAndDir(cwdOrResolved?: string | ResolvedProject): ConfigWithDir {
+  let chiralDir: string;
+  let projectName: string;
+
+  if (typeof cwdOrResolved === 'string') {
+    chiralDir = join(cwdOrResolved, '.chiral');
+    projectName = ''; // resolved from config.json below
+  } else {
+    const active = cwdOrResolved ?? resolveActiveProject();
+    chiralDir = active.chiralDir;
+    projectName = active.name;
+  }
+
   const configPath = join(chiralDir, 'config.json');
 
   if (!existsSync(configPath)) {
@@ -62,14 +72,18 @@ export function loadConfigAndDir(resolved?: ResolvedProject): ConfigWithDir {
     );
   }
 
-  return { config: result.data, chiralDir, projectName: active.name };
+  return { config: result.data, chiralDir, projectName: projectName || result.data.project };
 }
 
 export function loadConfig(): Config {
   return loadConfigAndDir().config;
 }
 
-export function findChiralDir(): string | null {
+export function findChiralDir(cwd?: string): string | null {
+  if (cwd) {
+    const candidate = join(cwd, '.chiral');
+    if (existsSync(candidate)) return candidate;
+  }
   try {
     return resolveActiveProject().chiralDir;
   } catch {

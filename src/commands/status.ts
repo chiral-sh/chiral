@@ -6,6 +6,7 @@ import { loadConfigAndDir } from '../lib/config.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { visibleLen, padRight } from '../lib/cli.js';
+import { renderLockTable, type LockListEntry } from '../lib/lock-render.js';
 import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.js';
 import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
 import { listAllLocks } from '../state/locks.js';
@@ -214,15 +215,18 @@ function findLatestDeploymentForEnvLenient(chiralDir: string, env: string): stri
   return undefined;
 }
 
-function renderLockSection(locks: LockRow[], staleLockAfter: number | undefined): void {
-  console.log(`\n  ${chalk.bold(`Locks (${locks.length} active)`)}`);
-  console.log(chalk.dim('  ' + '─'.repeat(71)));
-  for (const lock of locks) {
-    const displayName = lock.logicalName ?? `${lock.workflowId} (unmapped)`;
-    const age = humanize(lock.since, false);
-    const staleLabel = lock.staleLock ? chalk.yellow(`   STALE (>${staleLockAfter ?? 24}h — may be abandoned)`) : '';
-    console.log(`  ${chalk.cyan(lock.env)}   ${displayName}   ${lock.actor} ${chalk.dim(`(${lock.hostname})`)}   ${age}${staleLabel}`);
-  }
+function toLockListEntries(locks: LockRow[]): LockListEntry[] {
+  return locks.map((l) => ({
+    workflowId: l.workflowId,
+    logicalName: l.logicalName ?? `${l.workflowId} (unmapped)`,
+    env: l.env,
+    actor: l.actor,
+    hostname: l.hostname,
+    timestamp: l.since,
+    ageSeconds: l.ageSeconds,
+    reason: l.reason ?? undefined,
+    stale: l.staleLock,
+  }));
 }
 
 // ── Run function ──────────────────────────────────────────────────────────────
@@ -527,11 +531,11 @@ export async function runStatus(options: StatusOptions): Promise<void> {
         console.log('  No active locks.');
         console.log();
       } else {
-        renderLockSection(locks, options.staleLockAfter);
+        renderLockTable(toLockListEntries(locks));
         console.log();
       }
     } else if (locks.length > 0) {
-      renderLockSection(locks, options.staleLockAfter);
+      renderLockTable(toLockListEntries(locks));
       console.log();
     }
   }

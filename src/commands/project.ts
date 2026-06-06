@@ -113,7 +113,7 @@ export async function runProjectRename(oldName: string, newName: string, options
 
   const newPath = join(getProjectsDir(), newName);
   if (existsSync(newPath) && newPath !== oldPath) {
-    throw new UserError(`Directory "${newPath}" already exists. Choose a different name.`);
+    throw new UserError(`A project named "${newName}" already exists. Choose a different name.`);
   }
 
   // Rename directory on disk

@@ -299,7 +299,7 @@ export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<
   const outputMode = options.json ? 'json' : 'human';
 
   async function doOnce(): Promise<void> {
-    const { config, chiralDir } = loadConfigAndDir(cwd);
+    const { config, chiralDir } = loadConfigAndDir();
 
     // Validate --env against config
     if (options.env && !config.environments[options.env]) {
@@ -415,7 +415,7 @@ export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<
     process.stdout.write('\x1b[2J\x1b[H');
     try { await doOnce(); } catch { /* keep watching on render errors */ }
 
-    const { chiralDir: watchDir } = loadConfigAndDir(cwd);
+    const { chiralDir: watchDir } = loadConfigAndDir();
     const auditPath = join(watchDir, 'audit.jsonl');
 
     await new Promise<void>((resolve) => {
