@@ -12,6 +12,7 @@ import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkfl
 import { listAllLocks } from '../state/locks.js';
 import { buildEnvIdToNameMap } from '../state/envs.js';
 import { loadWorkflowMap, findEntryByEnvId, type WorkflowMap } from '../state/workflows.js';
+import { loadTableMap, countUnmappedTableIds, type TablesMap } from '../state/tables.js';
 import { writeStatusSentinel } from '../state/sentinel.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ interface EnvRow {
   workflowCount: number | null;
   stale: boolean;
   drift: string | null;
+  unmappedTables: number;
 }
 
 interface LockRow {
@@ -355,6 +357,14 @@ export async function runStatus(options: StatusOptions): Promise<void> {
     }
   }
 
+  // Table map — tolerate missing/invalid tables.json (treat as empty map)
+  let tableMap: TablesMap = { version: 1, tables: {} };
+  try {
+    tableMap = loadTableMap(chiralDir);
+  } catch {
+    // tables.json invalid — skip unmapped-table detection
+  }
+
   // Per-env snapshot data
   const envRows: EnvRow[] = [];
   const zeroWorkflowEnvs: string[] = [];
@@ -370,6 +380,16 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
     const deploymentId = findLatestDeploymentForEnvLenient(chiralDir, envName);
     let workflowCount: number | null = null;
+    let unmappedTables = 0;
+
+    if (deploymentId) {
+      try {
+        const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+        unmappedTables = countUnmappedTableIds(tableMap, envName, workflows as unknown as { nodes?: unknown }[]);
+      } catch {
+        // unreadable snapshot workflows — skip unmapped-table detection for this env
+      }
+    }
 
     if (deploymentId) {
       if (options.verbose) console.error(`  verbose: reading snapshot meta for ${envName} (${deploymentId})`);
@@ -404,7 +424,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       }
     }
 
-    envRows.push({ name: envName, lastPull, lastPush, workflowCount, stale, drift });
+    envRows.push({ name: envName, lastPull, lastPush, workflowCount, stale, drift, unmappedTables });
   }
 
   // Locks — load workflow map for logical name resolution (optional, tolerate missing/invalid)
@@ -490,6 +510,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
           workflow_count: r.workflowCount,
           stale: r.stale,
           drift: r.drift,
+          unmapped_tables: r.unmappedTables,
         };
         if (requestedFields) {
           return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields!.includes(k as FieldName)));
@@ -522,6 +543,12 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
       for (const envName of zeroWorkflowEnvs) {
         console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
+      }
+
+      for (const row of envRows) {
+        if (row.unmappedTables > 0) {
+          console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(row.name)}: ${row.unmappedTables} table ID(s) not mapped. Run 'chiral table map' to map them.`);
+        }
       }
     }
 

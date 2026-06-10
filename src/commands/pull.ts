@@ -27,7 +27,7 @@ import {
 } from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
-import { loadTableMap, writeTableMap } from '../state/tables.js';
+import { loadTableMap, writeTableMap, collectDataTableRefs } from '../state/tables.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
@@ -168,33 +168,6 @@ function warnIfEnvSpecificNames(
   );
   console.log(chalk.dim(`     If they exist under different names in other environments, run:`));
   console.log(chalk.dim(`     chiral workflow match --source ${env} --target ${targetHint}`));
-}
-
-/** Collects `n8n-nodes-base.datatable` references: source table ID → cachedResultName (if present). */
-function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<string, string | undefined> {
-  const refs = new Map<string, string | undefined>();
-  for (const wf of workflows) {
-    const nodes = (wf as Record<string, unknown>)['nodes'];
-    if (!Array.isArray(nodes)) continue;
-    for (const node of nodes) {
-      if (typeof node !== 'object' || node === null) continue;
-      const nodeObj = node as Record<string, unknown>;
-      if (nodeObj['type'] !== 'n8n-nodes-base.datatable') continue;
-
-      const params = nodeObj['parameters'];
-      if (typeof params !== 'object' || params === null) continue;
-      const dataTableId = (params as Record<string, unknown>)['dataTableId'];
-      if (typeof dataTableId !== 'object' || dataTableId === null) continue;
-      const dtObj = dataTableId as Record<string, unknown>;
-      if (dtObj['__rl'] !== true) continue;
-
-      const value = dtObj['value'];
-      if (typeof value !== 'string') continue;
-      const cachedResultName = typeof dtObj['cachedResultName'] === 'string' ? dtObj['cachedResultName'] : undefined;
-      refs.set(value, cachedResultName);
-    }
-  }
-  return refs;
 }
 
 /**
