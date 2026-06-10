@@ -27,6 +27,7 @@ import {
 } from '../state/fingerprints.js';
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
+import { loadTableMap, writeTableMap } from '../state/tables.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
@@ -169,6 +170,73 @@ function warnIfEnvSpecificNames(
   console.log(chalk.dim(`     chiral workflow match --source ${env} --target ${targetHint}`));
 }
 
+/** Collects `n8n-nodes-base.datatable` references: source table ID → cachedResultName (if present). */
+function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<string, string | undefined> {
+  const refs = new Map<string, string | undefined>();
+  for (const wf of workflows) {
+    const nodes = (wf as Record<string, unknown>)['nodes'];
+    if (!Array.isArray(nodes)) continue;
+    for (const node of nodes) {
+      if (typeof node !== 'object' || node === null) continue;
+      const nodeObj = node as Record<string, unknown>;
+      if (nodeObj['type'] !== 'n8n-nodes-base.datatable') continue;
+
+      const params = nodeObj['parameters'];
+      if (typeof params !== 'object' || params === null) continue;
+      const dataTableId = (params as Record<string, unknown>)['dataTableId'];
+      if (typeof dataTableId !== 'object' || dataTableId === null) continue;
+      const dtObj = dataTableId as Record<string, unknown>;
+      if (dtObj['__rl'] !== true) continue;
+
+      const value = dtObj['value'];
+      if (typeof value !== 'string') continue;
+      const cachedResultName = typeof dtObj['cachedResultName'] === 'string' ? dtObj['cachedResultName'] : undefined;
+      refs.set(value, cachedResultName);
+    }
+  }
+  return refs;
+}
+
+/**
+ * Auto-heals `tables.json` `name` fields from `cachedResultName` for IDs already mapped in
+ * this env, and returns the source IDs referenced by workflows but not mapped for this env.
+ */
+function healTableNames(chiralDir: string, env: string, workflows: { nodes?: unknown }[]): string[] {
+  const refs = collectDataTableRefs(workflows);
+  if (refs.size === 0) return [];
+
+  const tableMap = loadTableMap(chiralDir);
+  let dirty = false;
+  const unmapped: string[] = [];
+
+  for (const [sourceId, cachedName] of refs) {
+    let found = false;
+    for (const envMap of Object.values(tableMap.tables)) {
+      const entry = envMap[env];
+      if (entry?.id === sourceId) {
+        found = true;
+        if (cachedName && entry.name !== cachedName) {
+          entry.name = cachedName;
+          dirty = true;
+        }
+        break;
+      }
+    }
+    if (!found) unmapped.push(sourceId);
+  }
+
+  if (dirty) writeTableMap(chiralDir, tableMap);
+  return unmapped;
+}
+
+function printUnmappedTablesHint(unmapped: string[], env: string): void {
+  if (unmapped.length === 0) return;
+  console.log(`\n  ${chalk.yellow('⚠')}  ${plural(unmapped.length, 'Data Table ID')} found in workflows but not mapped:`);
+  for (const id of unmapped) {
+    console.log(chalk.dim(`     chiral table map <name> ${env}=${id}`));
+  }
+}
+
 // ── Run function ──────────────────────────────────────────────────────────────
 
 export async function runPull(
@@ -256,6 +324,9 @@ export async function runPull(
         }
       }
 
+      // Auto-heal: update tables.json names from cachedResultName, collect unmapped table IDs
+      const unmappedTables = healTableNames(chiralDir, options.env, [workflow]);
+
       if (outputMode === 'name-only') {
         if (hasChanges) console.log(workflow.name);
       } else if (outputMode === 'json') {
@@ -290,6 +361,7 @@ export async function runPull(
           console.log(`  ${chalk.green('✓')} ${workflow.name} up to date`);
         }
         console.log(chalk.dim(`\n  Snapshot saved → .chiral/snapshots/${deploymentId}/`));
+        printUnmappedTablesHint(unmappedTables, options.env);
         console.log();
       }
 
@@ -555,6 +627,10 @@ export async function runPull(
         console.log();
       }
     }
+
+    // Auto-heal: update tables.json names from cachedResultName, collect unmapped table IDs
+    const unmappedTables = healTableNames(chiralDir, options.env, workflows);
+    if (outputMode === 'human') printUnmappedTablesHint(unmappedTables, options.env);
 
     // Batch-update fingerprints for every pulled workflow - runs for both the
     // "no changes" and "first pull / changes found" branches.
