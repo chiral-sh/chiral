@@ -29,7 +29,7 @@ export const AuditEntrySchema = z.object({
   result: z.enum(['success', 'failure', 'aborted']),
   error: z.string().nullable(),
   chiral_version: z.string(),
-  match_method: z.enum(['manual', 'auto', 'fuzzy']).nullable().optional(),
+  match_method: z.enum(['manual', 'auto', 'exact', 'fuzzy']).nullable().optional(),
   match_score: z.number().min(0).max(1).nullable().optional(),
   resource: z.enum(['workflow', 'credential', 'table']).optional(),
 });
