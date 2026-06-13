@@ -146,6 +146,34 @@ export function renameProjectInIndex(oldName: string, newName: string, newPath: 
   writeIndex(index);
 }
 
+// ── Process tree helpers ───────────────────────────────────────────────────────
+
+// Read the PPID of a given PID from /proc (Linux only). Returns 0 on any error.
+function getParentPid(pid: number): number {
+  try {
+    const status = readFileSync(`/proc/${pid}/status`, 'utf-8');
+    const m = status.match(/^PPid:\s+(\d+)/m);
+    return m ? parseInt(m[1], 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Walk up the process tree from `startPid`, returning the first session found.
+// Stops at PID 1 or after 8 hops (guards against cycles).
+function findSessionInAncestors(startPid: number): { project: string; lastUsedAt: string; pid: number } | null {
+  let pid = startPid;
+  const visited = new Set<number>();
+  for (let i = 0; i < 8 && pid > 1; i++) {
+    if (visited.has(pid)) break;
+    visited.add(pid);
+    const session = readSession(pid);
+    if (session) return { ...session, pid };
+    pid = getParentPid(pid);
+  }
+  return null;
+}
+
 // ── Session management ─────────────────────────────────────────────────────────
 
 function getSessionPath(ppid: number): string {
@@ -252,23 +280,22 @@ export function resolveActiveProject(): ResolvedProject {
     return { name: envProject, chiralDir: join(projectPath, '.chiral'), inactiveReminder: false };
   }
 
-  // 2. Session file keyed by parent PID
-  const ppid = process.ppid;
-  if (ppid) {
-    const session = readSession(ppid);
-    if (session) {
-      const projectPath = getProjectPath(session.project);
-      if (projectPath) {
-        const stale = Date.now() - new Date(session.lastUsedAt).getTime() > INACTIVITY_MS;
-        touchSession(ppid); // non-blocking update
-        return {
-          name: session.project,
-          chiralDir: join(projectPath, '.chiral'),
-          inactiveReminder: stale,
-        };
-      }
-      // Session points to a deleted project - fall through
+  // 2. Session file — walk up the process tree so completion subshells
+  //    (which add an extra $() fork between the interactive shell and chiral)
+  //    still find the session written by `chiral use`.
+  const ancestor = findSessionInAncestors(process.ppid);
+  if (ancestor) {
+    const projectPath = getProjectPath(ancestor.project);
+    if (projectPath) {
+      const stale = Date.now() - new Date(ancestor.lastUsedAt).getTime() > INACTIVITY_MS;
+      touchSession(ancestor.pid); // non-blocking update
+      return {
+        name: ancestor.project,
+        chiralDir: join(projectPath, '.chiral'),
+        inactiveReminder: stale,
+      };
     }
+    // Session points to a deleted project - fall through
   }
 
   // 3. Project count auto-selection

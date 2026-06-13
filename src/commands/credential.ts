@@ -1,10 +1,11 @@
-import { execSync } from 'node:child_process';
 import chalk from 'chalk';
 import { input } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadCredentials,
@@ -20,24 +21,6 @@ import {
 import { writeAuditEntry } from '../state/audit.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set - configure it before running chiral',
-    );
-  }
-}
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
-}
 
 interface ParsedCredentialMapArgs {
   logicalName: string | undefined;
@@ -714,7 +697,7 @@ export async function runCredentialList(
     Math.max(env.length, ...entries.map(([, m]) => (m[env] ?? '(not set)').length)),
   );
   const widths = [C_LOGICAL, ...C_ENVS];
-  const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - visibleLen(s)));
+  const pad = padRight;
 
   const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
   const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';

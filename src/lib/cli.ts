@@ -24,6 +24,33 @@ export function matchesGlob(name: string, pattern: string): boolean {
   return new RegExp(`^${regexStr}$`).test(name);
 }
 
+export function visibleLen(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
+}
+
+export function padRight(s: string, n: number): string {
+  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
+}
+
+export function formatAge(ageSeconds: number, style: 'short' | 'long' = 'short'): string {
+  if (style === 'long') {
+    if (ageSeconds < 3600) {
+      const mins = Math.floor(ageSeconds / 60);
+      return `${mins} ${mins === 1 ? 'minute' : 'minutes'} ago`;
+    }
+    if (ageSeconds < 86400) {
+      const hrs = Math.floor(ageSeconds / 3600);
+      return `${hrs} ${hrs === 1 ? 'hour' : 'hours'} ago`;
+    }
+    const days = Math.floor(ageSeconds / 86400);
+    return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+  }
+  if (ageSeconds < 3600) return `${Math.max(1, Math.floor(ageSeconds / 60))}m`;
+  if (ageSeconds < 86400) return `${Math.floor(ageSeconds / 3600)}h`;
+  const days = Math.floor(ageSeconds / 86400);
+  return `${days} day${days !== 1 ? 's' : ''}`;
+}
+
 const BUILTIN_ENV_NAMES = ['dev', 'staging', 'prod', 'stg', 'test', 'qa', 'uat'];
 
 export function detectsEnvMarker(name: string, configuredEnvNames: string[]): boolean {

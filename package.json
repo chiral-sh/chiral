@@ -1,7 +1,7 @@
 {
   "name": "chiral",
   "version": "0.1.0",
-  "description": "CLI for promoting n8n workflows between dev, staging, and production environments",
+  "description": "n8n workflow deployment CLI - promote workflows from dev to production without breaking live automations",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@10.19.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsup",
@@ -21,12 +21,31 @@
   },
   "keywords": [
     "n8n",
-    "workflow",
-    "deployment",
-    "environment",
-    "chiral"
+    "n8n-workflow",
+    "workflow-deployment",
+    "environment-promotion",
+    "n8n-deployment",
+    "workflow-promotion",
+    "n8n-source-control",
+    "credential-remapping",
+    "devops",
+    "cli",
+    "staging",
+    "production",
+    "self-hosted",
+    "automation"
   ],
-  "author": "Purvesh Gandhi",
+  "author": {
+    "name": "Purvesh Gandhi"
+  },
+  "homepage": "https://chiral.sh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chiral-sh/chiral.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chiral-sh/chiral/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "@inquirer/core": "^11.2.1",

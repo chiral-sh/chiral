@@ -1,32 +1,15 @@
-import { execSync } from 'node:child_process';
 import { z } from 'zod';
 import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import { readTeam, ensureTeam, writeTeam } from '../state/team.js';
 import { writeAuditEntry } from '../state/audit.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set - configure it before running this command.',
-    );
-  }
-}
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
-}
 
 function formatDate(iso: string): string {
   return iso;

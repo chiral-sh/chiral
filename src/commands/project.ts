@@ -4,6 +4,7 @@ import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import {
   listProjects,
   unregisterProject,
@@ -14,16 +15,6 @@ import {
   getProjectPath,
   getProjectsDir,
 } from '../lib/projects.js';
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
-}
 
 // ── project list ───────────────────────────────────────────────────────────────
 
@@ -122,7 +113,7 @@ export async function runProjectRename(oldName: string, newName: string, options
 
   const newPath = join(getProjectsDir(), newName);
   if (existsSync(newPath) && newPath !== oldPath) {
-    throw new UserError(`Directory "${newPath}" already exists. Choose a different name.`);
+    throw new UserError(`A project named "${newName}" already exists. Choose a different name.`);
   }
 
   // Rename directory on disk

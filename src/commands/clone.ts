@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { Command } from 'commander';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
@@ -81,8 +81,8 @@ export async function runClone(
 
   // ── 3. Git clone ──────────────────────────────────────────────────────────
   try {
-    const execAsync = promisify(exec);
-    await execAsync(`git clone ${repoUrl} ${targetDir}`, { cwd });
+    const execFileAsync = promisify(execFile);
+    await execFileAsync('git', ['clone', repoUrl, targetDir], { cwd });
     if (spinner) {
       spinner.succeed(chalk.green('  Repository cloned'));
     }
@@ -123,8 +123,8 @@ export async function runClone(
     const existingPath = getProjectPath(projectName);
     if (existingPath && existsSync(existingPath)) {
       try {
-        const execAsync = promisify(exec);
-        const { stdout } = await execAsync('git config --get remote.origin.url', { cwd: existingPath });
+        const execFileAsync = promisify(execFile);
+        const { stdout } = await execFileAsync('git', ['config', '--get', 'remote.origin.url'], { cwd: existingPath });
         const existingRepoUrl = stdout.trim();
         
         const normalizeGitUrl = (u: string) => {
@@ -193,13 +193,25 @@ export async function runClone(
     console.log();
   }
 
-  // ── 7.5 Pre-loop Registration ─────────────────────────────────────────────
+  // ── 7.5 JSON mode: validate all env vars before any state is written ────────
+  if (outputMode === 'json') {
+    for (const [envName] of Object.entries(example.envs)) {
+      const envUpper = envName.toUpperCase();
+      const urlVar = `CHIRAL_URL_${envUpper}`;
+      const keyVar = `CHIRAL_API_KEY_${envUpper}`;
+      if (!process.env[urlVar] || !process.env[keyVar]) {
+        throw new UserError(`--json mode requires ${urlVar} and ${keyVar} to be set.`);
+      }
+    }
+  }
+
+  // ── 8. Pre-loop Registration ──────────────────────────────────────────────
   registerProject(projectName, targetDir);
   projectRegistered = true;
   const ppid = process.ppid;
   if (ppid) writeSession(ppid, projectName);
 
-  // ── 8. Credential collection and testing ──────────────────────────────────
+  // ── 9. Credential collection and testing ──────────────────────────────────
   for (const [envName, envExample] of Object.entries(example.envs)) {
     const envUpper = envName.toUpperCase();
     const urlVar = `CHIRAL_URL_${envUpper}`;

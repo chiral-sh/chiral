@@ -11,7 +11,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import os from 'node:os';
-import { runCompletion, runCompleteEnvs } from '../../../src/commands/completion.js';
+import { runCompletion, runCompleteEnvs, runCompleteWorkflows } from '../../../src/commands/completion.js';
 import { UserError, ControlledExit } from '../../../src/lib/errors.js';
 
 const GLOBAL_DIR = '/mock-global';
@@ -165,6 +165,114 @@ describe('runCompletion — error cases', () => {
       (fsMod as Record<string, unknown>)['mkdirSync'] = origMkdir;
       mkdirSpy.mockRestore();
     }
+  });
+});
+
+describe('runCompletion — workflow completion in scripts', () => {
+  it('bash script includes _chiral_complete_workflows function', async () => {
+    const stdout = captureStdout();
+    await runCompletion('bash', {});
+    stdout.restore();
+    expect(stdout.get()).toContain('_chiral_complete_workflows');
+    expect(stdout.get()).toContain('chiral _complete_workflows');
+  });
+
+  it('zsh script includes _complete_workflows reference for lock/unlock', async () => {
+    const stdout = captureStdout();
+    await runCompletion('zsh', {});
+    stdout.restore();
+    expect(stdout.get()).toContain('_complete_workflows');
+  });
+
+  it('fish script includes __chiral_complete_workflows function', async () => {
+    const stdout = captureStdout();
+    await runCompletion('fish', {});
+    stdout.restore();
+    expect(stdout.get()).toContain('function __chiral_complete_workflows');
+    expect(stdout.get()).toContain('chiral _complete_workflows 2>/dev/null');
+  });
+
+  it('fish script includes workflow completion for lock subcommand', async () => {
+    const stdout = captureStdout();
+    await runCompletion('fish', {});
+    stdout.restore();
+    expect(stdout.get()).toContain('__chiral_complete_workflows');
+    expect(stdout.get()).toMatch(/__fish_seen_subcommand_from lock.*__chiral_complete_workflows/);
+  });
+
+  it('fish script includes workflow completion for unlock subcommand', async () => {
+    const stdout = captureStdout();
+    await runCompletion('fish', {});
+    stdout.restore();
+    expect(stdout.get()).toMatch(/__fish_seen_subcommand_from unlock.*__chiral_complete_workflows/);
+  });
+});
+
+describe('runCompleteWorkflows', () => {
+  it('prints one workflow name per line when workflows.json is populated', async () => {
+    setupProject();
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/workflows.json`]: JSON.stringify({
+        version: 1,
+        workflows: {
+          'order-processor': { dev: { name: 'Order Processor', id: 'wf-1' } },
+          'invoice-sync': { prod: { name: 'Invoice Sync', id: 'wf-2' } },
+        },
+      }),
+    });
+    const stdout = captureStdout();
+    await runCompleteWorkflows();
+    stdout.restore();
+    expect(stdout.get()).toContain('order-processor');
+    expect(stdout.get()).toContain('invoice-sync');
+    expect(stdout.get().trim().split('\n')).toHaveLength(2);
+  });
+
+  it('filters to env-matching names when --env is passed', async () => {
+    setupProject();
+    vol.fromJSON({
+      ...vol.toJSON(),
+      [`${CHIRAL_DIR}/workflows.json`]: JSON.stringify({
+        version: 1,
+        workflows: {
+          'order-processor': {
+            dev: { name: 'Order Processor', id: 'wf-1' },
+            prod: { name: 'Order Processor', id: 'wf-1' },
+          },
+          'invoice-sync': { dev: { name: 'Invoice Sync', id: 'wf-2' } },
+        },
+      }),
+    });
+    const stdout = captureStdout();
+    await runCompleteWorkflows('prod');
+    stdout.restore();
+    expect(stdout.get()).toContain('order-processor');
+    expect(stdout.get()).not.toContain('invoice-sync');
+  });
+
+  it('exits 0 with empty output when workflows.json is missing', async () => {
+    setupProject();
+    const stdout = captureStdout();
+    await runCompleteWorkflows();
+    stdout.restore();
+    expect(stdout.get()).toBe('');
+  });
+
+  it('throws ControlledExit(0) silently when config cannot be loaded', async () => {
+    // No project setup — loadConfigAndDir will throw
+    const stdout = captureStdout();
+    let thrown: unknown;
+    try {
+      await runCompleteWorkflows();
+    } catch (err) {
+      thrown = err;
+    } finally {
+      stdout.restore();
+    }
+    expect(thrown).toBeInstanceOf(ControlledExit);
+    expect((thrown as ControlledExit).code).toBe(0);
+    expect(stdout.get()).toBe('');
   });
 });
 

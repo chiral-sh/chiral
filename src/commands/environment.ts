@@ -15,9 +15,11 @@ import {
 import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
+import { visibleLen, padRight } from '../lib/cli.js';
 import { loadCredentials, writeCredentials } from '../state/credentials.js';
 import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
 import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
+import { loadEnvs, writeEnvs, generateEnvId } from '../state/envs.js';
 
 // ── Output mode ───────────────────────────────────────────────────────────────
 
@@ -41,14 +43,6 @@ function truncateUrl(url: string, max = 36): string {
 
 function validateUrl(val: string): string | boolean {
   try { new URL(val); return true; } catch { return 'Enter a valid URL (e.g. https://n8n.example.com)'; }
-}
-
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - visibleLen(s)));
 }
 
 // ── Summary table ─────────────────────────────────────────────────────────────
@@ -264,6 +258,12 @@ export async function runEnvironmentAdd(
   state.environments[name] = { url: normalizedUrl, apiKey };
   saveState(state);
 
+  const envsRegistry = loadEnvs(state.chiralDir);
+  if (!envsRegistry.envs[name]) {
+    envsRegistry.envs[name] = generateEnvId();
+    writeEnvs(state.chiralDir, envsRegistry);
+  }
+
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     envs[name] = { url: normalizedUrl, apiKey: `YOUR_${name.toUpperCase()}_API_KEY` };
   });
@@ -459,6 +459,13 @@ export async function runEnvironmentRename(
   renameInFile(join(chiralDir, 'workflows.json'));
   renameInFile(join(chiralDir, 'fingerprints.json'));
 
+  // Migrate envs.json: keep the same ID so lock paths are unaffected
+  const envsRegistry = loadEnvs(chiralDir);
+  const existingId = envsRegistry.envs[oldName] ?? generateEnvId();
+  delete envsRegistry.envs[oldName];
+  envsRegistry.envs[newName] = existingId;
+  writeEnvs(chiralDir, envsRegistry);
+
   // Update config
   const envData = state.environments[oldName];
   delete state.environments[oldName];
@@ -618,6 +625,10 @@ export async function runEnvironmentDelete(
   updateConfigExampleEnvs(state.chiralDir, (envs) => {
     delete envs[envName];
   });
+
+  const envsRegistry = loadEnvs(state.chiralDir);
+  delete envsRegistry.envs[envName];
+  writeEnvs(state.chiralDir, envsRegistry);
 
   purgeEnvFromStateFiles(state.chiralDir, envName);
 

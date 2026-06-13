@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module';
 import { Command, CommanderError } from 'commander';
 import chalk from 'chalk';
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json') as { version: string };
 import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
 import { printJsonError, isJsonFlagActive } from './lib/output.js';
@@ -18,7 +21,17 @@ import { projectCommand } from './commands/project.js';
 import { environmentCommand } from './commands/environment.js';
 import { remoteCommand } from './commands/remote.js';
 import { statusCommand } from './commands/status.js';
-import { completionCommand, internalCompleteEnvsCommand } from './commands/completion.js';
+import { completionCommand, internalCompleteEnvsCommand, internalCompleteWorkflowsCommand } from './commands/completion.js';
+import { lockCommand, unlockCommand } from './commands/lock.js';
+import { logCommand } from './commands/log.js';
+
+// Track whether any stdout output was written before an error fires.
+// The error handler uses this to add a leading blank line only when needed:
+// commands that print nothing before throwing look jarring without it;
+// commands that end their output with console.log() already have the blank.
+let didPrintOutput = false;
+const _origLog = console.log.bind(console);
+console.log = (...args: unknown[]) => { didPrintOutput = true; _origLog(...args); };
 
 const program = new Command();
 
@@ -32,7 +45,9 @@ function indentContinuation(message: string): string {
 program
   .name('chiral')
   .description('Safer production deployments for self-hosted n8n Community Edition')
-  .version('0.1.0');
+  .version(version)
+  .option('--debug', 'print full stack trace on unexpected errors')
+  .enablePositionalOptions();
 
 program.addCommand(initCommand);
 program.addCommand(cloneCommand);
@@ -46,10 +61,14 @@ program.addCommand(pullCommand);
 program.addCommand(diffCommand);
 program.addCommand(pushCommand);
 program.addCommand(workflowCommand);
+program.addCommand(lockCommand);
+program.addCommand(unlockCommand);
+program.addCommand(logCommand);
 program.addCommand(credentialCommand);
 program.addCommand(teamCommand);
 program.addCommand(completionCommand);
 program.addCommand(internalCompleteEnvsCommand);
+program.addCommand(internalCompleteWorkflowsCommand);
 
 // Global protection against Commander eagerly eating flags as option values.
 // Catches cases like `--remote --solo` where Commander assigns '--solo' as the
@@ -98,7 +117,8 @@ try {
     if (isJsonFlagActive()) {
       printJsonError('usage_error', message, false);
     } else {
-      console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
+      const sep = didPrintOutput ? '' : '\n';
+      console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
     }
     process.exit(1);
   }
@@ -108,18 +128,23 @@ try {
       if (isJsonFlagActive()) {
         printJsonError('user_error', err.message, false);
       } else {
-        console.error(`\n  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
+        const sep = didPrintOutput ? '' : '\n';
+        console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
         if (err.hint) console.error(chalk.dim(err.hint));
         console.error();
       }
     }
     process.exit(1);
   }
+  const debug = process.argv.includes('--debug');
   const message = err instanceof Error ? err.message : String(err);
   if (isJsonFlagActive()) {
     printJsonError('unexpected_error', message, false);
   } else {
-    console.error(`\n  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
+    console.error(`  ${chalk.red('✗')}  Unexpected error: ${message}\n`);
+    if (debug && err instanceof Error && err.stack) {
+      console.error(chalk.dim(err.stack));
+    }
   }
   process.exit(2);
 }

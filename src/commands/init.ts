@@ -5,6 +5,7 @@ import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
+import { getGitActor } from '../lib/git.js';
 import {
   getProjectsDir,
   registerProject,
@@ -27,16 +28,6 @@ export interface InitOptions {
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
-
-function getGitActor(): string {
-  try {
-    return execSync('git config user.email', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    throw new UserError(
-      'git config user.email is not set - configure it before running chiral init',
-    );
-  }
-}
 
 function isGitInstalled(): boolean {
   try {

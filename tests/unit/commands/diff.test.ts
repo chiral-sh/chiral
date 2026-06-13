@@ -1034,8 +1034,9 @@ describe('runDiff - node diff in --json output', () => {
       name: 'Workflow Two',
       sourceName: 'Workflow Two',
       hint: 'wrong name?',
+      lock: null,
     });
-    expect(result.data.removed[0]).toEqual({ name: 'Workflow Three' });
+    expect(result.data.removed[0]).toEqual({ name: 'Workflow Three', lock: null });
     expect(result.data.added[0]).not.toHaveProperty('nodes');
     expect(result.data.removed[0]).not.toHaveProperty('nodes');
   });
@@ -1429,6 +1430,185 @@ describe('runDiff - --verbose flag', () => {
     await runDiff({ source: 'dev', target: 'prod', verbose: true });
 
     expect(mockPageOutput).not.toHaveBeenCalled();
+  });
+});
+
+// ── lock badge annotations ────────────────────────────────────────────────────
+
+describe('runDiff - lock badge annotations', () => {
+  function writeLockFile(envId: string, workflowId: string, lock: object) {
+    vol.mkdirSync(`/project/.chiral/locks/${envId}`, { recursive: true });
+    vol.writeFileSync(
+      `/project/.chiral/locks/${envId}/${workflowId}.lock`,
+      JSON.stringify(lock),
+    );
+  }
+
+  it('appends [LOCKED by ...] badge to a modified workflow in human output', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+    writeLockFile('prod', 'tgt-1', {
+      version: 1,
+      actor: 'alice@example.com',
+      timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+      hostname: 'laptop',
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('LOCKED');
+    expect(joined).toContain('alice@example.com');
+    expect(joined).toContain('2h');
+  });
+
+  it('adds ⚠ indicator for stale lock (>24h) on modified workflow', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+    writeLockFile('prod', 'tgt-1', {
+      version: 1,
+      actor: 'alice@example.com',
+      timestamp: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+      hostname: 'laptop',
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('⚠');
+    expect(joined).toContain('3 days');
+  });
+
+  it('appends [LOCKED by ...] badge to a removed workflow in human output', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1, TGT_WF3]) }),
+    );
+    writeLockFile('prod', 'tgt-3', {
+      version: 1,
+      actor: 'bob@example.com',
+      timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+      hostname: 'server',
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('LOCKED');
+    expect(joined).toContain('bob@example.com');
+    expect(joined).toContain('Workflow Three');
+  });
+
+  it('shows no badge when no locks exist', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    expect(output.join('\n')).not.toContain('LOCKED');
+  });
+
+  it('adds lock field to JSON output for locked modified workflow', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+    writeLockFile('prod', 'tgt-1', {
+      version: 1,
+      actor: 'alice@example.com',
+      timestamp: new Date(Date.now() - 7200 * 1000).toISOString(),
+      hostname: 'laptop',
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    const mod = result.data.modified[0];
+    expect(mod.lock).not.toBeNull();
+    expect(mod.lock.actor).toBe('alice@example.com');
+    expect(mod.lock.ageSeconds).toBeGreaterThanOrEqual(7200);
+    expect(mod.lock).toHaveProperty('since');
+  });
+
+  it('adds lock: null to JSON output for unlocked modified workflow', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.modified[0].lock).toBeNull();
+  });
+
+  it('adds lock: null to JSON output for added workflows (no target)', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF2]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.added[0].lock).toBeNull();
+  });
+
+  it('treats listLocksByEnv error as no locks and renders no badge', async () => {
+    setupProject();
+    setupDivergentFingerprints('src-1', 'Workflow One', 'tgt-1', 'Workflow One');
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]) }),
+    );
+    // Write a corrupted lock file that will cause listLocksByEnv to throw
+    vol.mkdirSync('/project/.chiral/locks/prod', { recursive: true });
+    vol.writeFileSync('/project/.chiral/locks/prod/tgt-1.lock', 'not valid json');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await expect(runDiff({ source: 'dev', target: 'prod' })).resolves.toBeUndefined();
+    expect(output.join('\n')).not.toContain('LOCKED');
   });
 });
 

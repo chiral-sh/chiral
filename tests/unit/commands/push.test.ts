@@ -130,11 +130,15 @@ afterEach(() => {
   delete process.env['CHIRAL_PROJECT'];
 });
 
+const PUSH_ENV_IDS = { dev: 'devpush1', prod: 'prdpush1' };
+const PUSH_ENVS_JSON = JSON.stringify({ version: 1, envs: PUSH_ENV_IDS });
+
 function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflows: WorkflowSummary[] = []) {
   vol.fromJSON({
     [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
     [`${PROJECT_DIR}/.chiral/config.json`]: VALID_CONFIG,
     [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
+    [`${PROJECT_DIR}/.chiral/envs.json`]: PUSH_ENVS_JSON,
     [`${PROJECT_DIR}/.chiral/credentials.json`]: JSON.stringify({
       version: 1,
       credentials: {
@@ -996,6 +1000,205 @@ describe('runPush (live) - prod type-to-confirm', () => {
 
     expect(prompts.input).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('"prod" to confirm') }),
+    );
+  });
+});
+
+// ── lock check integration ────────────────────────────────────────────────────
+
+function writeLockFile(
+  workflowId: string,
+  actor: string,
+  ageMs: number,
+  env = 'prod',
+): void {
+  const envId = PUSH_ENV_IDS[env as keyof typeof PUSH_ENV_IDS] ?? env;
+  vol.mkdirSync(`${PROJECT_DIR}/.chiral/locks/${envId}`, { recursive: true });
+  vol.writeFileSync(
+    `${PROJECT_DIR}/.chiral/locks/${envId}/${workflowId}.lock`,
+    JSON.stringify({
+      version: 1,
+      actor,
+      timestamp: new Date(Date.now() - ageMs).toISOString(),
+      hostname: 'test-host',
+    }),
+  );
+}
+
+describe('runPush - lock check integration', () => {
+  it('push with no locks proceeds without prompt', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+        updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+
+  it('push against a locked workflow shows the lock holder and prompts for confirmation', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    writeLockFile('tgt-1', 'alice@example.com', 2 * 3600 * 1000);
+
+    vi.mocked(prompts.confirm).mockResolvedValue(false);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    const err = await runPush({ source: 'dev', target: 'prod' }).catch(e => e);
+
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(0);
+    expect(prompts.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Push anyway?' }),
+    );
+    const joined = output.join('\n');
+    expect(joined).toContain('alice@example.com');
+    expect(joined).toContain('Existing WF');
+  });
+
+  it('--yes bypasses the lock confirmation prompt without error', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    writeLockFile('tgt-1', 'alice@example.com', 2 * 3600 * 1000);
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+        updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+
+  it('lock older than staleLockAfter hours triggers stale escalation message', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    writeLockFile('tgt-1', 'alice@example.com', 25 * 3600 * 1000); // 25 hours old
+
+    vi.mocked(prompts.confirm).mockResolvedValue(false);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod' }).catch(() => {});
+
+    expect(output.join('\n')).toContain('may be abandoned');
+  });
+
+  it('workflow not in workflows.json emits cannot check for locks warning but does not block', async () => {
+    // would-create: no target workflow, no workflows.json entry → cannot get target ID
+    const wf = makeSnapshotWf('src-1', 'Brand New WF', 'v1');
+    setupProject([wf], []);
+    // no workflows.json, so no target ID lookup possible
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' }),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    // Should not throw — "cannot check" is a warning, not a block
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(output.join('\n')).toContain('cannot check for locks');
+    expect(prompts.confirm).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Push anyway?' }),
+    );
+  });
+
+  it('--check with active lock exits 1', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    writeLockFile('tgt-1', 'alice@example.com', 2 * 3600 * 1000);
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const err = await runPush({ source: 'dev', target: 'prod', check: true }).catch(e => e);
+
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(1);
+  });
+
+  it('--check with no locks exits 0', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    // no lock files
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const err = await runPush({ source: 'dev', target: 'prod', check: true }).catch(e => e);
+
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(0);
+  });
+
+  it('--check --json emits standard envelope with blocking_locks', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    writeLockFile('tgt-1', 'alice@example.com', 2 * 3600 * 1000);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    const err = await runPush({ source: 'dev', target: 'prod', check: true, json: true }).catch(e => e);
+
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(1);
+    expect(output).toHaveLength(1);
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.status).toBe('ok');
+    expect(parsed.data.clear).toBe(false);
+    expect(parsed.data.blocking_locks).toHaveLength(1);
+    expect(parsed.data.blocking_locks[0].actor).toBe('alice@example.com');
+    expect(parsed.data.blocking_locks[0].workflowId).toBe('tgt-1');
+    expect(parsed.data.blocking_protections).toEqual([]);
+  });
+
+  it('dry-run does not check locks or prompt for lock confirmation', async () => {
+    const wf = makeSnapshotWf('src-1', 'Existing WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Existing WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    writeLockFile('tgt-1', 'alice@example.com', 2 * 3600 * 1000);
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    // dry-run exits before lock check; confirm should NOT have been called for lock check
+    expect(prompts.confirm).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Push anyway?' }),
     );
   });
 });

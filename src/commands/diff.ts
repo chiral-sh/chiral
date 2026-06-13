@@ -5,7 +5,7 @@ import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, formatAge } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
@@ -19,6 +19,18 @@ import {
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
+import { listLocksByEnv, type LockFile } from '../state/locks.js';
+
+function formatLockBadgeAge(timestamp: string): { label: string; stale: boolean } {
+  const ageSeconds = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
+  return { label: formatAge(ageSeconds, 'short'), stale: ageSeconds > 24 * 3600 };
+}
+
+function renderLockBadge(lock: LockFile): string {
+  const { label, stale } = formatLockBadgeAge(lock.timestamp);
+  const icon = stale ? ' ⚠' : '';
+  return chalk.yellow(`[LOCKED${icon} by ${lock.actor}, ${label}]`);
+}
 
 interface AddedEntry {
   name: string;
@@ -291,6 +303,19 @@ export async function runDiff(
       );
     }
 
+    // Load active locks for the target env (treat any error as no locks)
+    const locksByWorkflowId = new Map<string, LockFile>();
+    try {
+      for (const { workflowId, lock } of listLocksByEnv(chiralDir, options.target)) {
+        locksByWorkflowId.set(workflowId, lock);
+      }
+    } catch {
+      // treat as no locks
+    }
+
+    // Map targetName → targetId for lock badge lookup in the stat table
+    const targetIdByName = new Map(diff.modified.map((w) => [w.targetName, w.targetId]));
+
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
 
     if (outputMode === 'name-only') {
@@ -301,15 +326,29 @@ export async function runDiff(
       printJson({
         source: options.source,
         target: options.target,
-        added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint })),
-        removed: diff.removed.map(({ name }) => ({ name })),
-        modified: diff.modified.map(({ targetName, sourceVersionId, targetVersionId, changeKind, nodes }) => ({
-          name: targetName,
-          sourceVersionId,
-          targetVersionId,
-          changeKind,
-          nodes: nodes ?? null,
-        })),
+        added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint, lock: null })),
+        removed: diff.removed.map(({ name, targetId }) => {
+          const lock = locksByWorkflowId.get(targetId);
+          return {
+            name,
+            lock: lock
+              ? { actor: lock.actor, since: lock.timestamp, ageSeconds: Math.floor((Date.now() - new Date(lock.timestamp).getTime()) / 1000) }
+              : null,
+          };
+        }),
+        modified: diff.modified.map(({ targetName, targetId, sourceVersionId, targetVersionId, changeKind, nodes }) => {
+          const lock = locksByWorkflowId.get(targetId);
+          return {
+            name: targetName,
+            sourceVersionId,
+            targetVersionId,
+            changeKind,
+            nodes: nodes ?? null,
+            lock: lock
+              ? { actor: lock.actor, since: lock.timestamp, ageSeconds: Math.floor((Date.now() - new Date(lock.timestamp).getTime()) / 1000) }
+              : null,
+          };
+        }),
         unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
       });
     } else {
@@ -338,8 +377,10 @@ export async function runDiff(
           );
         }
         for (const w of diff.removed) {
+          const removedLock = locksByWorkflowId.get(w.targetId);
+          const removedBadge = removedLock ? `  ${renderLockBadge(removedLock)}` : '';
           console.log(
-            `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.target}, not in ${options.source})`)}`,
+            `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.target}, not in ${options.source})`)}${removedBadge}`,
           );
         }
         if (diff.modified.length > 0) {
@@ -351,8 +392,11 @@ export async function runDiff(
             changeKind: w.changeKind,
           }));
           if (!options.verbose) {
-            for (const line of renderStatTable(statRows).split('\n')) {
-              console.log(`  ${line}`);
+            for (const { name, line } of renderStatRows(statRows)) {
+              const modTargetId = targetIdByName.get(name);
+              const modLock = modTargetId ? locksByWorkflowId.get(modTargetId) : undefined;
+              const modBadge = modLock ? `  ${renderLockBadge(modLock)}` : '';
+              console.log(`  ${line}${modBadge}`);
             }
           } else {
             const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
@@ -360,8 +404,11 @@ export async function runDiff(
             for (const { name, line } of renderStatRows(statRows)) {
               const w = nodesByName.get(name);
               if (!w?.nodes) continue;
+              const verbTargetId = targetIdByName.get(name);
+              const verbLock = verbTargetId ? locksByWorkflowId.get(verbTargetId) : undefined;
+              const verbBadge = verbLock ? `  ${renderLockBadge(verbLock)}` : '';
               const groups = renderNodeGroups(w.nodes);
-              sections.push(`  ${line}\n`);
+              sections.push(`  ${line}${verbBadge}\n`);
               if (groups) {
                 sections.push('\n');
                 sections.push(groups.split('\n').map((l) => `  ${l}`).join('\n'));
