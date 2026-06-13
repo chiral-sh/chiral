@@ -287,6 +287,43 @@ describe('runWorkflowMatch', () => {
     expect(lines).not.toContain('Note:');
   });
 
+  it('--preview-diff without --dry-run throws UserError', async () => {
+    setupBase(FINGERPRINTS_EXACT);
+    await expect(
+      runWorkflowMatch({ source: 'dev', target: 'prod', previewDiff: true }),
+    ).rejects.toThrow(UserError);
+  });
+
+  it('--dry-run --preview-diff prints resolved-row counts matching the number of would-be matches and writes nothing', async () => {
+    setupBase(FINGERPRINTS_EXACT);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runWorkflowMatch({ source: 'dev', target: 'prod', dryRun: true, previewDiff: true });
+    const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
+    logSpy.mockRestore();
+
+    expect(lines).toContain('Applying these 1 mapping would resolve 1 + / 1 - rows in chiral diff --source dev --target prod');
+
+    const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
+    expect(written.workflows).toEqual({});
+  });
+
+  it('--preview-diff summary is omitted under --json but counts are emitted as numeric fields', async () => {
+    setupBase(FINGERPRINTS_EXACT);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runWorkflowMatch({ source: 'dev', target: 'prod', dryRun: true, previewDiff: true, json: true });
+    const lines = logSpy.mock.calls.map(([line]) => line);
+    logSpy.mockRestore();
+
+    expect(lines.join('\n')).not.toContain('Applying these');
+
+    const jsonCall = lines.find((line) => typeof line === 'string' && line.includes('"candidates"'));
+    const parsed = JSON.parse(jsonCall as string);
+    expect(parsed.data.diff_rows_resolved_plus).toBe(1);
+    expect(parsed.data.diff_rows_resolved_minus).toBe(1);
+  });
+
   it('already-mapped workflows are skipped', async () => {
     const mapWithEntry = JSON.stringify({
       version: 1,

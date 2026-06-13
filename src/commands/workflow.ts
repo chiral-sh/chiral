@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { visibleLen, padRight } from '../lib/cli.js';
+import { visibleLen, padRight, plural } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMapRequired,
@@ -935,6 +935,7 @@ export interface WorkflowMatchOptions {
   yes?: boolean;
   dryRun?: boolean;
   json?: boolean;
+  previewDiff?: boolean;
 }
 
 type MatchOutputMode = 'human' | 'json';
@@ -957,6 +958,9 @@ function validateMatchOptions(
   }
   if (options.yes && options.dryRun) {
     throw new UserError('--yes has no effect with --dry-run');
+  }
+  if (options.previewDiff && !options.dryRun) {
+    throw new UserError('--preview-diff requires --dry-run');
   }
   return { source: options.source, target: options.target };
 }
@@ -1062,6 +1066,12 @@ export async function runWorkflowMatch(
           console.log(`    ${padRight(r.logicalName, logicalCol)}  ${source}="${r.sourceName}"  ${target}="${r.targetName}"`);
         }
         console.log();
+        if (options.previewDiff) {
+          const n = reserved.length;
+          console.log(
+            `  Applying these ${plural(n, 'mapping')} would resolve ${n} + / ${n} - rows in chiral diff --source ${source} --target ${target}\n`,
+          );
+        }
       } else if (shouldWrite) {
         console.log(`\n  ${chalk.green('✓')} Wrote ${reserved.length} mapping${reserved.length === 1 ? '' : 's'}`);
         const logicalCol = Math.max(...reserved.map((r) => r.logicalName.length));
@@ -1151,6 +1161,12 @@ export async function runWorkflowMatch(
       candidates,
       unmatched_source: result.unmatchedSource,
       unmatched_target: result.unmatchedTarget,
+      ...(options.previewDiff
+        ? {
+            diff_rows_resolved_plus: reserved.length,
+            diff_rows_resolved_minus: reserved.length,
+          }
+        : {}),
     });
   }
 }
@@ -1232,6 +1248,7 @@ const workflowMatchCmd = new Command('match')
   .requiredOption('--target <env>', 'Target environment')
   .option('--yes', 'Auto-accept exact structure matches (Pass 1 only)')
   .option('--dry-run', 'Compute and print candidates without writing workflows.json')
+  .option('--preview-diff', 'Requires --dry-run. Print how many chiral diff +/- rows the mapping would resolve')
   .option('--json', 'Emit machine-readable JSON instead of human output')
   .addHelpText(
     'after',
@@ -1245,6 +1262,9 @@ Examples:
 
   Preview without writing:
     chiral workflow match --source dev --target prod --dry-run
+
+  Preview how many diff rows a match would resolve:
+    chiral workflow match --source dev --target prod --dry-run --preview-diff
 `,
   )
   .action(async (options) => {
