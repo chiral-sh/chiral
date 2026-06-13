@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildStructureIndex, matchExact } from '../../../src/lib/workflow-match.js';
+import { buildStructureIndex, matchExact, reserveLogicalNames } from '../../../src/lib/workflow-match.js';
+import type { ExactMatch } from '../../../src/lib/workflow-match.js';
 import type { Fingerprints } from '../../../src/state/fingerprints.js';
 import type { WorkflowMap } from '../../../src/state/workflows.js';
 
@@ -118,5 +119,42 @@ describe('matchExact', () => {
     expect(result.matches).toEqual([
       { sourceName: 'Dup', targetName: 'Dup', structureHash: 'sha256:second' },
     ]);
+  });
+});
+
+// ── reserveLogicalNames ────────────────────────────────────────────────────────
+
+describe('reserveLogicalNames', () => {
+  it('keeps a single unique match at its bare derived name', () => {
+    const matches: ExactMatch[] = [
+      { sourceName: 'Order Sync [DEV]', targetName: 'Order Sync', structureHash: 'sha256:abc' },
+    ];
+    const result = reserveLogicalNames(emptyMap(), matches);
+    expect(result).toEqual([
+      { logicalName: 'order-sync', sourceName: 'Order Sync [DEV]', targetName: 'Order Sync' },
+    ]);
+  });
+
+  it('gives two matches deriving the same base distinct suffixed keys', () => {
+    const matches: ExactMatch[] = [
+      { sourceName: 'Order Sync [DEV]', targetName: 'Order Sync A', structureHash: 'sha256:abc' },
+      { sourceName: 'Order Sync [STAGING]', targetName: 'Order Sync B', structureHash: 'sha256:def' },
+    ];
+    const result = reserveLogicalNames(emptyMap(), matches);
+    expect(result.map((r) => r.logicalName)).toEqual(['order-sync', 'order-sync-2']);
+  });
+
+  it('skips a base already present in map to the next free suffix', () => {
+    const map: WorkflowMap = {
+      version: 1,
+      workflows: {
+        'order-sync': { dev: { name: 'Order Sync [DEV]' }, prod: { name: 'Order Sync' } },
+      },
+    };
+    const matches: ExactMatch[] = [
+      { sourceName: 'Order Sync [STAGING]', targetName: 'Order Sync C', structureHash: 'sha256:def' },
+    ];
+    const result = reserveLogicalNames(map, matches);
+    expect(result[0].logicalName).toBe('order-sync-2');
   });
 });

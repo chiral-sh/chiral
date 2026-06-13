@@ -1,5 +1,6 @@
 import type { Fingerprints } from '../state/fingerprints.js';
 import type { WorkflowMap } from '../state/workflows.js';
+import { deriveLogicalName } from '../state/workflows.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,4 +91,37 @@ export function matchExact(
   }
 
   return { matches, ambiguous, unmatchedSource, unmatchedTarget };
+}
+
+// ── Logical-name reservation for batch matches ──────────────────────────────────
+
+export type ReservedMatch = {
+  logicalName: string;
+  sourceName: string;
+  targetName: string;
+};
+
+// Derives a unique logical key per match, accounting for collisions both with
+// existing entries in `map` and with other matches in the same batch.
+export function reserveLogicalNames(
+  map: WorkflowMap,
+  matches: ExactMatch[],
+  knownEnvs: string[] = [],
+): ReservedMatch[] {
+  const reserved = new Set<string>(Object.keys(map.workflows));
+  const result: ReservedMatch[] = [];
+
+  for (const { sourceName, targetName } of matches) {
+    const base = deriveLogicalName(sourceName, knownEnvs);
+    let logicalName = base;
+    if (reserved.has(logicalName)) {
+      let n = 2;
+      while (reserved.has(`${base}-${n}`)) n++;
+      logicalName = `${base}-${n}`;
+    }
+    reserved.add(logicalName);
+    result.push({ logicalName, sourceName, targetName });
+  }
+
+  return result;
 }
