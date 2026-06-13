@@ -21,8 +21,9 @@ import {
   type WorkflowMap,
 } from '../state/workflows.js';
 import { listLocksByEnv } from '../state/locks.js';
-import { resolveEnvId } from '../state/envs.js';
+import { peekEnvId } from '../state/envs.js';
 import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
+import { loadTableMap, type TablesMap } from '../state/tables.js';
 import {
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
@@ -142,7 +143,8 @@ function collectLockViolations(
   staleLockAfterHours: number,
   outputMode: OutputMode,
 ): LockViolation[] {
-  const targetLocks = listLocksByEnv(chiralDir, resolveEnvId(chiralDir, targetEnv));
+  const targetEnvId = peekEnvId(chiralDir, targetEnv);
+  const targetLocks = targetEnvId ? listLocksByEnv(chiralDir, targetEnvId) : [];
   const lockMap = new Map(targetLocks.map(({ workflowId, lock }) => [workflowId, lock]));
   const staleLockAfterMs = staleLockAfterHours * 60 * 60 * 1000;
   const violations: LockViolation[] = [];
@@ -189,6 +191,90 @@ function collectLockViolations(
   return violations;
 }
 
+function findLogicalNameByTableId(tableMap: TablesMap, sourceEnv: string, sourceId: string): string | undefined {
+  for (const [logicalName, envMap] of Object.entries(tableMap.tables)) {
+    if (envMap[sourceEnv]?.id === sourceId) return logicalName;
+  }
+  return undefined;
+}
+
+interface TableWarning {
+  sourceId: string;
+  affectedNodes: string[];
+}
+
+function applyTableMap(
+  workflow: Record<string, unknown>,
+  tableMap: TablesMap,
+  sourceEnv: string,
+  targetEnv: string,
+): { workflow: Record<string, unknown>; unmappedTables: TableWarning[] } {
+  const nodes = workflow['nodes'];
+  if (!Array.isArray(nodes)) return { workflow, unmappedTables: [] };
+
+  const unmappedBySourceId = new Map<string, string[]>();
+
+  const newNodes = nodes.map((node: unknown) => {
+    if (typeof node !== 'object' || node === null) return node;
+    const nodeObj = node as Record<string, unknown>;
+
+    if (nodeObj['type'] !== 'n8n-nodes-base.datatable') return node;
+
+    const params = nodeObj['parameters'];
+    if (typeof params !== 'object' || params === null) return node;
+    const paramsObj = params as Record<string, unknown>;
+
+    const dataTableId = paramsObj['dataTableId'];
+    if (typeof dataTableId !== 'object' || dataTableId === null) return node;
+    const dtObj = dataTableId as Record<string, unknown>;
+
+    if (dtObj['__rl'] !== true) return node;
+
+    const sourceId = dtObj['value'];
+    if (typeof sourceId !== 'string') return node;
+
+    const logicalName = findLogicalNameByTableId(tableMap, sourceEnv, sourceId);
+    const targetId = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.id : undefined;
+
+    if (!targetId) {
+      const nodeName = typeof nodeObj['name'] === 'string' ? nodeObj['name'] : 'unnamed node';
+      const existing = unmappedBySourceId.get(sourceId);
+      if (existing) {
+        existing.push(nodeName);
+      } else {
+        unmappedBySourceId.set(sourceId, [nodeName]);
+      }
+      return node;
+    }
+
+    const newDtObj: Record<string, unknown> = { ...dtObj, value: targetId };
+    delete newDtObj['cachedResultUrl'];
+
+    return { ...nodeObj, parameters: { ...paramsObj, dataTableId: newDtObj } };
+  });
+
+  const unmappedTables: TableWarning[] = Array.from(unmappedBySourceId.entries()).map(
+    ([sourceId, affectedNodes]) => ({ sourceId, affectedNodes }),
+  );
+
+  return { workflow: { ...workflow, nodes: newNodes }, unmappedTables };
+}
+
+// Records that a workflow pushed/created in targetEnv is the same logical entity
+// as its counterpart in sourceEnv, reusing an existing logical name if one is mapped.
+function registerWorkflowMapEntry(
+  workflowMap: WorkflowMap,
+  c: WorkflowClassification,
+  sourceEnv: string,
+  targetEnv: string,
+  targetId: string,
+): void {
+  const existing = findLogicalByEnvAndName(workflowMap, sourceEnv, c.workflow.name);
+  const logicalName = existing ?? deriveSafeLogicalName(workflowMap, c.workflow.name);
+  upsertEnvEntry(workflowMap, logicalName, sourceEnv, { name: c.workflow.name, id: c.workflow.id });
+  upsertEnvEntry(workflowMap, logicalName, targetEnv, { name: c.resolvedName, id: targetId });
+}
+
 /** Width used for credential map column alignment */
 const CRED_COL_WIDTH = 24;
 
@@ -214,7 +300,6 @@ export interface PushOptions {
   yes?: boolean;
   noActivate?: boolean;
   json?: boolean;
-  gated?: boolean;
   check?: boolean;
   staleLockAfter?: number;
 }
@@ -417,6 +502,7 @@ export async function runPush(
   }
   const credentials = loadCredentials(chiralDir);
   const credMap = buildCredentialMap(allNodes, options.source, options.target, credentials);
+  const tableMap = loadTableMap(chiralDir);
 
   const credentialErrors: CredentialMapEntry[] = [];
   for (const entry of credMap) {
@@ -441,6 +527,28 @@ export async function runPush(
   const toCreate = classified.filter((c) => c.action === 'would-create');
   const toUpdate = classified.filter((c) => c.action === 'would-update');
   const toSkip = classified.filter((c) => c.action === 'skipped');
+
+  // ── Table warnings (scan non-skipped workflows for unmapped Data Table IDs) ─
+  const allTableWarnings: TableWarning[] = [];
+  for (const c of classified) {
+    if (c.action === 'skipped') continue;
+    const { unmappedTables } = applyTableMap(
+      c.workflow as Record<string, unknown>,
+      tableMap,
+      options.source,
+      options.target,
+    );
+    for (const w of unmappedTables) {
+      const existing = allTableWarnings.find((t) => t.sourceId === w.sourceId);
+      if (existing) {
+        for (const n of w.affectedNodes) {
+          if (!existing.affectedNodes.includes(n)) existing.affectedNodes.push(n);
+        }
+      } else {
+        allTableWarnings.push({ sourceId: w.sourceId, affectedNodes: [...w.affectedNodes] });
+      }
+    }
+  }
 
   // ── --check: lock check gate ─────────────────────────────────────────────
   if (options.check) {
@@ -491,6 +599,7 @@ export async function runPush(
       credential_errors: credentialErrors.map(({ sourceName, targetName }) => ({
         sourceName, targetName,
       })),
+      table_warnings: allTableWarnings,
     });
     if (credentialErrors.length > 0) throw new ControlledExit(1);
     return;
@@ -569,6 +678,20 @@ export async function runPush(
     }
   }
 
+  // Table warnings
+  if (allTableWarnings.length > 0) {
+    console.log();
+    for (const tw of allTableWarnings) {
+      console.log(
+        `  ${chalk.yellow('⚠')}  Table ID "${tw.sourceId}" has no ${chalk.cyan(options.target)} mapping.`,
+      );
+      console.log(`     Affected nodes: ${tw.affectedNodes.join(', ')}`);
+      console.log(
+        `     Fix: ${chalk.dim(`chiral table map <name> ${options.source}=${tw.sourceId} ${options.target}=<${options.target}-id>`)}`,
+      );
+    }
+  }
+
   // ── Dry-run mode: show summary and exit ──────────────────────────────────
   if (options.dryRun) {
     const changeCount = toCreate.length + toUpdate.length;
@@ -641,7 +764,7 @@ export async function runPush(
   }
 
   // ── Lock check (live push) ────────────────────────────────────────────────
-  if (outputMode === 'human') {
+  {
     const lockViolations = collectLockViolations(
       chiralDir, options.source, options.target, classified, workflowMap,
       targetByName, options.staleLockAfter ?? 24, outputMode,
@@ -702,12 +825,14 @@ export async function runPush(
 
   try {
     const inScopeWorkflows = classified.filter((c) => c.action !== 'skipped');
-    for (const c of inScopeWorkflows) {
-      const targetWorkflow = targetByName.get(c.resolvedName);
-      if (targetWorkflow) {
-        const fullWorkflow = await targetClient.getWorkflow(targetWorkflow.id);
-        writeSnapshot(chiralDir, targetDeploymentId, fullWorkflow);
-      }
+    const inScopeTargetWorkflows = inScopeWorkflows
+      .map((c) => targetByName.get(c.resolvedName))
+      .filter((w): w is WorkflowSummary => w !== undefined);
+    const fullWorkflows = await Promise.all(
+      inScopeTargetWorkflows.map((w) => targetClient.getWorkflow(w.id)),
+    );
+    for (const fullWorkflow of fullWorkflows) {
+      writeSnapshot(chiralDir, targetDeploymentId, fullWorkflow);
     }
     writeSnapshotMeta(chiralDir, targetDeploymentId, {
       deployment_id: targetDeploymentId,
@@ -732,6 +857,7 @@ export async function runPush(
   console.log();
   const results = { created: [] as string[], updated: [] as string[], skipped: [] as string[], failed: [] as Array<{ name: string; error: string }> };
   let mapDirty = false;
+  let fingerprintsDirty = false;
 
   for (const c of classified) {
     if (c.action === 'skipped') {
@@ -741,7 +867,8 @@ export async function runPush(
     }
 
     const sourceWorkflow = c.workflow as Record<string, unknown>;
-    const remappedWorkflow = applyCredentialMap(sourceWorkflow, credMap);
+    const credRemappedWorkflow = applyCredentialMap(sourceWorkflow, credMap);
+    const { workflow: remappedWorkflow } = applyTableMap(credRemappedWorkflow, tableMap, options.source, options.target);
     const sanitizedForCreate = sanitizeWorkflowForApi(remappedWorkflow, 'create');
     const sanitizedForUpdate = sanitizeWorkflowForApi(remappedWorkflow, 'update');
     const targetWorkflow = targetByName.get(c.resolvedName);
@@ -775,20 +902,15 @@ export async function runPush(
         fingerprints.envs[options.target][createResult.id] = {
           name: c.resolvedName,
           versionId: createResult.versionId,
-          contentHash: computeContentHash(sourceWorkflow),
-          structureHash: computeStructureHash(sourceWorkflow),
+          contentHash: computeContentHash(remappedWorkflow),
+          structureHash: computeStructureHash(remappedWorkflow),
           updatedAt: new Date().toISOString(),
         };
-        writeFingerprints(chiralDir, fingerprints);
+        fingerprintsDirty = true;
 
         // Auto-register workflow map entry with IDs from both envs
-        {
-          const existing = findLogicalByEnvAndName(workflowMap, options.source, c.workflow.name);
-          const logicalName = existing ?? deriveSafeLogicalName(workflowMap, c.workflow.name);
-          upsertEnvEntry(workflowMap, logicalName, options.source, { name: c.workflow.name, id: c.workflow.id });
-          upsertEnvEntry(workflowMap, logicalName, options.target, { name: c.resolvedName, id: createResult.id });
-          mapDirty = true;
-        }
+        registerWorkflowMapEntry(workflowMap, c, options.source, options.target, createResult.id);
+        mapDirty = true;
 
         const mappedNote = c.resolvedName !== c.workflow.name
           ? ` ${chalk.dim(`(mapped from "${c.workflow.name}")`)}` : '';
@@ -828,20 +950,15 @@ export async function runPush(
         fingerprints.envs[options.target][targetWorkflow.id] = {
           name: c.resolvedName,
           versionId: updateResult.versionId,
-          contentHash: computeContentHash(sourceWorkflow),
-          structureHash: computeStructureHash(sourceWorkflow),
+          contentHash: computeContentHash(remappedWorkflow),
+          structureHash: computeStructureHash(remappedWorkflow),
           updatedAt: new Date().toISOString(),
         };
-        writeFingerprints(chiralDir, fingerprints);
+        fingerprintsDirty = true;
 
         // Auto-register workflow map entry with IDs from both envs
-        {
-          const existing = findLogicalByEnvAndName(workflowMap, options.source, c.workflow.name);
-          const logicalName = existing ?? deriveSafeLogicalName(workflowMap, c.workflow.name);
-          upsertEnvEntry(workflowMap, logicalName, options.source, { name: c.workflow.name, id: c.workflow.id });
-          upsertEnvEntry(workflowMap, logicalName, options.target, { name: c.resolvedName, id: targetWorkflow.id });
-          mapDirty = true;
-        }
+        registerWorkflowMapEntry(workflowMap, c, options.source, options.target, targetWorkflow.id);
+        mapDirty = true;
 
         // Reactivate if was active and --no-activate not set
         if (targetWorkflow.active && !options.noActivate) {
@@ -860,7 +977,8 @@ export async function runPush(
     }
   }
 
-  // ── Persist workflow map if any entries were added/updated ────────────
+  // ── Persist fingerprints / workflow map if any entries were added/updated ────
+  if (fingerprintsDirty) writeFingerprints(chiralDir, fingerprints);
   if (mapDirty) writeWorkflowMap(chiralDir, workflowMap);
 
   // ── Audit log entry ────────────────────────────────────────────────────
@@ -939,7 +1057,6 @@ export const pushCommand = new Command('push')
     if (isNaN(n) || n <= 0) throw new Error('--stale-lock-after must be a positive integer (e.g. --stale-lock-after 24)');
     return n;
   })
-  .option('--gated', 'Paid: gate push on smoke tests passing (requires licenseKey)')
   .addHelpText(
     'after',
     `

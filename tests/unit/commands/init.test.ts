@@ -30,6 +30,7 @@ import { execSync } from 'node:child_process';
 import { input, confirm } from '@inquirer/prompts';
 import { runInit } from '../../../src/commands/init.js';
 import { createChiralDirectory } from '../../../src/state/init.js';
+import { loadTableMap } from '../../../src/state/tables.js';
 
 const mockExecSync = vi.mocked(execSync);
 const mockInput = vi.mocked(input);
@@ -177,6 +178,36 @@ describe('runInit', () => {
     const chiralDir = `${PROJECT_DIR}/.chiral`;
     createChiralDirectory(chiralDir, 'my-project', undefined, undefined);
     expect(vol.existsSync(`${chiralDir}/team.json`)).toBe(false);
+  });
+
+  it('creates tables.json with empty map content during init', async () => {
+    await runInit({ project: 'my-project' });
+
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/tables.json`)).toBe(true);
+    const map = loadTableMap(`${PROJECT_DIR}/.chiral`);
+    expect(map.version).toBe(1);
+    expect(map.tables).toEqual({});
+  });
+
+  it('prints tables.json path in success output', async () => {
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => output.push(a.join(' ')));
+
+    await runInit({ project: 'my-project' });
+
+    vi.mocked(console.log).mockRestore();
+    expect(output.some((l) => l.includes('tables.json'))).toBe(true);
+  });
+
+  it('does not overwrite tables.json when it already exists', () => {
+    const chiralDir = `${PROJECT_DIR}/.chiral`;
+    const existingContent = JSON.stringify({ version: 1, tables: { contacts: { dev: { id: 'abc', name: 'Contacts' } } } }) + '\n';
+    vol.fromJSON({ [`${chiralDir}/tables.json`]: existingContent });
+
+    createChiralDirectory(chiralDir, 'my-project', undefined, undefined);
+
+    const raw = vol.readFileSync(`${chiralDir}/tables.json`, 'utf-8') as string;
+    expect(JSON.parse(raw).tables).toHaveProperty('contacts');
   });
 });
 

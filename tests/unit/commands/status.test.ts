@@ -285,6 +285,85 @@ describe('runStatus — JSON output', () => {
   });
 });
 
+describe('runStatus — unmapped Data Table IDs', () => {
+  function writeDevSnapshotWithDataTable(tableId: string, cachedResultName = 'Contacts') {
+    writeSnapshot(CHIRAL_DIR, DEP_DEV, {
+      id: 'wf-0',
+      name: 'Workflow 0',
+      nodes: [
+        {
+          type: 'n8n-nodes-base.datatable',
+          parameters: {
+            dataTableId: { __rl: true, value: tableId, mode: 'list', cachedResultName },
+          },
+        },
+      ],
+    });
+    writeSnapshotMeta(CHIRAL_DIR, DEP_DEV, {
+      deployment_id: DEP_DEV,
+      env: 'dev',
+      command: 'pull',
+      timestamp: '2026-06-02T10:00:00.000Z',
+      workflow_count: 1,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+  }
+
+  it('shows ⚠ N table ID(s) not mapped when tables.json is absent', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithDataTable('z1HfHUA6tctvw6O8');
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({});
+
+    const text = stdoutLines.join('\n');
+    expect(text).toContain('⚠');
+    expect(text).toContain('1 table ID(s) not mapped');
+  });
+
+  it('shows no table warning when the table ID is mapped', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithDataTable('z1HfHUA6tctvw6O8');
+    vol.fromJSON({
+      [`${CHIRAL_DIR}/tables.json`]: JSON.stringify({
+        version: 1,
+        tables: { contacts: { dev: { id: 'z1HfHUA6tctvw6O8', name: 'Contacts' } } },
+      }),
+    });
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({});
+
+    expect(stdoutLines.join('\n')).not.toContain('table ID(s) not mapped');
+  });
+
+  it('includes unmapped_tables: N per env in JSON output', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshotWithDataTable('z1HfHUA6tctvw6O8');
+
+    const { stdoutLines } = captureOutput();
+    await runStatus({ json: true });
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.environments[0].unmapped_tables).toBe(1);
+  });
+
+  it('does not error and reports 0 unmapped_tables when tables.json is absent and no datatable nodes', async () => {
+    setupProject(SINGLE_ENV_CONFIG);
+    vol.appendFileSync(`${CHIRAL_DIR}/audit.jsonl`, makeAuditEntry({ target_env: 'dev' }) + '\n');
+    writeDevSnapshot();
+
+    const { stdoutLines } = captureOutput();
+    await expect(runStatus({ json: true })).resolves.not.toThrow();
+
+    const parsed = JSON.parse(stdoutLines.find(l => l.startsWith('{'))!);
+    expect(parsed.data.environments[0].unmapped_tables).toBe(0);
+  });
+});
+
 describe('runStatus — staleness and exit codes', () => {
   it('marks a 4-day-old pull as stale when --stale-after 3 is set', async () => {
     setupProject(SINGLE_ENV_CONFIG);

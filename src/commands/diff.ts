@@ -20,6 +20,7 @@ import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
 import { listLocksByEnv, type LockFile } from '../state/locks.js';
+import { peekEnvId } from '../state/envs.js';
 
 function formatLockBadgeAge(timestamp: string): { label: string; stale: boolean } {
   const ageSeconds = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
@@ -306,8 +307,11 @@ export async function runDiff(
     // Load active locks for the target env (treat any error as no locks)
     const locksByWorkflowId = new Map<string, LockFile>();
     try {
-      for (const { workflowId, lock } of listLocksByEnv(chiralDir, options.target)) {
-        locksByWorkflowId.set(workflowId, lock);
+      const targetEnvId = peekEnvId(chiralDir, options.target);
+      if (targetEnvId) {
+        for (const { workflowId, lock } of listLocksByEnv(chiralDir, targetEnvId)) {
+          locksByWorkflowId.set(workflowId, lock);
+        }
       }
     } catch {
       // treat as no locks

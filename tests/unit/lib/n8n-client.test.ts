@@ -158,3 +158,46 @@ describe('N8nClient.listTags', () => {
     expect(await client.listTags()).toEqual([tag]);
   });
 });
+
+describe('N8nClient.getDataTable', () => {
+  it('makes GET request to /data-tables/{id}', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200, statusText: 'OK',
+      json: () => Promise.resolve({ id: 'tbl-1', name: 'Contacts', projectId: 'proj-1' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new N8nClient(ENV, ENV_NAME);
+    await client.getDataTable('tbl-1');
+    expect(fetchMock.mock.calls[0][0]).toContain('/data-tables/tbl-1');
+    expect(fetchMock.mock.calls[0][1].method).toBe('GET');
+  });
+
+  it('returns id, name, projectId on 200', async () => {
+    const table = { id: 'tbl-1', name: 'Contacts', projectId: 'proj-1' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200, statusText: 'OK',
+      json: () => Promise.resolve(table),
+    }));
+    const client = new N8nClient(ENV, ENV_NAME);
+    expect(await client.getDataTable('tbl-1')).toEqual(table);
+  });
+
+  it('throws UserError containing table ID on 404', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: 'Not Found',
+      json: () => Promise.resolve({}),
+    }));
+    const client = new N8nClient(ENV, ENV_NAME);
+    await expect(client.getDataTable('z1HfHUA6tctvw6O8')).rejects.toThrow(UserError);
+    await expect(client.getDataTable('z1HfHUA6tctvw6O8')).rejects.toThrow('z1HfHUA6tctvw6O8');
+  });
+
+  it('throws UserError on non-2xx other than 404', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 500, statusText: 'Internal Server Error',
+      json: () => Promise.resolve({}),
+    }));
+    const client = new N8nClient(ENV, ENV_NAME);
+    await expect(client.getDataTable('tbl-1')).rejects.toThrow(UserError);
+  });
+});

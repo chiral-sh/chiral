@@ -1447,6 +1447,167 @@ describe('runPull - workflow map auto-heal', () => {
   });
 });
 
+describe('runPull - table map auto-heal', () => {
+  const DATATABLE_NODE = (tableId: string, cachedResultName: string) => ({
+    id: 'n1',
+    name: 'Get rows',
+    type: 'n8n-nodes-base.datatable',
+    parameters: {
+      dataTableId: {
+        __rl: true,
+        value: tableId,
+        mode: 'list',
+        cachedResultName,
+        cachedResultUrl: `https://dev.n8n.example.com/data-tables/${tableId}`,
+      },
+    },
+  });
+
+  it('updates tables.json name field when cachedResultName changed', async () => {
+    setupProject();
+
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/tables.json`, JSON.stringify({
+      version: 1,
+      tables: {
+        contacts: { dev: { id: 'tbl-1', name: 'Old Name' } },
+      },
+    }));
+
+    const WF1_WITH_TABLE = { ...WF1, nodes: [DATATABLE_NODE('tbl-1', 'New Name')] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_WITH_TABLE, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_WITH_TABLE : WF2),
+        ),
+      }) as never;
+    });
+
+    await runPull({ env: 'dev' });
+
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/tables.json`, 'utf-8') as string;
+    const map = JSON.parse(raw);
+    expect(map.tables.contacts.dev).toEqual({ id: 'tbl-1', name: 'New Name' });
+  });
+
+  it('does not error when tables.json is absent', async () => {
+    setupProject();
+
+    const WF1_WITH_TABLE = { ...WF1, nodes: [DATATABLE_NODE('tbl-1', 'Contacts')] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_WITH_TABLE, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_WITH_TABLE : WF2),
+        ),
+      }) as never;
+    });
+
+    await expect(runPull({ env: 'dev' })).resolves.toBeUndefined();
+    expect(vol.existsSync(`${PROJECT_DIR}/.chiral/tables.json`)).toBe(false);
+  });
+
+  it('prints end-of-pull hint listing unmapped table IDs with fix commands', async () => {
+    setupProject();
+
+    const WF1_WITH_TABLE = { ...WF1, nodes: [DATATABLE_NODE('tbl-unmapped', 'Contacts')] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_WITH_TABLE, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_WITH_TABLE : WF2),
+        ),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Data Table ID');
+    expect(joined).toContain('not mapped');
+    expect(joined).toContain('chiral table map <name> dev=tbl-unmapped');
+  });
+
+  it('suppresses the unmapped hint when all table IDs are mapped', async () => {
+    setupProject();
+
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/tables.json`, JSON.stringify({
+      version: 1,
+      tables: {
+        contacts: { dev: { id: 'tbl-1', name: 'Contacts' } },
+      },
+    }));
+
+    const WF1_WITH_TABLE = { ...WF1, nodes: [DATATABLE_NODE('tbl-1', 'Contacts')] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_WITH_TABLE, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_WITH_TABLE : WF2),
+        ),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    expect(output.join('\n')).not.toContain('Data Table ID');
+  });
+
+  it('does not write tables.json when no name changes occurred', async () => {
+    setupProject();
+
+    const original = JSON.stringify({
+      version: 1,
+      tables: {
+        contacts: { dev: { id: 'tbl-1', name: 'Contacts' } },
+      },
+    });
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/tables.json`, original);
+
+    const WF1_WITH_TABLE = { ...WF1, nodes: [DATATABLE_NODE('tbl-1', 'Contacts')] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_WITH_TABLE, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_WITH_TABLE : WF2),
+        ),
+      }) as never;
+    });
+
+    await runPull({ env: 'dev' });
+
+    const raw = vol.readFileSync(`${PROJECT_DIR}/.chiral/tables.json`, 'utf-8') as string;
+    expect(raw).toBe(original);
+  });
+
+  it('--json output does not include the unmapped table hint text', async () => {
+    setupProject();
+
+    const WF1_WITH_TABLE = { ...WF1, nodes: [DATATABLE_NODE('tbl-unmapped', 'Contacts')] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_WITH_TABLE, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_WITH_TABLE : WF2),
+        ),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev', json: true });
+
+    expect(output.join('\n')).not.toContain('Data Table ID');
+  });
+});
+
 describe('runPull - --verbose node groups through pager', () => {
   function setupUpdatedWithNodes() {
     const prevNodes = [{ id: 'a', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' }];

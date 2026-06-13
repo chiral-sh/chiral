@@ -121,6 +121,63 @@ export function findEntryByEnvId(
   return null;
 }
 
+// Detects two logical entries whose targetEnv name resolves to the same value (fan-in) — a
+// push would silently overwrite one with the other. Entries missing either side of the env
+// pair are ignored.
+export function validateNoDuplicateTargets(
+  map: WorkflowMap,
+  sourceEnv: string,
+  targetEnv: string,
+): void {
+  const seen = new Map<string, string>(); // targetName -> logicalKey
+  for (const [logicalKey, envMap] of Object.entries(map.workflows)) {
+    const source = envMap[sourceEnv];
+    const target = envMap[targetEnv];
+    if (!source || !target) continue;
+    const existing = seen.get(target.name);
+    if (existing) {
+      throw new UserError(
+        `Two source workflows resolve to the same target "${target.name}" in ${targetEnv}:\n` +
+          `  - logical: ${existing}\n` +
+          `  - logical: ${logicalKey}\n` +
+          `Fix: chiral workflow map ${logicalKey} ${targetEnv}="<unique target name>"`,
+      );
+    }
+    seen.set(target.name, logicalKey);
+  }
+}
+
+// Detects a name that appears as both a source-env value and a target-env value across
+// different logical entries (a cycle) — a push would try to overwrite both workflows with
+// each other. Entries missing either side of the env pair are ignored.
+export function validateNoCircularMapping(
+  map: WorkflowMap,
+  sourceEnv: string,
+  targetEnv: string,
+): void {
+  const sourceToTarget = new Map<string, string>(); // sourceName -> logicalKey
+  const targetToLogical = new Map<string, string>(); // targetName -> logicalKey
+  for (const [logicalKey, envMap] of Object.entries(map.workflows)) {
+    const source = envMap[sourceEnv];
+    const target = envMap[targetEnv];
+    if (!source || !target) continue;
+    sourceToTarget.set(source.name, logicalKey);
+    targetToLogical.set(target.name, logicalKey);
+  }
+  for (const [sourceName, sourceLogical] of sourceToTarget) {
+    const targetLogical = targetToLogical.get(sourceName);
+    if (targetLogical && targetLogical !== sourceLogical) {
+      throw new UserError(
+        `Circular mapping detected between ${sourceEnv} and ${targetEnv}:\n` +
+          `  - logical "${sourceLogical}" (${sourceEnv}="${sourceName}") and ` +
+          `logical "${targetLogical}" (${targetEnv}="${sourceName}") reference each other.\n` +
+          `Fix: chiral workflow map ${sourceLogical} ${sourceEnv}="<unique name>" or ` +
+          `chiral workflow map ${targetLogical} ${targetEnv}="<unique name>"`,
+      );
+    }
+  }
+}
+
 // Upsert a single env entry. Preserves existing id when name is unchanged and new entry has none.
 export function upsertEnvEntry(
   map: WorkflowMap,

@@ -1,7 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitSync } from '../lib/config.js';
 import { writeTeam } from './team.js';
+import { writeTableMap } from './tables.js';
 
 const CREDENTIALS_TEMPLATE = {
   version: 1 as const,
@@ -58,6 +59,10 @@ export function createChiralDirectory(
     JSON.stringify(WORKFLOWS_TEMPLATE, null, 2) + '\n',
     'utf-8',
   );
+
+  if (!existsSync(join(chiralDir, 'tables.json'))) {
+    writeTableMap(chiralDir, { version: 1, tables: {} });
+  }
 
   if (ownerEmail) {
     const now = new Date().toISOString();
