@@ -29,8 +29,12 @@ import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 import { loadTableMap, writeTableMap, collectDataTableRefs } from '../state/tables.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
+import type { PinDataMode } from '../lib/workflow-normalize.js';
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
+import { mapWithConcurrency } from '../lib/concurrency.js';
+
+const PULL_FETCH_CONCURRENCY = 5;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +49,8 @@ export interface PullOptions {
   noPager?: boolean;
   nameOnly?: boolean;
   exitCode?: boolean;
+  noPinData?: boolean;
+  keepPinData?: boolean;
 }
 
 // Output mode matrix:
@@ -73,7 +79,11 @@ interface Delta {
   updatedNodes: Map<string, WorkflowDiffResult>;
 }
 
-function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): Delta {
+function computeDelta(
+  current: WorkflowFull[],
+  previous: SnapshotWorkflow[],
+  computeNodeDiff = true,
+): Delta {
   const prevById = new Map(previous.map((w) => [w.id, w]));
   const currIds = new Set(current.map((w) => w.id));
 
@@ -87,11 +97,16 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
     if (!prev) {
       added.push(wf);
     } else if (
-      (prev as Record<string, unknown>).versionId !== wf.versionId ||
-      computeContentHash(prev) !== computeContentHash(wf)
+      (() => {
+        const prevVersionId = (prev as Record<string, unknown>).versionId;
+        const versionChanged = typeof prevVersionId === 'string' && prevVersionId !== wf.versionId;
+        return versionChanged || computeContentHash(prev) !== computeContentHash(wf);
+      })()
     ) {
       updated.push(wf);
-      updatedNodes.set(wf.id, diffWorkflowNodes(prev, wf));
+      if (computeNodeDiff) {
+        updatedNodes.set(wf.id, diffWorkflowNodes(prev, wf));
+      }
     } else {
       unchanged++;
     }
@@ -202,6 +217,14 @@ function healTableNames(chiralDir: string, env: string, workflows: { nodes?: unk
   return unmapped;
 }
 
+function printPinDataWarnings(names: string[]): void {
+  for (const name of names) {
+    console.log(
+      `  ${chalk.yellow('⚠')}  pinData for "${name}" exceeds 256KB and was stripped from the snapshot (use --keep-pin-data to retain).`,
+    );
+  }
+}
+
 function printUnmappedTablesHint(unmapped: string[], env: string): void {
   if (unmapped.length === 0) return;
   console.log(`\n  ${chalk.yellow('⚠')}  ${plural(unmapped.length, 'Data Table ID')} found in workflows but not mapped:`);
@@ -216,6 +239,7 @@ export async function runPull(
   options: PullOptions,
 ): Promise<void> {
   const outputMode = resolveOutputMode(options);
+  const pinDataMode: PinDataMode = options.noPinData ? 'strip' : options.keepPinData ? 'force-keep' : 'keep';
   const actor = getGitActor();
   const { config, chiralDir } = loadConfigAndDir();
   const env = resolveEnv(config, options.env);
@@ -252,6 +276,7 @@ export async function runPull(
         throw err;
       });
       if (spinner) spinner.succeed(chalk.green(`  Fetched "${workflow.name}"`));
+      baseEntry.workflow_ids = [options.id];
 
       const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
       const previousWorkflows = previousDeploymentId
@@ -269,7 +294,7 @@ export async function runPull(
 
       const deploymentId = generateDeploymentId();
       const snapshotTimestamp = new Date().toISOString();
-      writeSnapshot(chiralDir, deploymentId, workflow);
+      const { pinDataStripped } = writeSnapshot(chiralDir, deploymentId, workflow, pinDataMode);
       writeSnapshotMeta(chiralDir, deploymentId, {
         deployment_id: deploymentId,
         env: options.env,
@@ -310,7 +335,9 @@ export async function runPull(
           active: workflow.active ? 1 : 0,
           inactive: workflow.active ? 0 : 1,
           new: isNew ? [workflow.name] : [],
-          updated: isUpdated ? [workflow.name] : [],
+          updated: isUpdated && prevEntry
+            ? [{ name: workflow.name, nodes: diffWorkflowNodes(prevEntry, workflow) }]
+            : [],
           deleted: [],
           unchanged: hasChanges ? 0 : 1,
         });
@@ -334,11 +361,11 @@ export async function runPull(
           console.log(`  ${chalk.green('✓')} ${workflow.name} up to date`);
         }
         console.log(chalk.dim(`\n  Snapshot saved → .chiral/snapshots/${deploymentId}/`));
+        if (pinDataStripped) printPinDataWarnings([workflow.name]);
         printUnmappedTablesHint(unmappedTables, options.env);
         console.log();
       }
 
-      baseEntry.workflow_ids = [options.id];
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
 
       // Sync always runs; output only shown in human mode
@@ -393,8 +420,8 @@ export async function runPull(
       return true;
     });
 
-    const workflows = await Promise.all(
-      filtered.map((s) => client.getWorkflow(s.id)),
+    const workflows = await mapWithConcurrency(filtered, PULL_FETCH_CONCURRENCY, (s) =>
+      client.getWorkflow(s.id),
     ).catch((err) => {
       if (spinner1) return failSpinner(spinner1, err);
       throw err;
@@ -419,7 +446,9 @@ export async function runPull(
       ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId)
       : null;
 
-    const delta = previousWorkflows ? computeDelta(workflows, previousWorkflows) : null;
+    const delta = previousWorkflows
+      ? computeDelta(workflows, previousWorkflows, outputMode !== 'name-only')
+      : null;
     const isFirstPull = delta === null;
     const totalChanges = delta
       ? delta.added.length + delta.updated.length + delta.deleted.length
@@ -446,7 +475,11 @@ export async function runPull(
 
     if (!isFirstPull && totalChanges === 0) {
       // nothing changed - write snapshot silently
-      for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
+      const strippedNames: string[] = [];
+      for (const wf of workflows) {
+        const { pinDataStripped } = writeSnapshot(chiralDir, deploymentId, wf, pinDataMode);
+        if (pinDataStripped) strippedNames.push(wf.name);
+      }
       writeSnapshotMeta(chiralDir, deploymentId, meta);
 
       if (outputMode === 'name-only') {
@@ -475,6 +508,7 @@ export async function runPull(
           console.log(
             `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date - no changes since last pull`,
           );
+          printPinDataWarnings(strippedNames);
           if (options.verbose) printWorkflowList(workflows);
           warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
           const hint = buildNextHint(config, options.env, false, false, {});
@@ -487,13 +521,18 @@ export async function runPull(
       const spinner3 = outputMode === 'human'
         ? ora({ text: '  Writing snapshot…', color: 'cyan' }).start()
         : null;
-      for (const wf of workflows) writeSnapshot(chiralDir, deploymentId, wf);
+      const strippedNames: string[] = [];
+      for (const wf of workflows) {
+        const { pinDataStripped } = writeSnapshot(chiralDir, deploymentId, wf, pinDataMode);
+        if (pinDataStripped) strippedNames.push(wf.name);
+      }
       writeSnapshotMeta(chiralDir, deploymentId, meta);
       if (spinner3) {
         spinner3.succeed(
           chalk.green('  Snapshot saved') +
           chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
         );
+        printPinDataWarnings(strippedNames);
       }
 
       if (outputMode === 'name-only') {
@@ -677,6 +716,8 @@ export const pullCommand = new Command('pull')
   .addOption(new Option('--name-only', 'Print only changed workflow names, one per line - suitable for piping').conflicts('json'))
   .addOption(new Option('--json', 'Output a machine-readable JSON summary instead of human output').conflicts('nameOnly'))
   .option('--exit-code', 'Exit 1 if changes were detected, 0 if everything was already up to date (CI use)')
+  .addOption(new Option('--no-pin-data', 'Strip pinData from snapshots entirely').conflicts('keepPinData'))
+  .addOption(new Option('--keep-pin-data', 'Retain pinData even above the 256KB size guard').conflicts('noPinData'))
   .addHelpText(
     'after',
     `
@@ -691,6 +732,6 @@ Examples:
     chiral pull --env dev --exit-code
 `,
   )
-  .action(async (options: Omit<PullOptions, 'noPager'> & { pager?: boolean }) => {
-    await runPull({ ...options, noPager: options.pager === false });
+  .action(async (options: Omit<PullOptions, 'noPager' | 'noPinData'> & { pager?: boolean; pinData?: boolean }) => {
+    await runPull({ ...options, noPager: options.pager === false, noPinData: options.pinData === false });
   });

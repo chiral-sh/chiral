@@ -19,13 +19,28 @@ vi.mock('../../../src/lib/pager.js', () => ({
   pageOutput: vi.fn().mockImplementation(async (text: string) => { console.log(text); }),
 }));
 
+vi.mock('../../../src/state/fingerprints.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/state/fingerprints.js')>();
+  return { ...actual, upsertFingerprintEntry: vi.fn(actual.upsertFingerprintEntry) };
+});
+
+vi.mock('../../../src/lib/workflow-diff.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/lib/workflow-diff.js')>();
+  return { ...actual, diffWorkflowNodes: vi.fn(actual.diffWorkflowNodes) };
+});
+
 import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
 import { pageOutput } from '../../../src/lib/pager.js';
-import { runPull } from '../../../src/commands/pull.js';
+import { runPull, pullCommand } from '../../../src/commands/pull.js';
 import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.js';
+import { upsertFingerprintEntry } from '../../../src/state/fingerprints.js';
+import { diffWorkflowNodes } from '../../../src/lib/workflow-diff.js';
+import { PIN_DATA_SIZE_LIMIT_BYTES } from '../../../src/lib/workflow-normalize.js';
 
 const mockPageOutput = vi.mocked(pageOutput);
+const mockUpsertFingerprintEntry = vi.mocked(upsertFingerprintEntry);
+const mockDiffWorkflowNodes = vi.mocked(diffWorkflowNodes);
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
@@ -66,6 +81,12 @@ const WF1 = {
   connections: {},
   settings: {},
 };
+
+// A node added relative to WF1's empty `nodes: []`, used to give "*_UPDATED" fixtures
+// a real content change - a bare versionId bump now normalizes away (snapshots no
+// longer store versionId, so a content-identical re-pull is "unchanged").
+const ADDED_NODE = { id: 'n1', name: 'New Node', type: 'n8n-nodes-base.set', parameters: {}, position: [0, 0] };
+const BASE_NODE = { id: 'b1', name: 'Base Node', type: 'n8n-nodes-base.noOp', parameters: {}, position: [0, 0] };
 
 const WF2 = {
   id: 'wf-2',
@@ -312,7 +333,7 @@ describe('runPull - delta against previous snapshot', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -396,6 +417,69 @@ describe('runPull - delta against previous snapshot', () => {
 
     expect(output.join('\n')).toContain('Workflow Two');
     expect(output.join('\n')).toContain('(removed from n8n)');
+  });
+
+  it('treats a snapshot with no versionId as unchanged when content matches', async () => {
+    setupProject();
+
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF1, versionId: 'v1' });
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT,
+      env: 'dev',
+      command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z',
+      workflow_count: 1,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1]),
+        getWorkflow: vi.fn().mockResolvedValue(WF1),
+      }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unchanged).toBe(1);
+    expect(result.data.updated).toEqual([]);
+  });
+
+  it('still treats a workflow as updated when prev.versionId differs and is present', async () => {
+    setupProject();
+
+    vol.fromJSON({
+      [`${PROJECT_DIR}/.chiral/snapshots/${PREV_DEPLOYMENT}/wf-1.json`]: JSON.stringify({ ...WF1, versionId: 'v1' }),
+    });
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT,
+      env: 'dev',
+      command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z',
+      workflow_count: 1,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+
+    const WF1_V2 = { ...WF1, versionId: 'v2' };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_V2]),
+        getWorkflow: vi.fn().mockResolvedValue(WF1_V2),
+      }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.updated[0].name).toBe('Workflow One');
+    expect(result.data.unchanged).toBe(0);
   });
 
   it('reports nothing changed when all versionIds match', async () => {
@@ -512,7 +596,7 @@ describe('runPull - --json output', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED]), // WF2 deleted
@@ -599,7 +683,7 @@ describe('runPull - --json output', () => {
     setupPreviousSnapshot();
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted
@@ -668,7 +752,7 @@ describe('runPull - --verbose output', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -706,8 +790,11 @@ describe('runPull - stat table for updated workflows', () => {
   it('renders updated workflows as stat table instead of ~ label', async () => {
     setupProject();
     setupPreviousSnapshot();
+    // Give WF1 a pre-existing node so the added node is a partial (not 100%) change,
+    // producing a churn bar with both filled and empty segments.
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF1, versionId: 'v1', nodes: [BASE_NODE] });
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [BASE_NODE, ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -736,7 +823,7 @@ describe('runPull - stat table for updated workflows', () => {
     setupPreviousSnapshot();
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted, WF3 new
@@ -763,7 +850,7 @@ describe('runPull - stat table for updated workflows', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -951,7 +1038,7 @@ describe('runPull - smart Next: hint', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -1028,7 +1115,7 @@ describe('runPull - --name-only output', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -1086,6 +1173,27 @@ describe('runPull - --name-only output', () => {
 
     expect(logged).toContain('Workflow Two');
   });
+
+  it('does not compute node diffs for updated workflows', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+        ),
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runPull({ env: 'dev', nameOnly: true });
+
+    expect(mockDiffWorkflowNodes).not.toHaveBeenCalled();
+  });
 });
 
 describe('runPull - --exit-code', () => {
@@ -1093,7 +1201,7 @@ describe('runPull - --exit-code', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -1219,6 +1327,62 @@ describe('runPull - --id (single workflow)', () => {
     const result = JSON.parse(logged[0]);
     expect(result.data.pulled).toBe(1);
     expect(result.data.new).toContain('Workflow One');
+  });
+
+  it('--id --json updated entry is an object with name and nodes, matching bulk shape', async () => {
+    setupProject();
+    setupPreviousSnapshot(); // WF1 at v1, nodes: []
+
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1_UPDATED) }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', id: 'wf-1', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.updated).toHaveLength(1);
+    const updatedEntry = result.data.updated[0];
+    expect(updatedEntry.name).toBe('Workflow One');
+    expect(updatedEntry.nodes).toBeDefined();
+    expect(updatedEntry.nodes).toHaveProperty('added');
+    expect(updatedEntry.nodes).toHaveProperty('removed');
+    expect(updatedEntry.nodes).toHaveProperty('modified');
+    expect(updatedEntry.nodes).toHaveProperty('connections');
+  });
+
+  it('--id --json on a new workflow produces updated: []', async () => {
+    setupProject(); // no previous snapshot
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', id: 'wf-1', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.updated).toEqual([]);
+  });
+
+  it('--id failure audit entry records workflow_ids when a post-fetch step throws', async () => {
+    setupProject(); // no previous snapshot
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(WF1) }) as never;
+    });
+    mockUpsertFingerprintEntry.mockImplementationOnce(() => { throw new Error('boom'); });
+
+    await expect(runPull({ env: 'dev', id: 'wf-1' })).rejects.toThrow('boom');
+
+    const entry = JSON.parse(
+      (vol.readFileSync(`${PROJECT_DIR}/.chiral/audit.jsonl`, 'utf-8') as string).trim(),
+    );
+    expect(entry.result).toBe('failure');
+    expect(entry.workflow_ids).toEqual(['wf-1']);
   });
 
   it('throws ControlledExit(1) with --id --exit-code when workflow is new', async () => {
@@ -1738,6 +1902,125 @@ describe('runPull - server-side filter params', () => {
     await runPull({ env: 'dev', tag: 'production' });
 
     expect(listWorkflows).toHaveBeenCalledWith({ active: undefined, tags: 'production' });
+  });
+});
+
+describe('runPull - bounded concurrency for workflow fetches', () => {
+  it('fetches every filtered workflow and preserves order with more than PULL_FETCH_CONCURRENCY entries', async () => {
+    setupProject();
+
+    const summaries = Array.from({ length: 8 }, (_, i) => ({
+      ...WF1,
+      id: `wf-${i}`,
+      name: `Workflow ${i}`,
+    }));
+    const getWorkflow = vi.fn().mockImplementation((id: string) =>
+      Promise.resolve(summaries.find((s) => s.id === id)),
+    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue(summaries),
+        getWorkflow,
+      }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    expect(getWorkflow).toHaveBeenCalledTimes(8);
+    for (const s of summaries) {
+      expect(getWorkflow).toHaveBeenCalledWith(s.id);
+    }
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.new).toEqual(summaries.map((s) => s.name));
+  });
+
+  it('still propagates the first error when a workflow fetch fails', async () => {
+    setupProject();
+
+    const summaries = Array.from({ length: 8 }, (_, i) => ({
+      ...WF1,
+      id: `wf-${i}`,
+      name: `Workflow ${i}`,
+    }));
+    const getWorkflow = vi.fn().mockImplementation((id: string) =>
+      id === 'wf-3' ? Promise.reject(new Error('boom')) : Promise.resolve(summaries.find((s) => s.id === id)),
+    );
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue(summaries),
+        getWorkflow,
+      }) as never;
+    });
+
+    await expect(runPull({ env: 'dev', json: true })).rejects.toThrow('boom');
+  });
+});
+
+describe('runPull - pinData flags', () => {
+  function readSnapshotFor(workflowId: string): Record<string, unknown> {
+    const files = Object.keys(vol.toJSON() ?? {}).filter(
+      (p) => p.includes('/snapshots/') && p.endsWith(`${workflowId}.json`),
+    );
+    return JSON.parse(vol.readFileSync(files[0], 'utf-8') as string);
+  }
+
+  it('--no-pin-data strips pinData from the written snapshot even when small', async () => {
+    setupProject();
+    const wf = { ...WF1, pinData: { node1: [{ json: { small: true } }] } };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(wf), listWorkflows: vi.fn().mockResolvedValue([wf]) }) as never;
+    });
+
+    await runPull({ env: 'dev', noPinData: true });
+
+    expect(readSnapshotFor('wf-1')).not.toHaveProperty('pinData');
+  });
+
+  it('--keep-pin-data retains pinData over 256KB in the written snapshot', async () => {
+    setupProject();
+    const big = 'x'.repeat(PIN_DATA_SIZE_LIMIT_BYTES + 1);
+    const wf = { ...WF1, pinData: { node1: [{ json: { big } }] } };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(wf), listWorkflows: vi.fn().mockResolvedValue([wf]) }) as never;
+    });
+
+    await runPull({ env: 'dev', keepPinData: true });
+
+    expect(readSnapshotFor('wf-1')).toHaveProperty('pinData');
+  });
+
+  it('default (no flags) strips oversized pinData and prints the size-guard warning', async () => {
+    setupProject();
+    const big = 'x'.repeat(PIN_DATA_SIZE_LIMIT_BYTES + 1);
+    const wf = { ...WF1, pinData: { node1: [{ json: { big } }] } };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({ getWorkflow: vi.fn().mockResolvedValue(wf), listWorkflows: vi.fn().mockResolvedValue([wf]) }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    expect(readSnapshotFor('wf-1')).not.toHaveProperty('pinData');
+    expect(output.join('\n')).toContain('pinData for "Workflow One" exceeds 256KB');
+  });
+
+  it('rejects --no-pin-data combined with --keep-pin-data', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    pullCommand.exitOverride();
+    await expect(
+      pullCommand.parseAsync(['--env', 'dev', '--no-pin-data', '--keep-pin-data'], { from: 'user' }),
+    ).rejects.toMatchObject({ code: 'commander.conflictingOption' });
+
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 });
 
