@@ -67,6 +67,12 @@ const WF1 = {
   settings: {},
 };
 
+// A node added relative to WF1's empty `nodes: []`, used to give "*_UPDATED" fixtures
+// a real content change - a bare versionId bump now normalizes away (snapshots no
+// longer store versionId, so a content-identical re-pull is "unchanged").
+const ADDED_NODE = { id: 'n1', name: 'New Node', type: 'n8n-nodes-base.set', parameters: {}, position: [0, 0] };
+const BASE_NODE = { id: 'b1', name: 'Base Node', type: 'n8n-nodes-base.noOp', parameters: {}, position: [0, 0] };
+
 const WF2 = {
   id: 'wf-2',
   name: 'Workflow Two',
@@ -312,7 +318,7 @@ describe('runPull - delta against previous snapshot', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -512,7 +518,7 @@ describe('runPull - --json output', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED]), // WF2 deleted
@@ -599,7 +605,7 @@ describe('runPull - --json output', () => {
     setupPreviousSnapshot();
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted
@@ -668,7 +674,7 @@ describe('runPull - --verbose output', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -706,8 +712,11 @@ describe('runPull - stat table for updated workflows', () => {
   it('renders updated workflows as stat table instead of ~ label', async () => {
     setupProject();
     setupPreviousSnapshot();
+    // Give WF1 a pre-existing node so the added node is a partial (not 100%) change,
+    // producing a churn bar with both filled and empty segments.
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, { ...WF1, versionId: 'v1', nodes: [BASE_NODE] });
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [BASE_NODE, ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -736,7 +745,7 @@ describe('runPull - stat table for updated workflows', () => {
     setupPreviousSnapshot();
 
     const WF3 = { ...WF1, id: 'wf-3', name: 'Workflow Three', versionId: 'v1' };
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF3]), // WF2 deleted, WF3 new
@@ -763,7 +772,7 @@ describe('runPull - stat table for updated workflows', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -951,7 +960,7 @@ describe('runPull - smart Next: hint', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -1028,7 +1037,7 @@ describe('runPull - --name-only output', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
@@ -1093,7 +1102,7 @@ describe('runPull - --exit-code', () => {
     setupProject();
     setupPreviousSnapshot();
 
-    const WF1_UPDATED = { ...WF1, versionId: 'v2' };
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
     MockN8nClient.mockImplementation(function() {
       return makeClientMock({
         listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),

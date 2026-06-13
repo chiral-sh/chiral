@@ -87,8 +87,11 @@ function computeDelta(current: WorkflowFull[], previous: SnapshotWorkflow[]): De
     if (!prev) {
       added.push(wf);
     } else if (
-      (prev as Record<string, unknown>).versionId !== wf.versionId ||
-      computeContentHash(prev) !== computeContentHash(wf)
+      (() => {
+        const prevVersionId = (prev as Record<string, unknown>).versionId;
+        const versionChanged = typeof prevVersionId === 'string' && prevVersionId !== wf.versionId;
+        return versionChanged || computeContentHash(prev) !== computeContentHash(wf);
+      })()
     ) {
       updated.push(wf);
       updatedNodes.set(wf.id, diffWorkflowNodes(prev, wf));

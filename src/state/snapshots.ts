@@ -10,6 +10,11 @@ import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
+import {
+  normalizeWorkflowSnapshot,
+  NORMALIZATION_VERSION,
+  type PinDataMode,
+} from '../lib/workflow-normalize.js';
 
 // Minimal validation - snapshots store raw n8n workflow objects as-is
 const SnapshotWorkflowSchema = z.looseObject({ id: z.string(), name: z.string() });
@@ -29,6 +34,7 @@ const SnapshotMetaSchema = z.object({
     onlyActive: z.boolean(),
     id: z.string().nullable().default(null),
   }),
+  normalizationVersion: z.number().int().default(1),
 });
 
 export type SnapshotMeta = z.infer<typeof SnapshotMetaSchema>;
@@ -56,18 +62,22 @@ export function writeSnapshot(
   chiralDir: string,
   deploymentId: string,
   workflow: SnapshotWorkflow,
-): void {
+  pinData: PinDataMode = 'keep',
+): { pinDataStripped: boolean; pinDataSizeBytes: number | null } {
   const dir = join(chiralDir, 'snapshots', deploymentId);
+  const normalized = normalizeWorkflowSnapshot(workflow, { pinData });
+  const output = { id: workflow.id, ...normalized.workflow };
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, `${workflow.id}.json`),
-      JSON.stringify(workflow, null, 2),
+      JSON.stringify(output, null, 2),
       'utf-8',
     );
   } catch {
     throw new UserError(`Could not write snapshot for workflow "${workflow.id}"`);
   }
+  return { pinDataStripped: normalized.pinDataStripped, pinDataSizeBytes: normalized.pinDataSizeBytes };
 }
 
 export function readSnapshot(
@@ -119,12 +129,13 @@ export function listSnapshotWorkflows(
 export function writeSnapshotMeta(
   chiralDir: string,
   deploymentId: string,
-  meta: SnapshotMeta,
+  meta: Omit<SnapshotMeta, 'normalizationVersion'>,
 ): void {
   const dir = join(chiralDir, 'snapshots', deploymentId);
+  const fullMeta: SnapshotMeta = { ...meta, normalizationVersion: NORMALIZATION_VERSION };
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify(fullMeta, null, 2), 'utf-8');
   } catch {
     // best-effort - don't block the command if meta write fails
   }

@@ -78,6 +78,15 @@ describe('writeSnapshot', () => {
     vol.fromJSON({ '/fd/snapshots': 'I am a file, not a dir' });
     expect(() => writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW)).toThrow(UserError);
   });
+
+  it('returns pinDataStripped: true when pinData exceeds 256KB with default pinData mode', () => {
+    vol.fromJSON({ '/fd/': null });
+    const bigPinData = { 'Node A': [{ json: { data: 'x'.repeat(300 * 1024) } }] };
+    const result = writeSnapshot('/fd', DEPLOYMENT_A, { ...WORKFLOW, pinData: bigPinData });
+    expect(result.pinDataStripped).toBe(true);
+    const raw = vol.readFileSync(`/fd/snapshots/${DEPLOYMENT_A}/wf-abc123.json`, 'utf-8') as string;
+    expect(JSON.parse(raw)).not.toHaveProperty('pinData');
+  });
 });
 
 describe('readSnapshot', () => {
@@ -89,11 +98,19 @@ describe('readSnapshot', () => {
     expect(result.name).toBe('My Workflow');
   });
 
-  it('preserves extra fields on the workflow object', () => {
+  it('preserves non-read-only fields on the workflow object', () => {
     vol.fromJSON({ '/fd/': null });
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
     const result = readSnapshot('/fd', DEPLOYMENT_A, 'wf-abc123');
-    expect(result).toMatchObject({ active: true, nodes: [], connections: {} });
+    expect(result).toMatchObject({ nodes: [], connections: {} });
+  });
+
+  it('strips read-only fields like active and versionId via normalization', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    const result = readSnapshot('/fd', DEPLOYMENT_A, 'wf-abc123');
+    expect(result).not.toHaveProperty('active');
+    expect(result).not.toHaveProperty('versionId');
   });
 
   it('throws UserError when snapshot file does not exist', () => {
@@ -197,7 +214,7 @@ describe('writeSnapshotMeta / readSnapshotMeta', () => {
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
     writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META);
     const result = readSnapshotMeta('/fd', DEPLOYMENT_A);
-    expect(result).toEqual(BASE_META);
+    expect(result).toEqual({ ...BASE_META, normalizationVersion: 1 });
   });
 
   it('returns null when meta.json does not exist', () => {
@@ -216,6 +233,23 @@ describe('writeSnapshotMeta / readSnapshotMeta', () => {
       [`/fd/snapshots/${DEPLOYMENT_A}/meta.json`]: JSON.stringify({ garbage: true }),
     });
     expect(readSnapshotMeta('/fd', DEPLOYMENT_A)).toBeNull();
+  });
+
+  it('always stamps normalizationVersion even when the caller omits it', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META);
+    const result = readSnapshotMeta('/fd', DEPLOYMENT_A);
+    expect(result?.normalizationVersion).toBe(1);
+  });
+
+  it('parses a meta.json written before normalizationVersion existed via the schema default', () => {
+    // BASE_META has no normalizationVersion field, simulating a pre-change meta.json
+    vol.fromJSON({
+      [`/fd/snapshots/${DEPLOYMENT_A}/meta.json`]: JSON.stringify(BASE_META),
+    });
+    const result = readSnapshotMeta('/fd', DEPLOYMENT_A);
+    expect(result).not.toBeNull();
+    expect(result?.normalizationVersion).toBe(1);
   });
 });
 
