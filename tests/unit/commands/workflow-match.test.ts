@@ -88,6 +88,19 @@ const FINGERPRINTS_AMBIGUOUS = JSON.stringify({
   },
 });
 
+const FINGERPRINTS_WITH_STALE_TARGET = JSON.stringify({
+  version: 1,
+  envs: {
+    dev: {
+      'wf-1': fpEntry('Order Processor [DEV]', 'sha256:abc'),
+    },
+    prod: {
+      'wf-2': fpEntry('Order Processor', 'sha256:abc'),
+      'wf-3': fpEntry('Legacy Invoice Sender', 'sha256:legacy'),
+    },
+  },
+});
+
 const FINGERPRINTS_NO_MATCH = JSON.stringify({
   version: 1,
   envs: {
@@ -237,6 +250,41 @@ describe('runWorkflowMatch', () => {
     expect(parsed.data.candidates).toEqual([]);
     expect(parsed.data.unmatched_source).toEqual(['Lonely Source']);
     expect(parsed.data.unmatched_target).toEqual(['Lonely Target']);
+  });
+
+  it('prints a stale-target note for an unmatched target workflow in human mode', async () => {
+    setupBase(FINGERPRINTS_WITH_STALE_TARGET);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true });
+    const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
+    logSpy.mockRestore();
+
+    expect(lines).toContain(
+      'Note: "Legacy Invoice Sender" in prod has no match in dev — removed, or needs chiral workflow map?',
+    );
+  });
+
+  it('omits the stale-target note when every target is matched', async () => {
+    setupBase(FINGERPRINTS_EXACT);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true });
+    const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
+    logSpy.mockRestore();
+
+    expect(lines).not.toContain('Note:');
+  });
+
+  it('omits the stale-target note under --json', async () => {
+    setupBase(FINGERPRINTS_WITH_STALE_TARGET);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
+    const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
+    logSpy.mockRestore();
+
+    expect(lines).not.toContain('Note:');
   });
 
   it('already-mapped workflows are skipped', async () => {

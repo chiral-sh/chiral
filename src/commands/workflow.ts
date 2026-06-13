@@ -1090,6 +1090,12 @@ export async function runWorkflowMatch(
       console.log(`\n  No exact structure matches found between ${source} and ${target}.\n`);
     }
 
+    if (shouldWrite) {
+      for (const name of result.unmatchedTarget) {
+        console.log(`\n  Note: "${name}" in ${target} has no match in ${source} — removed, or needs chiral workflow map?\n`);
+      }
+    }
+
     console.log(`  Next: chiral workflow match --source ${source} --target ${target} --smart\n`);
   }
 
