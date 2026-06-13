@@ -5,8 +5,8 @@ import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { visibleLen, padRight } from '../lib/cli.js';
-import { readTeam, ensureTeam, writeTeam } from '../state/team.js';
+import { padRight } from '../lib/cli.js';
+import { readTeam, writeTeam } from '../state/team.js';
 import { writeAuditEntry } from '../state/audit.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -412,14 +412,14 @@ export async function runTeamSetRole(
 const teamListCmd = new Command('list')
   .description('List all team members in the roster')
   .option('--json', 'Emit standard JSON envelope')
-  .action(async (options) => {
+  .action(async (options: { json?: boolean }) => {
     await runTeamList(options);
   });
 
 const teamWhoamiCmd = new Command('whoami')
   .description('Show your membership status in the project roster')
   .option('--json', 'Emit standard JSON envelope')
-  .action(async (options) => {
+  .action(async (options: { json?: boolean }) => {
     await runTeamWhoami(options);
   });
 
@@ -429,7 +429,7 @@ const teamAddCmd = new Command('add')
   .option('--role <role>', 'Role to assign: owner or member (default: member)')
   .option('--dry-run', 'Print what would change without writing')
   .option('--json', 'Emit standard JSON envelope')
-  .action(async (email: string, options) => {
+  .action(async (email: string, options: { role?: string; dryRun?: boolean; json?: boolean }) => {
     await runTeamAdd(email, options);
   });
 
@@ -439,7 +439,7 @@ const teamRemoveCmd = new Command('remove')
   .option('--yes', 'Skip confirmation prompt')
   .option('--dry-run', 'Print what would change without writing')
   .option('--json', 'Emit standard JSON envelope')
-  .action(async (email: string, options) => {
+  .action(async (email: string, options: { yes?: boolean; dryRun?: boolean; json?: boolean }) => {
     await runTeamRemove(email, options);
   });
 
@@ -449,7 +449,7 @@ const teamSetRoleCmd = new Command('set-role')
   .argument('<role>', 'New role: owner or member')
   .option('--dry-run', 'Print what would change without writing')
   .option('--json', 'Emit standard JSON envelope')
-  .action(async (email: string, role: string, options) => {
+  .action(async (email: string, role: string, options: { dryRun?: boolean; json?: boolean }) => {
     await runTeamSetRole(email, role, options);
   });
 

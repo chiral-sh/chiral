@@ -17,7 +17,7 @@ import {
   type Fingerprints,
 } from '../state/fingerprints.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
-import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
+import { renderStatRows, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
 import { pageOutput } from '../lib/pager.js';
 import { listLocksByEnv, type LockFile } from '../state/locks.js';
 import { peekEnvId } from '../state/envs.js';
@@ -511,6 +511,6 @@ Examples:
     chiral diff --source dev --target prod --exit-code
 `,
   )
-  .action(async (options) => {
+  .action(async (options: Omit<DiffOptions, 'noPager'> & { pager?: boolean }) => {
     await runDiff({ ...options, noPager: options.pager === false });
   });

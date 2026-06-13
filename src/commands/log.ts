@@ -293,12 +293,12 @@ function readAuditLogLenient(chiralDir: string): AuditEntry[] {
 
 // ── Run function ──────────────────────────────────────────────────────────────
 
-export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<void> {
+export async function runLog(options: LogOptions, _cwd = process.cwd()): Promise<void> {
   validateLogOptions(options);
 
   const outputMode = options.json ? 'json' : 'human';
 
-  async function doOnce(): Promise<void> {
+  function doOnce(): void {
     const { config, chiralDir } = loadConfigAndDir();
 
     // Validate --env against config
@@ -315,7 +315,7 @@ export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<
     }
 
     // Load audit entries (lenient — tolerate corruption)
-    let allEntries: AuditEntry[] = [];
+    let allEntries: AuditEntry[];
     try {
       allEntries = readAuditLog(chiralDir);
     } catch (err) {
@@ -408,12 +408,12 @@ export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<
 
   if (options.watch) {
     if (!process.stdout.isTTY) {
-      await doOnce();
+      doOnce();
       return;
     }
 
     process.stdout.write('\x1b[2J\x1b[H');
-    try { await doOnce(); } catch { /* keep watching on render errors */ }
+    try { doOnce(); } catch { /* keep watching on render errors */ }
 
     const { chiralDir: watchDir } = loadConfigAndDir();
     const auditPath = join(watchDir, 'audit.jsonl');
@@ -422,9 +422,9 @@ export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<
       let debounceTimer: ReturnType<typeof setTimeout> | null = null;
       const watcher = fsWatch(auditPath, () => {
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(async () => {
+        debounceTimer = setTimeout(() => {
           process.stdout.write('\x1b[2J\x1b[H');
-          try { await doOnce(); } catch { /* keep watching */ }
+          try { doOnce(); } catch { /* keep watching */ }
         }, 150);
       });
       process.once('SIGINT', () => {
@@ -437,7 +437,7 @@ export async function runLog(options: LogOptions, cwd = process.cwd()): Promise<
     return;
   }
 
-  await doOnce();
+  doOnce();
 }
 
 // ── Command definition ────────────────────────────────────────────────────────

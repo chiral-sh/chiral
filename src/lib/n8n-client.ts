@@ -158,7 +158,7 @@ export class N8nClient {
     do {
       const params = new URLSearchParams({ limit: '100', ...extra });
       if (cursor) params.set('cursor', cursor);
-      const page = await this.request<PaginatedResponse<T>>(`${path}?${params}`, { scope });
+      const page = await this.request<PaginatedResponse<T>>(`${path}?${params.toString()}`, { scope });
       results.push(...page.data);
       cursor = page.nextCursor ?? undefined;
     } while (cursor);

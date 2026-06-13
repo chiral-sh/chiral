@@ -248,7 +248,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
     throw new UserError('--locks-only and --summary are mutually exclusive');
   }
 
-  async function doOnce(): Promise<void> {
+  function doOnce(): void {
   const { config, chiralDir } = loadConfigAndDir();
 
   const allEnvNames = Object.keys(config.environments);
@@ -513,7 +513,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
           unmapped_tables: r.unmappedTables,
         };
         if (requestedFields) {
-          return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields!.includes(k as FieldName)));
+          return Object.fromEntries(Object.entries(full).filter(([k]) => requestedFields.includes(k as FieldName)));
         }
         return full;
       });
@@ -531,7 +531,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       // Derive table columns from --fields if specified
       const tableCols: ColKey[] = requestedFields
         ? COLUMN_ORDER.filter(col =>
-            Object.entries(FIELD_TO_COL).some(([f, c]) => c === col && requestedFields!.includes(f as FieldName))
+            Object.entries(FIELD_TO_COL).some(([f, c]) => c === col && requestedFields.includes(f as FieldName))
           )
         : COLUMN_ORDER;
 
@@ -575,21 +575,21 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   if (options.watch) {
     if (!process.stdout.isTTY) {
       // Non-TTY: run once, ignore --watch (no terminal to clear and re-render)
-      await doOnce();
+      doOnce();
       return;
     }
 
     process.stdout.write('\x1b[2J\x1b[H');
-    try { await doOnce(); } catch (e) { if (!(e instanceof ControlledExit)) throw e; }
+    try { doOnce(); } catch (e) { if (!(e instanceof ControlledExit)) throw e; }
 
     const { chiralDir: watchDir } = loadConfigAndDir();
     await new Promise<void>((resolve) => {
       let debounceTimer: ReturnType<typeof setTimeout> | null = null;
       const watcher = fsWatch(watchDir, { recursive: true }, () => {
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(async () => {
+        debounceTimer = setTimeout(() => {
           process.stdout.write('\x1b[2J\x1b[H');
-          try { await doOnce(); } catch { /* keep watching on re-render errors */ }
+          try { doOnce(); } catch { /* keep watching on re-render errors */ }
         }, 300);
       });
       process.once('SIGINT', () => {
@@ -602,7 +602,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
     return;
   }
 
-  await doOnce();
+  doOnce();
 }
 
 // ── Command definition ────────────────────────────────────────────────────────

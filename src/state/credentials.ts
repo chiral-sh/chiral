@@ -232,7 +232,7 @@ export function applyCredentialMap(
   const nodes = workflow['nodes'];
   if (!Array.isArray(nodes)) return { ...workflow };
 
-  const remappedNodes = nodes.map((node) => {
+  const remappedNodes = (nodes as unknown[]).map((node) => {
     if (typeof node !== 'object' || node === null) return node;
     const nodeObj = node as Record<string, unknown>;
     const creds = nodeObj['credentials'];

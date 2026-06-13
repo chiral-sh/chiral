@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { visibleLen, padRight, plural } from '../lib/cli.js';
+import { padRight, plural } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMapRequired,
@@ -1210,7 +1210,7 @@ Examples:
     chiral workflow map --prune
 `,
   )
-  .action(async (args: string[], options) => {
+  .action(async (args: string[], options: { validate?: boolean; dryRun?: boolean; json?: boolean; prune?: boolean; yes?: boolean }) => {
     await runWorkflowMap(args, options);
   });
 
@@ -1234,7 +1234,7 @@ Examples:
     chiral workflow list --incomplete
 `,
   )
-  .action(async (options) => {
+  .action(async (options: { env?: string; unmapped?: boolean; incomplete?: boolean; json?: boolean }) => {
     await runWorkflowList(options);
   });
 
@@ -1253,7 +1253,7 @@ Examples:
     chiral workflow unmap order-processor --env staging
 `,
   )
-  .action(async (logicalName: string, options) => {
+  .action(async (logicalName: string, options: { env?: string }) => {
     await runWorkflowUnmap(logicalName, options);
   });
 
@@ -1282,7 +1282,7 @@ Examples:
     chiral workflow match --source dev --target prod --dry-run --preview-diff
 `,
   )
-  .action(async (options) => {
+  .action(async (options: WorkflowMatchOptions) => {
     await runWorkflowMatch(options);
   });
 

@@ -5,7 +5,7 @@ import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { visibleLen, padRight } from '../lib/cli.js';
+import { padRight } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadCredentials,
@@ -843,7 +843,7 @@ Examples:
     chiral credential map --smart
 `,
   )
-  .action(async (args: string[], options) => {
+  .action(async (args: string[], options: { smart?: boolean; dryRun?: boolean; json?: boolean }) => {
     await runCredentialMap(args, options);
   });
 
@@ -866,7 +866,7 @@ Examples:
     chiral credential list --env prod
 `,
   )
-  .action(async (options) => {
+  .action(async (options: { uncovered?: boolean; env?: string; json?: boolean }) => {
     await runCredentialList(options);
   });
 
@@ -885,7 +885,7 @@ Examples:
     chiral credential unmap postgres --env staging
 `,
   )
-  .action(async (logicalName: string, options) => {
+  .action(async (logicalName: string, options: { env?: string }) => {
     await runCredentialUnmap(logicalName, options);
   });
 

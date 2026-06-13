@@ -47,7 +47,7 @@ export function renderLockTable(entries: LockListEntry[]): void {
   const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
   const headerRow =
     '  │ ' +
-    widths.map((w, i) => padRight(chalk.dim(headers[i]!), w)).join(' │ ') +
+    widths.map((w, i) => padRight(chalk.dim(headers[i]), w)).join(' │ ') +
     ' │';
 
   console.log(`\n  ${chalk.bold('Active locks')}\n`);
@@ -60,11 +60,11 @@ export function renderLockTable(entries: LockListEntry[]): void {
       ? `${entry.logicalName} ${chalk.yellow('⚠')}`
       : entry.logicalName;
     const cells = [
-      padRight(entry.env, widths[0]!),
-      padRight(wfDisplay, widths[1]!),
-      padRight(entry.actor, widths[2]!),
-      padRight(formatAge(entry.ageSeconds), widths[3]!),
-      ...(hasReason ? [padRight(entry.reason ?? '', widths[4]!)] : []),
+      padRight(entry.env, widths[0]),
+      padRight(wfDisplay, widths[1]),
+      padRight(entry.actor, widths[2]),
+      padRight(formatAge(entry.ageSeconds), widths[3]),
+      ...(hasReason ? [padRight(entry.reason ?? '', widths[4])] : []),
     ];
     console.log('  │ ' + cells.join(' │ ') + ' │');
   }

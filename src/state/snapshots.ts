@@ -137,7 +137,7 @@ export function readSnapshotMeta(
   const filePath = join(chiralDir, 'snapshots', deploymentId, 'meta.json');
   if (!existsSync(filePath)) return null;
   try {
-    const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+    const raw: unknown = JSON.parse(readFileSync(filePath, 'utf-8'));
     const result = SnapshotMetaSchema.safeParse(raw);
     return result.success ? result.data : null;
   } catch {
@@ -169,7 +169,7 @@ export function readAllWorkflowsInDeployment(
   const workflows: SnapshotWorkflow[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'meta.json')) {
     try {
-      const raw = JSON.parse(readFileSync(join(dir, file), 'utf-8'));
+      const raw: unknown = JSON.parse(readFileSync(join(dir, file), 'utf-8'));
       const result = SnapshotWorkflowSchema.safeParse(raw);
       if (result.success) workflows.push(result.data);
     } catch {

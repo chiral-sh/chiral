@@ -267,12 +267,7 @@ export async function runClone(
         const msg = err instanceof Error ? err.message : String(err);
         spinnerTest.fail(chalk.red(`  ${msg}`));
         if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
-        let proceed: boolean;
-        try {
-          proceed = await confirm({ message: '  Save anyway?', default: false });
-        } catch (confirmErr) {
-          throw confirmErr;
-        }
+        const proceed = await confirm({ message: '  Save anyway?', default: false });
         if (!proceed) throw new ControlledExit(0);
       }
     }
