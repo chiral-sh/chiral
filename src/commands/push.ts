@@ -103,7 +103,7 @@ function sanitizeWorkflowForApi(
 function transformCredentialReferences(nodes: unknown): unknown {
   if (!Array.isArray(nodes)) return nodes;
 
-  return nodes.map((node) => {
+  return (nodes as unknown[]).map((node) => {
     if (typeof node !== 'object' || node === null) return node;
     const nodeObj = node as Record<string, unknown>;
 
@@ -385,16 +385,10 @@ export async function runPush(
       console.log();
 
       if (!options.yes) {
-        let proceed: boolean;
-        try {
-          proceed = await confirm({
-            message: 'Push from snapshot anyway?',
-            default: false,
-          });
-        } catch (err) {
-          // ExitPromptError (Ctrl+C) - let top-level handler deal with it
-          throw err;
-        }
+        const proceed = await confirm({
+          message: 'Push from snapshot anyway?',
+          default: false,
+        });
         if (!proceed) throw new ControlledExit(0);
       }
     }
@@ -498,7 +492,7 @@ export async function runPush(
   for (const c of classified) {
     if (c.action === 'skipped') continue;
     const nodes = (c.workflow as Record<string, unknown>)['nodes'];
-    if (Array.isArray(nodes)) allNodes.push(...nodes);
+    if (Array.isArray(nodes)) allNodes.push(...(nodes as unknown[]));
   }
   const credentials = loadCredentials(chiralDir);
   const credMap = buildCredentialMap(allNodes, options.source, options.target, credentials);
@@ -533,7 +527,7 @@ export async function runPush(
   for (const c of classified) {
     if (c.action === 'skipped') continue;
     const { unmappedTables } = applyTableMap(
-      c.workflow as Record<string, unknown>,
+      c.workflow,
       tableMap,
       options.source,
       options.target,
@@ -750,15 +744,11 @@ export async function runPush(
         console.log(`     Run 'chiral diff --source ${options.target} --target ${options.source}' to check.`);
         console.log();
 
-        try {
-          const proceed = await confirm({
-            message: 'Push anyway?',
-            default: false,
-          });
-          if (!proceed) throw new ControlledExit(0);
-        } catch (err) {
-          throw err;
-        }
+        const proceed = await confirm({
+          message: 'Push anyway?',
+          default: false,
+        });
+        if (!proceed) throw new ControlledExit(0);
       }
     }
   }
@@ -778,12 +768,8 @@ export async function runPush(
       }
 
       if (!options.yes) {
-        try {
-          const proceed = await confirm({ message: 'Push anyway?', default: false });
-          if (!proceed) throw new ControlledExit(0);
-        } catch (err) {
-          throw err;
-        }
+        const proceed = await confirm({ message: 'Push anyway?', default: false });
+        if (!proceed) throw new ControlledExit(0);
       }
     }
   }
@@ -805,15 +791,11 @@ export async function runPush(
           : `Type exactly "${options.target}" to confirm`,
       });
     } else {
-      try {
-        const proceed = await confirm({
-          message: `${changeCount} ${changeCount === 1 ? 'change' : 'changes'} to ${options.target}. Continue?`,
-          default: false,
-        });
-        if (!proceed) throw new ControlledExit(0);
-      } catch (err) {
-        throw err;
-      }
+      const proceed = await confirm({
+        message: `${changeCount} ${changeCount === 1 ? 'change' : 'changes'} to ${options.target}. Continue?`,
+        default: false,
+      });
+      if (!proceed) throw new ControlledExit(0);
     }
   }
 
@@ -877,18 +859,14 @@ export async function runPush(
       if (c.action === 'would-create') {
         // Prompt for new workflows unless --yes
         if (!options.yes) {
-          try {
-            const createIt = await confirm({
-              message: `"${c.resolvedName}" doesn't exist in ${options.target} yet - create it?`,
-              default: false,
-            });
-            if (!createIt) {
-              console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
-              results.skipped.push(c.workflow.name);
-              continue;
-            }
-          } catch (err) {
-            throw err;
+          const createIt = await confirm({
+            message: `"${c.resolvedName}" doesn't exist in ${options.target} yet - create it?`,
+            default: false,
+          });
+          if (!createIt) {
+            console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
+            results.skipped.push(c.workflow.name);
+            continue;
           }
         }
 
@@ -923,19 +901,15 @@ export async function runPush(
           console.log(
             `  ${chalk.yellow('⚠')}  "${c.resolvedName}" is active. Ongoing executions will continue with the old workflow definition.`,
           );
-          try {
-            const updateIt = await confirm({
-              message: 'Update anyway?',
-              default: false,
-            });
-            if (!updateIt) {
-              console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
-              results.skipped.push(c.workflow.name);
-              console.log();
-              continue;
-            }
-          } catch (err) {
-            throw err;
+          const updateIt = await confirm({
+            message: 'Update anyway?',
+            default: false,
+          });
+          if (!updateIt) {
+            console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
+            results.skipped.push(c.workflow.name);
+            console.log();
+            continue;
           }
           console.log();
         }

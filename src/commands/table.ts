@@ -570,7 +570,7 @@ export async function runTableList(
   }
 
   // ── Default: mapped table ─────────────────────────────────────────────────
-  let entries = Object.entries(map.tables) as Array<[string, Record<string, TableEntry>]>;
+  let entries = Object.entries(map.tables);
   if (options.env) {
     entries = entries.filter(([, envMap]) => options.env! in envMap);
   }
@@ -716,7 +716,7 @@ Examples:
     chiral table map contacts dev=z1HfHUA6tctvw6O8 prod=pQ7rSt2uVwXy8zA9 --dry-run
 `,
   )
-  .action(async (args: string[], options) => {
+  .action(async (args: string[], options: { validate?: boolean; dryRun?: boolean; json?: boolean }) => {
     await runTableMap(args, options);
   });
 
@@ -739,7 +739,7 @@ Examples:
     chiral table list --json | jq '.data.tables'
 `,
   )
-  .action(async (options) => {
+  .action(async (options: { env?: string; uncovered?: boolean; json?: boolean }) => {
     await runTableList(options);
   });
 
@@ -763,7 +763,7 @@ Examples:
     chiral table unmap contacts
 `,
   )
-  .action(async (logicalName: string, options) => {
+  .action(async (logicalName: string, options: { env?: string; yes?: boolean; json?: boolean }) => {
     await runTableUnmap(logicalName, options);
   });
 

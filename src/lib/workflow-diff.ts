@@ -172,7 +172,7 @@ export function diffWorkflowNodes(
     matchedA.add(iA);
     matchedB.add(j);
 
-    const na = nodesA[iA]!;
+    const na = nodesA[iA];
     if (stableStringify(normalizeNode(na)) !== stableStringify(normalizeNode(nb))) {
       const changed = classifyChangedGroups(na, nb);
       const entry: ModifiedNode = { name: nodeName(nb), type: nodeType(nb), changed };
@@ -209,7 +209,7 @@ export function diffWorkflowNodes(
     const iA = nameMapA.get(name);
     if (iA === undefined) continue;
 
-    const na = nodesA[iA]!;
+    const na = nodesA[iA];
 
     // Different type = replacement, not modification
     if (nodeType(na) !== nodeType(nb)) {
@@ -235,13 +235,13 @@ export function diffWorkflowNodes(
   const unmatchedB = nodesB.map((_, j) => j).filter((j) => !matchedB.has(j));
   const positionalCount = Math.min(unmatchedA.length, unmatchedB.length);
   for (let k = 0; k < positionalCount; k++) {
-    const iA = unmatchedA[k]!;
-    const j = unmatchedB[k]!;
+    const iA = unmatchedA[k];
+    const j = unmatchedB[k];
     matchedA.add(iA);
     matchedB.add(j);
 
-    const na = nodesA[iA]!;
-    const nb = nodesB[j]!;
+    const na = nodesA[iA];
+    const nb = nodesB[j];
 
     // Different type = replacement, not modification
     if (nodeType(na) !== nodeType(nb)) {
@@ -260,13 +260,13 @@ export function diffWorkflowNodes(
   // --- Collect unmatched as added / removed ---
   for (let i = 0; i < nodesA.length; i++) {
     if (!matchedA.has(i)) {
-      const name = nodeName(nodesA[i]!);
+      const name = nodeName(nodesA[i]);
       const orphaned = !connectedNamesA.has(name);
-      removed.push({ name, type: nodeType(nodesA[i]!), ...(orphaned ? { orphaned: true } : {}) });
+      removed.push({ name, type: nodeType(nodesA[i]), ...(orphaned ? { orphaned: true } : {}) });
     }
   }
   for (let j = 0; j < nodesB.length; j++) {
-    if (!matchedB.has(j)) added.push({ name: nodeName(nodesB[j]!), type: nodeType(nodesB[j]!) });
+    if (!matchedB.has(j)) added.push({ name: nodeName(nodesB[j]), type: nodeType(nodesB[j]) });
   }
 
   // --- Connection diff (directed source→target edges) ---

@@ -15,7 +15,7 @@ import {
 import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
-import { visibleLen, padRight } from '../lib/cli.js';
+import { padRight } from '../lib/cli.js';
 import { loadCredentials, writeCredentials } from '../state/credentials.js';
 import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
 import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
@@ -665,10 +665,10 @@ Examples:
     chiral environment add dev
 
   Non-interactive (CI/agent use):
-    chiral environment add prod --url https://n8n.prod.com --api-key \$KEY --json
+    chiral environment add prod --url https://n8n.prod.com --api-key $KEY --json
 
   Using environment variables:
-    CHIRAL_URL_PROD=https://n8n.prod.com CHIRAL_API_KEY_PROD=\$KEY \\
+    CHIRAL_URL_PROD=https://n8n.prod.com CHIRAL_API_KEY_PROD=$KEY \\
       chiral environment add prod --json
 
 Exit codes:
@@ -700,7 +700,7 @@ Examples:
     chiral environment configure dev --url https://new-n8n.example.com --json
 
   Update both URL and key (non-interactive):
-    chiral environment configure prod --url https://n8n.prod.com --api-key \$KEY --json
+    chiral environment configure prod --url https://n8n.prod.com --api-key $KEY --json
 
 Exit codes:
   0  Success

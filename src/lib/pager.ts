@@ -40,15 +40,15 @@ export async function pageOutput(text: string, opts: PagerOptions = {}): Promise
   const [cmd, ...args] = pagerCmd.split(' ');
 
   return new Promise((resolve) => {
-    const child = spawn(cmd!, args, { stdio: ['pipe', 'inherit', 'inherit'] });
+    const child = spawn(cmd, args, { stdio: ['pipe', 'inherit', 'inherit'] });
 
-    child.stdin!.on('error', (e: NodeJS.ErrnoException) => {
+    child.stdin.on('error', (e: NodeJS.ErrnoException) => {
       if (e.code !== 'EPIPE') throw e;
     });
 
     child.on('close', () => resolve());
 
-    child.stdin!.write(text);
-    child.stdin!.end();
+    child.stdin.write(text);
+    child.stdin.end();
   });
 }

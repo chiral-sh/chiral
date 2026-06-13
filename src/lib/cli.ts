@@ -25,6 +25,7 @@ export function matchesGlob(name: string, pattern: string): boolean {
 }
 
 export function visibleLen(s: string): number {
+  // eslint-disable-next-line no-control-regex -- stripping ANSI color escape codes
   return s.replace(/\x1b\[[0-9;]*m/g, '').length;
 }
 

@@ -13,7 +13,7 @@ export function loadEnvs(chiralDir: string): EnvsRegistry {
   const filePath = join(chiralDir, 'envs.json');
   if (!existsSync(filePath)) return { version: 1, envs: {} };
   try {
-    const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+    const raw: unknown = JSON.parse(readFileSync(filePath, 'utf-8'));
     const result = EnvsSchema.safeParse(raw);
     return result.success ? result.data : { version: 1, envs: {} };
   } catch {
@@ -36,7 +36,7 @@ export function generateEnvId(): string {
 // has no ID yet (e.g. created before this feature existed).
 export function resolveEnvId(chiralDir: string, envName: string): string {
   const registry = loadEnvs(chiralDir);
-  if (registry.envs[envName]) return registry.envs[envName]!;
+  if (registry.envs[envName]) return registry.envs[envName];
   const id = generateEnvId();
   registry.envs[envName] = id;
   writeEnvs(chiralDir, registry);

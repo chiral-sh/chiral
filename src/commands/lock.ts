@@ -31,10 +31,10 @@ function parseDuration(s: string): number {
       `Cannot parse duration "${s}". Use a number followed by h, m, or d (e.g. 2h, 30m, 1d).`,
     );
   }
-  const n = parseInt(match[1]!, 10);
+  const n = parseInt(match[1], 10);
   if (n <= 0) throw new UserError('--stale value must be greater than zero (e.g. --stale 2h)');
   const multipliers: Record<string, number> = { h: 3600, m: 60, d: 86400 };
-  return n * (multipliers[match[2]!] ?? 3600);
+  return n * (multipliers[match[2]] ?? 3600);
 }
 
 function resolveWorkflowId(
@@ -213,7 +213,7 @@ export async function runLockClaim(
         return;
       }
     } else {
-      const envName = targetEnvs[0]!;
+      const envName = targetEnvs[0];
       if (!envEntries?.[envName]?.id) {
         throw new UserError(
           `"${logicalName}" is not mapped to environment "${envName}". Run 'chiral workflow map' to add it.`,
@@ -652,7 +652,7 @@ Examples:
     chiral lock list --watch
 `,
   )
-  .action(async (options) => {
+  .action(async (options: LockListOptions) => {
     await runLockList(options, process.cwd());
   });
 
@@ -678,7 +678,7 @@ Examples:
     chiral lock list
 `,
   )
-  .action(async (workflow: string | undefined, options) => {
+  .action(async (workflow: string | undefined, options: LockClaimOptions) => {
     if (!workflow) {
       lockCommand.outputHelp();
       return;
@@ -711,6 +711,6 @@ On the free tier, --force only applies to your own locks; overriding another act
 lock requires a paid license.
 `,
   )
-  .action(async (workflow: string, options) => {
+  .action(async (workflow: string, options: UnlockOptions) => {
     await runUnlock(workflow, options, process.cwd());
   });

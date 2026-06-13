@@ -691,6 +691,6 @@ Examples:
     chiral pull --env dev --exit-code
 `,
   )
-  .action(async (options) => {
+  .action(async (options: Omit<PullOptions, 'noPager'> & { pager?: boolean }) => {
     await runPull({ ...options, noPager: options.pager === false });
   });

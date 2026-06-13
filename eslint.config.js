@@ -33,6 +33,19 @@ export default tseslint.config(
       // dangerous bug. Promote these to errors.
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
+
+      // Allow underscore-prefixed unused args/vars — used for parameters kept
+      // for signature consistency but not currently read.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+
+      // Command run* functions are async by convention (matches the commander
+      // `.action(async (options) => ...)` call pattern and lets `expect(runX()).rejects`
+      // catch synchronous UserError throws as a rejected promise). Some have no
+      // internal await yet — that's fine, not a bug.
+      '@typescript-eslint/require-await': 'off',
     },
   },
 );

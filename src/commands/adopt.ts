@@ -186,6 +186,6 @@ Examples:
     chiral adopt --env dev
 `,
   )
-  .action(async (options) => {
+  .action(async (options: AdoptOptions) => {
     await runAdopt(options);
   });

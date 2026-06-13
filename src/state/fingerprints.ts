@@ -50,7 +50,6 @@ function sha256hex(data: string): string {
 // Strips id/position/typeVersion and drops credential instance ids.
 // Used by both normalizeForContent (content hash) and the node-diff engine.
 export function normalizeNode(node: Record<string, unknown>): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { id: _id, position: _pos, typeVersion: _tv, ...rest } = node;
 
   const creds = rest['credentials'];
@@ -60,7 +59,6 @@ export function normalizeNode(node: Record<string, unknown>): Record<string, unk
   for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
     if (typeof credValue === 'object' && credValue !== null) {
       // Keep name, drop instance-specific id
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { id: _cid, ...credRest } = credValue as Record<string, unknown>;
       normalizedCreds[credType] = credRest;
     } else {
@@ -70,12 +68,16 @@ export function normalizeNode(node: Record<string, unknown>): Record<string, unk
   return { ...rest, credentials: normalizedCreds };
 }
 
+function asString(v: unknown): string {
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : '';
+}
+
 function normalizeForContent(wf: Record<string, unknown>): object {
   const nodes = Array.isArray(wf['nodes']) ? (wf['nodes'] as Record<string, unknown>[]) : [];
 
   const normalizedNodes = nodes
     .filter((n): n is Record<string, unknown> => typeof n === 'object' && n !== null)
-    .sort((a, b) => String(a['id'] ?? '').localeCompare(String(b['id'] ?? '')))
+    .sort((a, b) => asString(a['id']).localeCompare(asString(b['id'])))
     .map(normalizeNode);
 
   // Only hash settings fields that survive sanitizeWorkflowForApi - fields stripped
@@ -115,7 +117,7 @@ export function computeStructureHash(wf: Record<string, unknown>): string {
   }
 
   const nodeTypes = nodes
-    .map((n) => String(n['type'] ?? ''))
+    .map((n) => asString(n['type']))
     .filter(Boolean)
     .sort();
 

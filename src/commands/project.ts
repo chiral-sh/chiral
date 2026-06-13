@@ -1,10 +1,10 @@
 import { rmSync, existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
-import { input, confirm } from '@inquirer/prompts';
+import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { UserError } from '../lib/errors.js';
-import { visibleLen, padRight } from '../lib/cli.js';
+import { padRight } from '../lib/cli.js';
 import {
   listProjects,
   unregisterProject,
