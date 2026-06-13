@@ -71,22 +71,45 @@ export function matchExact(
   const unmatchedSource: string[] = [];
   const matchedTargets = new Set<string>();
 
+  // target name -> sources that uniquely candidate it (one-target candidates only)
+  const singleCandidateSources = new Map<string, { sourceName: string; hash: string }[]>();
+
   for (const [sourceName, hash] of srcIndex) {
     if (mappedSource.has(sourceName)) continue;
     const targetNames = hashToTargets.get(hash);
     if (!targetNames || targetNames.length === 0) {
       unmatchedSource.push(sourceName);
     } else if (targetNames.length === 1) {
-      matches.push({ sourceName, targetName: targetNames[0], structureHash: hash });
-      matchedTargets.add(targetNames[0]);
+      const list = singleCandidateSources.get(targetNames[0]);
+      if (list) list.push({ sourceName, hash });
+      else singleCandidateSources.set(targetNames[0], [{ sourceName, hash }]);
     } else {
       ambiguous.push({ sourceName, targetNames: [...targetNames] });
     }
   }
 
+  // A target claimed by exactly one source is an exact match; a target claimed by
+  // multiple sources (fan-in) is ambiguous for every one of those sources.
+  for (const [targetName, sources] of singleCandidateSources) {
+    if (sources.length === 1) {
+      const { sourceName, hash } = sources[0];
+      matches.push({ sourceName, targetName, structureHash: hash });
+      matchedTargets.add(targetName);
+    } else {
+      for (const { sourceName } of sources) {
+        ambiguous.push({ sourceName, targetNames: [targetName] });
+      }
+    }
+  }
+
+  const ambiguousTargets = new Set<string>();
+  for (const a of ambiguous) {
+    for (const t of a.targetNames) ambiguousTargets.add(t);
+  }
+
   const unmatchedTarget: string[] = [];
   for (const [name] of tgtIndex) {
-    if (mappedTarget.has(name) || matchedTargets.has(name)) continue;
+    if (mappedTarget.has(name) || matchedTargets.has(name) || ambiguousTargets.has(name)) continue;
     unmatchedTarget.push(name);
   }
 
@@ -101,6 +124,19 @@ export type ReservedMatch = {
   targetName: string;
 };
 
+// Picks `base`, or `base-2`, `base-3`, ... — whichever isn't already in `reserved`.
+// Mutates `reserved` to claim the chosen name.
+export function claimLogicalName(base: string, reserved: Set<string>): string {
+  let logicalName = base;
+  if (reserved.has(logicalName)) {
+    let n = 2;
+    while (reserved.has(`${base}-${n}`)) n++;
+    logicalName = `${base}-${n}`;
+  }
+  reserved.add(logicalName);
+  return logicalName;
+}
+
 // Derives a unique logical key per match, accounting for collisions both with
 // existing entries in `map` and with other matches in the same batch.
 export function reserveLogicalNames(
@@ -113,13 +149,7 @@ export function reserveLogicalNames(
 
   for (const { sourceName, targetName } of matches) {
     const base = deriveLogicalName(sourceName, knownEnvs);
-    let logicalName = base;
-    if (reserved.has(logicalName)) {
-      let n = 2;
-      while (reserved.has(`${base}-${n}`)) n++;
-      logicalName = `${base}-${n}`;
-    }
-    reserved.add(logicalName);
+    const logicalName = claimLogicalName(base, reserved);
     result.push({ logicalName, sourceName, targetName });
   }
 

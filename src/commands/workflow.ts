@@ -25,7 +25,7 @@ import {
 } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
 import { loadFingerprints } from '../state/fingerprints.js';
-import { buildStructureIndex, matchExact, reserveLogicalNames } from '../lib/workflow-match.js';
+import { buildStructureIndex, claimLogicalName, matchExact, reserveLogicalNames } from '../lib/workflow-match.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1050,6 +1050,28 @@ export async function runWorkflowMatch(
     }
   }
 
+  // ── Apply + validate before any output, so a validation failure can't follow
+  // a printed "✓ Wrote" success message ───────────────────────────────────
+  if (shouldWrite) {
+    for (const r of reserved) {
+      upsertEnvEntry(map, r.logicalName, source, { name: r.sourceName });
+      upsertEnvEntry(map, r.logicalName, target, { name: r.targetName });
+    }
+
+    validateNoDuplicateTargets(map, source, target);
+    validateNoCircularMapping(map, source, target);
+  }
+
+  // Names already reserved for Pass-1 matches, so manual-resolution hints for
+  // ambiguous entries don't suggest a logical name that collides with them.
+  const reservedNames = new Set<string>([...Object.keys(map.workflows), ...reserved.map((r) => r.logicalName)]);
+
+  // Reserved entries where source and target names differ would have shown up as a
+  // separate "added" (source) and "removed" (target) row in `chiral diff`; mapping
+  // them collapses both into one modified/unchanged row. Entries with matching names
+  // already resolved by name and contribute nothing.
+  const previewDiffResolved = reserved.filter((r) => r.sourceName !== r.targetName).length;
+
   // ── Human output: Pass 1 block ───────────────────────────────────────────
   if (outputMode === 'human') {
     if (reserved.length > 0) {
@@ -1067,9 +1089,9 @@ export async function runWorkflowMatch(
         }
         console.log();
         if (options.previewDiff) {
-          const n = reserved.length;
+          const n = previewDiffResolved;
           console.log(
-            `  Applying these ${plural(n, 'mapping')} would resolve ${n} + / ${n} - rows in chiral diff --source ${source} --target ${target}\n`,
+            `  Applying these ${plural(reserved.length, 'mapping')} would resolve ${n} + / ${n} - rows in chiral diff --source ${source} --target ${target}\n`,
           );
         }
       } else if (shouldWrite) {
@@ -1089,7 +1111,8 @@ export async function runWorkflowMatch(
         for (const tName of a.targetNames) {
           console.log(`      - "${tName}"`);
         }
-        const hintLogical = deriveLogicalName(a.sourceName, Object.keys(config.environments));
+        const hintBase = deriveLogicalName(a.sourceName, Object.keys(config.environments));
+        const hintLogical = claimLogicalName(hintBase, reservedNames);
         console.log(
           `\n  → Resolve manually: chiral workflow map ${hintLogical} ${source}="${a.sourceName}" ${target}="${a.targetNames[0]}"\n`,
         );
@@ -1111,14 +1134,6 @@ export async function runWorkflowMatch(
 
   // ── Write ─────────────────────────────────────────────────────────────────
   if (shouldWrite) {
-    for (const r of reserved) {
-      upsertEnvEntry(map, r.logicalName, source, { name: r.sourceName });
-      upsertEnvEntry(map, r.logicalName, target, { name: r.targetName });
-    }
-
-    validateNoDuplicateTargets(map, source, target);
-    validateNoCircularMapping(map, source, target);
-
     writeWorkflowMap(chiralDir, map);
 
     writeAuditEntry(chiralDir, {
@@ -1163,8 +1178,8 @@ export async function runWorkflowMatch(
       unmatched_target: result.unmatchedTarget,
       ...(options.previewDiff
         ? {
-            diff_rows_resolved_plus: reserved.length,
-            diff_rows_resolved_minus: reserved.length,
+            diff_rows_resolved_plus: previewDiffResolved,
+            diff_rows_resolved_minus: previewDiffResolved,
           }
         : {}),
     });

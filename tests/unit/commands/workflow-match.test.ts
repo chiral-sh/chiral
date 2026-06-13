@@ -200,8 +200,8 @@ describe('runWorkflowMatch', () => {
     expect(written.workflows).toEqual({});
   });
 
-  it('a fan-in introduced by Pass 1 throws via the validator and leaves workflows.json unwritten', async () => {
-    // Two source workflows share a structureHash, but only one target shares it -
+  it('a fan-in (two sources, one target) is reported as ambiguous and leaves workflows.json unwritten', async () => {
+    // Two source workflows share a structureHash, and only one target shares it -
     // both would map to the same target name, creating a fan-in.
     const fingerprintsWithFanIn = JSON.stringify({
       version: 1,
@@ -217,12 +217,21 @@ describe('runWorkflowMatch', () => {
     });
     setupBase(fingerprintsWithFanIn);
 
-    await expect(
-      runWorkflowMatch({ source: 'dev', target: 'prod', yes: true }),
-    ).rejects.toThrow(UserError);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows).toEqual({});
+
+    const jsonCall = logSpy.mock.calls.find(([line]) => typeof line === 'string' && line.includes('"candidates"'));
+    logSpy.mockRestore();
+    expect(jsonCall).toBeDefined();
+    const output = JSON.parse(jsonCall![0] as string);
+    const ambiguous = output.data.candidates.filter((c: { confidence: string }) => c.confidence === 'ambiguous');
+    expect(ambiguous).toEqual([
+      { source_name: 'Order A [DEV]', target_name: ['Shared Target'], confidence: 'ambiguous', fuzzy_score: null, algorithm: 'structure_hash', structure_match: true, accepted: false },
+      { source_name: 'Order B [DEV]', target_name: ['Shared Target'], confidence: 'ambiguous', fuzzy_score: null, algorithm: 'structure_hash', structure_match: true, accepted: false },
+    ]);
   });
 
   it('--dry-run produces output but no file write/audit/sync', async () => {
