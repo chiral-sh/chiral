@@ -43,6 +43,13 @@ export function resolveEnvId(chiralDir: string, envName: string): string {
   return id;
 }
 
+// Read-only lookup - returns undefined if the env has no ID yet, without
+// writing envs.json. Use this on read-only code paths (diff, push --check/--dry-run)
+// where a missing entry means "no locks/state recorded for this env yet".
+export function peekEnvId(chiralDir: string, envName: string): string | undefined {
+  return loadEnvs(chiralDir).envs[envName];
+}
+
 // Returns envId → envName for display purposes.
 export function buildEnvIdToNameMap(chiralDir: string): Map<string, string> {
   const registry = loadEnvs(chiralDir);

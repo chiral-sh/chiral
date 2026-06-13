@@ -101,6 +101,7 @@ function setupProject(config = VALID_CONFIG) {
     [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
     [`${PROJECT_DIR}/.chiral/config.json`]: config,
     [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
+    [`${PROJECT_DIR}/.chiral/envs.json`]: JSON.stringify({ version: 1, envs: { dev: 'dev', prod: 'prod' } }),
   });
 }
 

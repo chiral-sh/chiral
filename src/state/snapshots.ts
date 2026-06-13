@@ -145,14 +145,17 @@ export function readSnapshotMeta(
   }
 }
 
-// Scans deployments newest-first and returns the first one written for the given env.
+// Scans deployments newest-first and returns the first *full* snapshot (pull/adopt)
+// written for the given env. Push-target snapshots only contain the in-scope subset
+// of workflows that were touched by that push, so they're skipped here - treating one
+// as "the latest deployment" would silently drop every workflow outside that subset.
 export function findLatestDeploymentForEnv(
   chiralDir: string,
   env: string,
 ): string | undefined {
   for (const deploymentId of listDeployments(chiralDir)) {
     const meta = readSnapshotMeta(chiralDir, deploymentId);
-    if (meta?.env === env) return deploymentId;
+    if (meta?.env === env && meta.command !== 'push') return deploymentId;
   }
   return undefined;
 }
