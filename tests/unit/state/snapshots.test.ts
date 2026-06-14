@@ -242,6 +242,13 @@ describe('writeSnapshotMeta / readSnapshotMeta', () => {
     expect(result?.normalizationVersion).toBe(1);
   });
 
+  it('writes meta.json atomically, leaving no leftover tmp files', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META);
+    const files = vol.readdirSync(`/fd/snapshots/${DEPLOYMENT_A}`) as string[];
+    expect(files).toEqual(['meta.json']);
+  });
+
   it('parses a meta.json written before normalizationVersion existed via the schema default', () => {
     // BASE_META has no normalizationVersion field, simulating a pre-change meta.json
     vol.fromJSON({

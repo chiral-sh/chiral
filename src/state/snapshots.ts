@@ -1,6 +1,5 @@
 import {
   mkdirSync,
-  writeFileSync,
   readFileSync,
   existsSync,
   readdirSync,
@@ -132,7 +131,7 @@ export function writeSnapshotMeta(
   const fullMeta: SnapshotMeta = { ...meta, normalizationVersion: NORMALIZATION_VERSION };
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'meta.json'), JSON.stringify(fullMeta, null, 2), 'utf-8');
+    writeJsonAtomic(join(dir, 'meta.json'), fullMeta);
   } catch {
     // best-effort - don't block the command if meta write fails
   }
