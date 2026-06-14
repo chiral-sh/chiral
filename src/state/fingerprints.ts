@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import stableStringify from 'fast-json-stable-stringify';
 import { UserError } from '../lib/errors.js';
+import { writeJsonAtomic } from './atomic.js';
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -47,25 +48,47 @@ function sha256hex(data: string): string {
   return 'sha256:' + createHash('sha256').update(data, 'utf8').digest('hex');
 }
 
-// Strips id/position/typeVersion and drops credential instance ids.
-// Used by both normalizeForContent (content hash) and the node-diff engine.
+// Strips id/position/typeVersion, drops credential instance ids/names, and
+// strips env-specific Data Table identifiers. Used by both normalizeForContent
+// (content hash) and the node-diff engine.
 export function normalizeNode(node: Record<string, unknown>): Record<string, unknown> {
   const { id: _id, position: _pos, typeVersion: _tv, ...rest } = node;
 
-  const creds = rest['credentials'];
-  if (typeof creds !== 'object' || creds === null) return rest;
+  let normalized = rest;
 
-  const normalizedCreds: Record<string, unknown> = {};
-  for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
-    if (typeof credValue === 'object' && credValue !== null) {
-      // Keep name, drop instance-specific id
-      const { id: _cid, ...credRest } = credValue as Record<string, unknown>;
-      normalizedCreds[credType] = credRest;
-    } else {
-      normalizedCreds[credType] = credValue;
+  const creds = normalized['credentials'];
+  if (typeof creds === 'object' && creds !== null) {
+    const normalizedCreds: Record<string, unknown> = {};
+    for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
+      if (typeof credValue === 'object' && credValue !== null) {
+        // Drop instance-specific id and env-specific name - only the
+        // presence of a credential of this type is part of the workflow logic.
+        const { id: _cid, name: _cname, ...credRest } = credValue as Record<string, unknown>;
+        normalizedCreds[credType] = credRest;
+      } else {
+        normalizedCreds[credType] = credValue;
+      }
+    }
+    normalized = { ...normalized, credentials: normalizedCreds };
+  }
+
+  if (normalized['type'] === 'n8n-nodes-base.datatable') {
+    const params = normalized['parameters'];
+    if (typeof params === 'object' && params !== null) {
+      const paramsObj = params as Record<string, unknown>;
+      const dataTableId = paramsObj['dataTableId'];
+      if (typeof dataTableId === 'object' && dataTableId !== null) {
+        const { value: _value, cachedResultUrl: _cachedResultUrl, ...dtRest } =
+          dataTableId as Record<string, unknown>;
+        normalized = {
+          ...normalized,
+          parameters: { ...paramsObj, dataTableId: dtRest },
+        };
+      }
     }
   }
-  return { ...rest, credentials: normalizedCreds };
+
+  return normalized;
 }
 
 function asString(v: unknown): string {
@@ -122,6 +145,8 @@ export function computeStructureHash(wf: Record<string, unknown>): string {
     .sort();
 
   const pairs: string[] = [];
+  const outgoingByName = new Map<string, string[]>();
+  const incomingByName = new Map<string, string[]>();
   const connections = wf['connections'];
   if (typeof connections === 'object' && connections !== null) {
     for (const [sourceName, outputs] of Object.entries(connections as Record<string, unknown>)) {
@@ -137,7 +162,11 @@ export function computeStructureHash(wf: Record<string, unknown>): string {
             const targetName = (conn as Record<string, unknown>)['node'];
             if (typeof targetName === 'string') {
               const targetType = nameToType.get(targetName);
-              if (targetType) pairs.push(`${sourceType} → ${targetType}`);
+              if (targetType) {
+                pairs.push(`${sourceType} → ${targetType}`);
+                outgoingByName.set(sourceName, [...(outgoingByName.get(sourceName) ?? []), targetType]);
+                incomingByName.set(targetName, [...(incomingByName.get(targetName) ?? []), sourceType]);
+              }
             }
           }
         }
@@ -145,8 +174,33 @@ export function computeStructureHash(wf: Record<string, unknown>): string {
     }
   }
 
-  const connectionTopology = [...new Set(pairs)].sort();
-  return sha256hex(stableStringify({ nodeTypes, connectionTopology }));
+  // Count duplicate type→type edges instead of de-duplicating, so two
+  // genuinely different topologies sharing the same edge-type *set* but
+  // different multiplicities no longer collide.
+  const pairCounts = new Map<string, number>();
+  for (const pair of pairs) {
+    pairCounts.set(pair, (pairCounts.get(pair) ?? 0) + 1);
+  }
+  const connectionTopology = [...pairCounts.entries()]
+    .map(([pair, count]) => `${pair} x${count}`)
+    .sort();
+
+  // Per-node adjacency signature (type + multiset of connected types on each
+  // side) - distinguishes workflows whose node-type multiset and edge-type
+  // set match but whose connections are wired between different node types.
+  const nodeSignatures = nodes
+    .filter((n) => typeof n['name'] === 'string' && typeof n['type'] === 'string')
+    .map((n) => {
+      const name = n['name'] as string;
+      return stableStringify({
+        type: n['type'],
+        outgoing: (outgoingByName.get(name) ?? []).sort(),
+        incoming: (incomingByName.get(name) ?? []).sort(),
+      });
+    })
+    .sort();
+
+  return sha256hex(stableStringify({ nodeTypes, connectionTopology, nodeSignatures }));
 }
 
 // ── Load / write ──────────────────────────────────────────────────────────────
@@ -171,11 +225,7 @@ export function loadFingerprints(chiralDir: string): Fingerprints {
 
 export function writeFingerprints(chiralDir: string, data: Fingerprints): void {
   const filePath = join(chiralDir, 'fingerprints.json');
-  try {
-    writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-  } catch {
-    throw new UserError(`Could not write to ${filePath}`);
-  }
+  writeJsonAtomic(filePath, data);
 }
 
 export function upsertFingerprintEntry(

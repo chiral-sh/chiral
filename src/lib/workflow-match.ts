@@ -24,17 +24,34 @@ export type ExactMatchResult = {
 
 // ── Pass 1: exact structure-hash matching ───────────────────────────────────────
 
-// Builds a name -> structureHash map from a fingerprints env record.
-// Duplicate display names within the env collapse last-wins.
+export type StructureIndexEntry = {
+  id: string;
+  name: string;
+  structureHash: string;
+};
+
+// Builds an id -> {name, structureHash} map from a fingerprints env record.
+// Keyed by workflow id so two entries sharing a display name are both retained.
 export function buildStructureIndex(
   fingerprintsEnv: Fingerprints['envs'][string] | undefined,
-): Map<string, string> {
-  const index = new Map<string, string>();
+): Map<string, StructureIndexEntry> {
+  const index = new Map<string, StructureIndexEntry>();
   if (!fingerprintsEnv) return index;
-  for (const entry of Object.values(fingerprintsEnv)) {
-    index.set(entry.name, entry.structureHash);
+  for (const [id, entry] of Object.entries(fingerprintsEnv)) {
+    index.set(id, { id, name: entry.name, structureHash: entry.structureHash });
   }
   return index;
+}
+
+// Names that appear more than once in an index — these can't be uniquely
+// identified by display name alone, so a hash match against one of them
+// is ambiguous rather than a confident single match.
+function duplicateNames(index: Map<string, StructureIndexEntry>): Set<string> {
+  const counts = new Map<string, number>();
+  for (const entry of index.values()) {
+    counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1);
+  }
+  return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
 }
 
 // Names already present in workflows.json for the given env (either side of any logical entry).
@@ -48,22 +65,23 @@ function mappedNames(map: WorkflowMap, env: string): Set<string> {
 }
 
 export function matchExact(
-  srcIndex: Map<string, string>,
-  tgtIndex: Map<string, string>,
+  srcIndex: Map<string, StructureIndexEntry>,
+  tgtIndex: Map<string, StructureIndexEntry>,
   alreadyMapped: WorkflowMap,
   sourceEnv: string,
   targetEnv: string,
 ): ExactMatchResult {
   const mappedSource = mappedNames(alreadyMapped, sourceEnv);
   const mappedTarget = mappedNames(alreadyMapped, targetEnv);
+  const duplicateTargetNames = duplicateNames(tgtIndex);
 
   // hash -> target names sharing that hash (excluding already-mapped targets)
   const hashToTargets = new Map<string, string[]>();
-  for (const [name, hash] of tgtIndex) {
-    if (mappedTarget.has(name)) continue;
-    const list = hashToTargets.get(hash);
-    if (list) list.push(name);
-    else hashToTargets.set(hash, [name]);
+  for (const entry of tgtIndex.values()) {
+    if (mappedTarget.has(entry.name)) continue;
+    const list = hashToTargets.get(entry.structureHash);
+    if (list) list.push(entry.name);
+    else hashToTargets.set(entry.structureHash, [entry.name]);
   }
 
   const matches: ExactMatch[] = [];
@@ -74,12 +92,13 @@ export function matchExact(
   // target name -> sources that uniquely candidate it (one-target candidates only)
   const singleCandidateSources = new Map<string, { sourceName: string; hash: string }[]>();
 
-  for (const [sourceName, hash] of srcIndex) {
+  for (const entry of srcIndex.values()) {
+    const { name: sourceName, structureHash: hash } = entry;
     if (mappedSource.has(sourceName)) continue;
     const targetNames = hashToTargets.get(hash);
     if (!targetNames || targetNames.length === 0) {
       unmatchedSource.push(sourceName);
-    } else if (targetNames.length === 1) {
+    } else if (targetNames.length === 1 && !duplicateTargetNames.has(targetNames[0])) {
       const list = singleCandidateSources.get(targetNames[0]);
       if (list) list.push({ sourceName, hash });
       else singleCandidateSources.set(targetNames[0], [{ sourceName, hash }]);
@@ -108,7 +127,8 @@ export function matchExact(
   }
 
   const unmatchedTarget: string[] = [];
-  for (const [name] of tgtIndex) {
+  for (const entry of tgtIndex.values()) {
+    const { name } = entry;
     if (mappedTarget.has(name) || matchedTargets.has(name) || ambiguousTargets.has(name)) continue;
     unmatchedTarget.push(name);
   }
