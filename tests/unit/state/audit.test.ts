@@ -53,6 +53,27 @@ describe('writeAuditEntry', () => {
   });
 });
 
+describe('concurrent writeAuditEntry calls', () => {
+  it('keeps all lines well-formed when many writes are interleaved', async () => {
+    vol.fromJSON({ '/project/.chiral/': null });
+    const count = 25;
+    await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        Promise.resolve().then(() =>
+          writeAuditEntry('/project/.chiral', {
+            ...VALID_ENTRY,
+            event_id: `123e4567-e89b-12d3-a456-42661417${String(i).padStart(4, '0')}`,
+          })
+        )
+      )
+    );
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(count);
+    const ids = new Set(entries.map((e) => e.event_id));
+    expect(ids.size).toBe(count);
+  });
+});
+
 describe('readAuditLog', () => {
   it('returns empty array when audit.jsonl does not exist', () => {
     vol.fromJSON({ '/project/.chiral/': null });
