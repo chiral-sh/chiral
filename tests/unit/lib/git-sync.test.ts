@@ -86,7 +86,7 @@ describe('syncToRemote', () => {
     const config = makeConfig({ enabled: true, remote: 'origin', branch: 'main' });
     const result = await syncToRemote('/project/.chiral', config, 'chore(chiral): pull dev');
     expect(mockAdd).toHaveBeenCalledOnce();
-    expect(mockCommit).toHaveBeenCalledWith('chore(chiral): pull dev');
+    expect(mockCommit).toHaveBeenCalledWith('chore(chiral): pull dev', expect.any(Array));
     expect(mockEnv).toHaveBeenCalledOnce();
     expect(mockPush).toHaveBeenCalledWith('origin', 'main');
     expect(result.success).toBe(true);
@@ -125,6 +125,16 @@ describe('syncToRemote', () => {
     await syncToRemote('/project/.chiral', config, 'msg');
     const stagedPaths: string[] = mockAdd.mock.calls[0][0] as string[];
     expect(stagedPaths.every((p) => !p.includes('snapshots'))).toBe(true);
+  });
+
+  it('commits only the staged .chiral pathspec, not the whole index', async () => {
+    const config = makeConfig({ enabled: true, remote: 'origin', branch: 'main' });
+    mockStatus.mockResolvedValue({ staged: ['.chiral/workflows.json', 'unrelated.txt'] });
+    await syncToRemote('/project/.chiral', config, 'msg');
+    const commitArgs = mockCommit.mock.calls[0] as [string, string[]];
+    const pathspec = commitArgs[1];
+    expect(pathspec.every((p) => p.startsWith('.chiral'))).toBe(true);
+    expect(pathspec).not.toContain('unrelated.txt');
   });
 
   it('returns failure result when push throws', async () => {

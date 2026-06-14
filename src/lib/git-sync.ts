@@ -56,7 +56,7 @@ export async function syncToRemote(
       return { skipped: false, success: true, nothingToCommit: true };
     }
 
-    await git.commit(commitMsg);
+    await git.commit(commitMsg, toStage);
 
     // Detect branch mismatch before pushing: if the configured branch doesn't
     // exist locally, git push fails with the cryptic "src refspec does not match any".
