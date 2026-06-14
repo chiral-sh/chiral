@@ -56,3 +56,51 @@ jobs:
         run: |
           node dist/index.js --version
           node dist/index.js --help
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run integration tests
+        run: pnpm test:integration
+
+  dist-smoke:
+    name: dist-smoke
+    runs-on: ubuntu-latest
+    # Pre-release gate: build dist/ and run the core-loop integration test
+    # against the built artifact before code reaches main.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run core-loop smoke test against dist
+        env:
+          CHIRAL_TEST_CLI_TARGET: dist
+        run: pnpm test:integration:dist
