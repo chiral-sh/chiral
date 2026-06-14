@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
+import { writeJsonAtomic } from './atomic.js';
 
 export const TableEntrySchema = z.object({
   id: z.string().min(1),
@@ -38,13 +39,7 @@ export function loadTableMap(chiralDir: string): TablesMap {
 
 export function writeTableMap(chiralDir: string, data: TablesMap): void {
   const path = join(chiralDir, 'tables.json');
-  const tmp = path + '.tmp';
-  try {
-    writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-    renameSync(tmp, path);
-  } catch {
-    throw new UserError(`Could not write to ${path}`);
-  }
+  writeJsonAtomic(path, data);
 }
 
 export function upsertTableEnvEntry(
@@ -157,8 +152,15 @@ export function applyTableMap(
       return node;
     }
 
+    const targetName = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.name : undefined;
+
     const newDtObj: Record<string, unknown> = { ...dtObj, value: targetId };
     delete newDtObj['cachedResultUrl'];
+    if (targetName !== undefined) {
+      newDtObj['cachedResultName'] = targetName;
+    } else {
+      delete newDtObj['cachedResultName'];
+    }
 
     return { ...nodeObj, parameters: { ...paramsObj, dataTableId: newDtObj } };
   });

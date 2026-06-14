@@ -86,11 +86,11 @@ describe('normalizeNode', () => {
     expect(result).not.toHaveProperty('typeVersion');
   });
 
-  it('strips credential id and name', () => {
+  it('strips credential id but keeps name', () => {
     const result = normalizeNode(baseNode);
     const creds = result['credentials'] as Record<string, Record<string, unknown>>;
     expect(creds['httpBasicAuth']).not.toHaveProperty('id');
-    expect(creds['httpBasicAuth']).not.toHaveProperty('name');
+    expect(creds['httpBasicAuth']).toHaveProperty('name', 'dev_api_key');
   });
 
   it('strips dataTableId value and cachedResultUrl for datatable nodes', () => {
@@ -117,6 +117,30 @@ describe('normalizeNode', () => {
     expect(dataTableId).not.toHaveProperty('cachedResultUrl');
     expect(dataTableId['__rl']).toBe(true);
     expect(dataTableId['mode']).toBe('list');
+  });
+
+  it('leaves dataTableId untouched for __rl !== true (matches collect/remap predicate)', () => {
+    const node: Record<string, unknown> = {
+      id: 'node-4',
+      name: 'Data Table',
+      type: 'n8n-nodes-base.datatable',
+      typeVersion: 1,
+      position: [0, 0],
+      parameters: {
+        operation: 'getRows',
+        dataTableId: {
+          __rl: false,
+          value: 'table-dev-123',
+          mode: 'id',
+          cachedResultUrl: 'https://dev.example.com/tables/table-dev-123',
+        },
+      },
+    };
+    const result = normalizeNode(node);
+    const params = result['parameters'] as Record<string, unknown>;
+    const dataTableId = params['dataTableId'] as Record<string, unknown>;
+    expect(dataTableId).toHaveProperty('value', 'table-dev-123');
+    expect(dataTableId).toHaveProperty('cachedResultUrl', 'https://dev.example.com/tables/table-dev-123');
   });
 
   it('preserves parameters', () => {
@@ -217,14 +241,17 @@ describe('computeContentHash', () => {
     expect(computeContentHash(withCredId)).toBe(computeContentHash(withDifferentCredId));
   });
 
-  it('returns the same hash when credential name changes (cross-env mapped credential)', () => {
+  it('returns a different hash when credential name changes (genuine swap; cred-map normalization happens upstream)', () => {
     const wf = makeWorkflow();
     const wfChanged = makeWorkflow();
     const nodes = wfChanged['nodes'] as Record<string, unknown>[];
     (nodes[0]!['credentials'] as Record<string, Record<string, unknown>>)['httpBasicAuth']!['name'] =
       'prod_api_key';
 
-    expect(computeContentHash(wf)).toBe(computeContentHash(wfChanged));
+    // computeContentHash itself no longer collapses credential name changes
+    // (S1) - callers must pass a credential-map-normalized workflow first so
+    // that mapped/passthrough pairs collapse before hashing.
+    expect(computeContentHash(wf)).not.toBe(computeContentHash(wfChanged));
   });
 
   it('returns the same hash when dataTableId.value differs across envs', () => {

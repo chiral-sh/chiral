@@ -14,6 +14,11 @@ const FingerprintEntrySchema = z.object({
   contentHash: z.string(),
   structureHash: z.string(),
   updatedAt: z.string(),
+  // Set when a push succeeded in updating the workflow but the post-update
+  // reactivation failed, leaving the target inactive. Forces the next push
+  // to re-evaluate this workflow (would-update + reactivate attempt) instead
+  // of reporting it as up-to-date.
+  needsReactivation: z.boolean().optional(),
 });
 
 const FingerprintsSchema = z.object({
@@ -61,9 +66,13 @@ export function normalizeNode(node: Record<string, unknown>): Record<string, unk
     const normalizedCreds: Record<string, unknown> = {};
     for (const [credType, credValue] of Object.entries(creds as Record<string, unknown>)) {
       if (typeof credValue === 'object' && credValue !== null) {
-        // Drop instance-specific id and env-specific name - only the
-        // presence of a credential of this type is part of the workflow logic.
-        const { id: _cid, name: _cname, ...credRest } = credValue as Record<string, unknown>;
+        // Drop instance-specific id - it differs per env even for the same
+        // logical credential. Keep `name`: callers must pass a
+        // credential-map-normalized workflow (see applyCredentialMap) so that
+        // mapped/passthrough pairs collapse to the same name before hashing,
+        // while a genuine credential swap (different name, no mapping)
+        // produces a different hash.
+        const { id: _cid, ...credRest } = credValue as Record<string, unknown>;
         normalizedCreds[credType] = credRest;
       } else {
         normalizedCreds[credType] = credValue;
@@ -77,8 +86,16 @@ export function normalizeNode(node: Record<string, unknown>): Record<string, unk
     if (typeof params === 'object' && params !== null) {
       const paramsObj = params as Record<string, unknown>;
       const dataTableId = paramsObj['dataTableId'];
-      if (typeof dataTableId === 'object' && dataTableId !== null) {
-        const { value: _value, cachedResultUrl: _cachedResultUrl, ...dtRest } =
+      // Only strip id/cached-name fields for resource-locator refs (__rl === true),
+      // matching the predicate collectDataTableRefs/applyTableMap use - otherwise a
+      // node treated as a plain value by remap/collect could still have its content
+      // silently stripped here, causing hash/remap asymmetry (S7).
+      if (
+        typeof dataTableId === 'object' &&
+        dataTableId !== null &&
+        (dataTableId as Record<string, unknown>)['__rl'] === true
+      ) {
+        const { value: _value, cachedResultUrl: _cachedResultUrl, cachedResultName: _cachedResultName, ...dtRest } =
           dataTableId as Record<string, unknown>;
         normalized = {
           ...normalized,

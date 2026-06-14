@@ -24,6 +24,7 @@ import { N8nClient } from '../../../src/lib/n8n-client.js';
 import { pageOutput } from '../../../src/lib/pager.js';
 import { runDiff } from '../../../src/commands/diff.js';
 import { computeContentHash, computeStructureHash } from '../../../src/state/fingerprints.js';
+import { buildCredentialMap, applyCredentialMap } from '../../../src/state/credentials.js';
 import type { WorkflowSummary } from '../../../src/lib/n8n-client.js';
 
 const mockExecSync = vi.mocked(execSync);
@@ -829,13 +830,30 @@ describe('runDiff - fingerprint-based change detection', () => {
       ],
     };
 
-    const srcContentHash = computeContentHash(srcWorkflow);
-    const tgtContentHash = computeContentHash(tgtWorkflow);
+    // Fingerprints are written from credential-map-normalized workflows (see
+    // push.ts / diff.ts): mapped credential names collapse to the target name
+    // before hashing, so the stored hashes match despite the raw name diff.
+    const credentials = {
+      version: 1 as const,
+      credentials: { stripe: { dev: 'dev_stripe', prod: 'prod_stripe' } },
+    };
+    const credMap = buildCredentialMap(srcWorkflow.nodes, 'dev', 'prod', credentials);
+    const srcNormalized = applyCredentialMap(srcWorkflow, credMap);
+    const tgtNormalized = applyCredentialMap(tgtWorkflow, credMap);
+
+    const srcContentHash = computeContentHash(srcNormalized);
+    const tgtContentHash = computeContentHash(tgtNormalized);
     const srcStructureHash = computeStructureHash(srcWorkflow);
     const tgtStructureHash = computeStructureHash(tgtWorkflow);
 
-    // Credential name differences must not affect the content hash.
+    // Mapped credential name differences must not affect the content hash
+    // once normalized through the credential map.
     expect(srcContentHash).toBe(tgtContentHash);
+
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/credentials.json`,
+      JSON.stringify(credentials),
+    );
 
     vol.writeFileSync(
       `${PROJECT_DIR}/.chiral/fingerprints.json`,

@@ -189,7 +189,7 @@ describe('diffWorkflowNodes', () => {
     expect(result.removed[0]!.orphaned).not.toBe(true);
   });
 
-  it('ignores credential id and name changes (env-specific, not workflow logic)', () => {
+  it('ignores credential id changes when the name is unchanged (env-specific instance id)', () => {
     const nodeOld = makeNode({
       id: 'n1',
       credentials: { httpBasicAuth: { id: 'cred-old', name: 'dev_key' } },
@@ -198,11 +198,20 @@ describe('diffWorkflowNodes', () => {
       id: 'n1',
       credentials: { httpBasicAuth: { id: 'cred-new', name: 'dev_key' } },
     });
+    expect(diffWorkflowNodes(wf([nodeOld]), wf([nodeSameCredName])).modified).toHaveLength(0);
+  });
+
+  it('flags a credential name change as a credentials change (S1: caller must normalize via the credential map first)', () => {
+    const nodeOld = makeNode({
+      id: 'n1',
+      credentials: { httpBasicAuth: { id: 'cred-old', name: 'dev_key' } },
+    });
     const nodeDiffCredName = makeNode({
       id: 'n1',
       credentials: { httpBasicAuth: { id: 'cred-old', name: 'prod_key' } },
     });
-    expect(diffWorkflowNodes(wf([nodeOld]), wf([nodeSameCredName])).modified).toHaveLength(0);
-    expect(diffWorkflowNodes(wf([nodeOld]), wf([nodeDiffCredName])).modified).toHaveLength(0);
+    const result = diffWorkflowNodes(wf([nodeOld]), wf([nodeDiffCredName]));
+    expect(result.modified).toHaveLength(1);
+    expect(result.modified[0]!.changed).toContain('credentials');
   });
 });

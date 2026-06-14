@@ -216,6 +216,7 @@ interface WorkflowClassification {
   resolvedName: string;
   action: 'would-create' | 'would-update' | 'skipped';
   targetActive: boolean; // whether the target version is currently active
+  forceReactivate: boolean; // a prior push left this workflow inactive after a successful update
 }
 
 interface TagResolution {
@@ -273,19 +274,28 @@ export async function runPush(
     );
   }
 
-  // Stale snapshot warning (>24h)
+  // Stale snapshot warning (>24h). A missing or unreadable meta.json is treated
+  // as stale rather than silently skipping this safety check (a torn meta must
+  // never disable the prompt).
   const meta = readSnapshotMeta(chiralDir, deploymentId);
-  if (meta && outputMode === 'human') {
-    const snapshotAge = Date.now() - new Date(meta.timestamp).getTime();
+  if (outputMode === 'human') {
     const STALE_MS = 24 * 60 * 60 * 1000;
-    if (snapshotAge > STALE_MS) {
-      const days = Math.floor(snapshotAge / (1000 * 60 * 60 * 24));
-      const ageStr = `${days} day${days === 1 ? '' : 's'}`;
-      const snapshotDate = new Date(meta.timestamp).toLocaleDateString();
+    const snapshotAge = meta ? Date.now() - new Date(meta.timestamp).getTime() : null;
+    const stale = snapshotAge === null || snapshotAge > STALE_MS;
+    if (stale) {
       console.log();
-      console.log(
-        `  ${chalk.yellow('⚠')}  Snapshot for ${chalk.cyan(options.source)} is ${ageStr} old (taken: ${snapshotDate}).`,
-      );
+      if (snapshotAge !== null) {
+        const days = Math.floor(snapshotAge / (1000 * 60 * 60 * 24));
+        const ageStr = `${days} day${days === 1 ? '' : 's'}`;
+        const snapshotDate = new Date(meta!.timestamp).toLocaleDateString();
+        console.log(
+          `  ${chalk.yellow('⚠')}  Snapshot for ${chalk.cyan(options.source)} is ${ageStr} old (taken: ${snapshotDate}).`,
+        );
+      } else {
+        console.log(
+          `  ${chalk.yellow('⚠')}  Snapshot metadata for ${chalk.cyan(options.source)} is missing or unreadable; its age cannot be verified.`,
+        );
+      }
       console.log(
         `     Run ${chalk.dim(`'chiral pull --env ${options.source}'`)} to refresh before pushing.`,
       );
@@ -377,27 +387,53 @@ export async function runPush(
   const fingerprints = loadFingerprints(chiralDir);
   if (!fingerprints.envs[options.target]) fingerprints.envs[options.target] = {};
 
+  // Credential map built from every in-scope workflow's nodes (not just the
+  // ones that turn out to need updating) - classification below needs it to
+  // normalize credential names before hashing, so mapped/passthrough pairs
+  // collapse to the same hash and genuine swaps don't.
+  const credentials = loadCredentials(chiralDir);
+  const credMapForHash = buildCredentialMap(
+    snapshotWorkflows.flatMap((wf) => {
+      const nodes = (wf as Record<string, unknown>)['nodes'];
+      return Array.isArray(nodes) ? (nodes as unknown[]) : [];
+    }),
+    options.source,
+    options.target,
+    credentials,
+  );
+
   const classified: WorkflowClassification[] = snapshotWorkflows.map((wf) => {
     const resolvedName = resolveTargetName(workflowMap, options.source, options.target, wf.name);
     const targetMatch = targetByName.get(resolvedName);
     if (!targetMatch) {
-      return { workflow: wf, resolvedName, action: 'would-create', targetActive: false };
+      return { workflow: wf, resolvedName, action: 'would-create', targetActive: false, forceReactivate: false };
+    }
+
+    const tgtEntry = fingerprints.envs[options.target]?.[targetMatch.id];
+
+    // A prior push updated this workflow but failed to reactivate it - force
+    // re-evaluation (and a reactivation attempt) regardless of version/hash.
+    if (tgtEntry?.needsReactivation) {
+      return { workflow: wf, resolvedName, action: 'would-update', targetActive: targetMatch.active, forceReactivate: true };
     }
 
     // Fast path: versionId match means definitely unchanged
     if ((wf as Record<string, unknown>)['versionId'] === targetMatch.versionId) {
-      return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
+      return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active, forceReactivate: false };
     }
 
     // Fingerprint path: compute source hash from snapshot (no API call needed),
-    // compare against stored target hash if available
-    const srcHash = computeContentHash(wf);
-    const tgtEntry = fingerprints.envs[options.target]?.[targetMatch.id];
+    // compare against stored target hash if available. Normalize credential
+    // names to the target env first, mirroring the remappedWorkflow that the
+    // stored target hash was computed from (see SM1/S1).
+    const srcHash = computeContentHash(
+      applyCredentialMap(wf, credMapForHash),
+    );
     if (tgtEntry && srcHash === tgtEntry.contentHash) {
-      return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active };
+      return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active, forceReactivate: false };
     }
 
-    return { workflow: wf, resolvedName, action: 'would-update', targetActive: targetMatch.active };
+    return { workflow: wf, resolvedName, action: 'would-update', targetActive: targetMatch.active, forceReactivate: false };
   });
 
   // ── Credential map ────────────────────────────────────────────────────────
@@ -408,7 +444,6 @@ export async function runPush(
     const nodes = (c.workflow as Record<string, unknown>)['nodes'];
     if (Array.isArray(nodes)) allNodes.push(...(nodes as unknown[]));
   }
-  const credentials = loadCredentials(chiralDir);
   const credMap = buildCredentialMap(allNodes, options.source, options.target, credentials);
   const tableMap = loadTableMap(chiralDir);
 
@@ -799,7 +834,13 @@ export async function runPush(
 
   // ── Apply changes ──────────────────────────────────────────────────────
   if (outputMode === 'human') console.log();
-  const results = { created: [] as string[], updated: [] as string[], skipped: [] as string[], failed: [] as Array<{ name: string; error: string }> };
+  const results = {
+    created: [] as string[],
+    updated: [] as string[],
+    skipped: [] as string[],
+    failed: [] as Array<{ name: string; error: string }>,
+    reactivationFailed: [] as Array<{ name: string; error: string }>,
+  };
   let mapDirty = false;
   let fingerprintsDirty = false;
 
@@ -895,36 +936,73 @@ export async function runPush(
           // Best-effort restore so a failed update doesn't leave a previously
           // active workflow stuck deactivated.
           if (targetWorkflow.active) {
-            await targetClient.activateWorkflow(targetWorkflow.id).catch(() => undefined);
+            try {
+              await targetClient.activateWorkflow(targetWorkflow.id);
+            } catch (restoreErr) {
+              const restoreMsg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+              console.error(`  ${chalk.yellow('⚠')}  ${c.resolvedName} is now inactive - manual reactivation needed (restore failed: ${restoreMsg})`);
+            }
           }
           throw updateErr;
         }
-        fingerprints.envs[options.target][targetWorkflow.id] = {
-          name: c.resolvedName,
-          versionId: updateResult.versionId,
-          contentHash: computeContentHash(remappedWorkflow),
-          structureHash: computeStructureHash(remappedWorkflow),
-          updatedAt: new Date().toISOString(),
-        };
-        fingerprintsDirty = true;
-
         // Auto-register workflow map entry with IDs from both envs
         registerWorkflowMapEntry(workflowMap, c, options.source, options.target, targetWorkflow.id);
         mapDirty = true;
 
-        // Reactivate if was active and --no-activate not set
-        if (targetWorkflow.active && !options.noActivate) {
-          await targetClient.activateWorkflow(targetWorkflow.id);
-          if (outputMode === 'human') {
-            console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}  ${chalk.dim('(reactivated)')}`);
+        // Reactivate if it was active before this push, or a prior push left it
+        // inactive after a successful update, and --no-activate not set.
+        const shouldReactivate = (targetWorkflow.active || c.forceReactivate) && !options.noActivate;
+
+        if (shouldReactivate) {
+          try {
+            await targetClient.activateWorkflow(targetWorkflow.id);
+            fingerprints.envs[options.target][targetWorkflow.id] = {
+              name: c.resolvedName,
+              versionId: updateResult.versionId,
+              contentHash: computeContentHash(remappedWorkflow),
+              structureHash: computeStructureHash(remappedWorkflow),
+              updatedAt: new Date().toISOString(),
+            };
+            fingerprintsDirty = true;
+            if (outputMode === 'human') {
+              console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}  ${chalk.dim('(reactivated)')}`);
+            }
+            results.updated.push(c.workflow.name);
+          } catch (reactivateErr) {
+            // The update succeeded but the workflow is now left inactive. Do not
+            // record a "current" fingerprint - mark it so the next push
+            // re-attempts reactivation instead of reporting "up to date".
+            const reactivateMsg = reactivateErr instanceof Error ? reactivateErr.message : String(reactivateErr);
+            fingerprints.envs[options.target][targetWorkflow.id] = {
+              name: c.resolvedName,
+              versionId: updateResult.versionId,
+              contentHash: computeContentHash(remappedWorkflow),
+              structureHash: computeStructureHash(remappedWorkflow),
+              updatedAt: new Date().toISOString(),
+              needsReactivation: true,
+            };
+            fingerprintsDirty = true;
+            if (outputMode === 'human') {
+              console.log(`  ${chalk.yellow('⚠')}  Updated  ${c.resolvedName}  ${chalk.dim('(reactivation failed - manual reactivation needed)')}`);
+              console.log(`    ${chalk.dim(reactivateMsg)}`);
+            }
+            results.updated.push(c.workflow.name);
+            results.reactivationFailed.push({ name: c.workflow.name, error: reactivateMsg });
           }
         } else {
+          fingerprints.envs[options.target][targetWorkflow.id] = {
+            name: c.resolvedName,
+            versionId: updateResult.versionId,
+            contentHash: computeContentHash(remappedWorkflow),
+            structureHash: computeStructureHash(remappedWorkflow),
+            updatedAt: new Date().toISOString(),
+          };
+          fingerprintsDirty = true;
           if (outputMode === 'human') {
             console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}`);
           }
+          results.updated.push(c.workflow.name);
         }
-
-        results.updated.push(c.workflow.name);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -968,6 +1046,7 @@ export async function runPush(
       updated: results.updated,
       skipped: results.skipped,
       failed: results.failed,
+      reactivation_failed: results.reactivationFailed,
       credential_map: credMap.map(({ sourceName, targetName, status }) => ({
         sourceName, targetName, status,
       })),

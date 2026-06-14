@@ -190,6 +190,7 @@ describe('chiral push (integration)', () => {
 
     let targetWorkflowId: string | undefined;
     let targetCred: { id: string; name: string } | undefined;
+    let rotatedCred: { id: string; name: string } | undefined;
 
     try {
       const { config, chiralDir } = loadConfigAndDir(repo.dir);
@@ -291,6 +292,8 @@ describe('chiral push (integration)', () => {
       const dtIdAfter = (dtNodeAfter['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
       expect(dtIdAfter['value']).toBe('tgt-table-1');
       expect(dtIdAfter['cachedResultUrl']).toBeUndefined();
+      // S4: the source-env display name must not leak to the target.
+      expect(dtIdAfter['cachedResultName']).toBe('Target Table');
 
       const versionAfterRun1 = afterRun1.versionId;
 
@@ -305,9 +308,45 @@ describe('chiral push (integration)', () => {
       const afterRun2 = await client.getWorkflow(targetWorkflowId);
       expect(afterRun2.versionId).toBe(versionAfterRun1);
       expect(afterRun2.active).toBe(true);
+
+      // S1: a genuine credential swap (same type, no map entry - passthrough)
+      // must be detected as a real change, not skipped.
+      const rotatedCredName = `${RUN_ID_PREFIX}-cred-rotated`;
+      rotatedCred = await createCredential(url, apiKey, rotatedCredName, 'httpBasicAuth', {
+        user: 'chiral',
+        password: 'chiral-secret-2',
+      });
+
+      writeSourceSnapshot(chiralDir, 'dev', [
+        {
+          id: `${RUN_ID_PREFIX}-push-maps-fixture`,
+          name: wfName,
+          nodes: [
+            { ...sourceNodes[0], credentials: { httpBasicAuth: { id: 'src-cred-id-2', name: rotatedCredName } } },
+            sourceNodes[1],
+          ],
+          connections: {},
+          settings: {},
+        } as unknown as SnapshotWorkflow,
+      ]);
+
+      const run3 = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+        cwd: repo.dir,
+        env,
+      });
+      expect(run3.exitCode).toBe(0);
+      expect(run3.stdout).toContain('Updated');
+
+      const afterRun3 = await client.getWorkflow(targetWorkflowId);
+      const httpNodeAfter3 = (afterRun3.nodes as Array<Record<string, unknown>>).find(
+        (n) => n['type'] === 'n8n-nodes-base.httpRequest',
+      )!;
+      const httpCredsAfter3 = (httpNodeAfter3['credentials'] as Record<string, { name: string }>)['httpBasicAuth'];
+      expect(httpCredsAfter3.name).toBe(rotatedCredName);
     } finally {
       if (targetWorkflowId) await deleteWorkflow(url, apiKey, targetWorkflowId);
       if (targetCred) await deleteCredential(url, apiKey, targetCred.id);
+      if (rotatedCred) await deleteCredential(url, apiKey, rotatedCred.id);
       repo.cleanup();
       rmSync(projectsDir, { recursive: true, force: true });
     }

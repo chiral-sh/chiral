@@ -10,6 +10,7 @@ import {
   TablesMap,
   TableEntry,
 } from '../../../src/state/tables.js';
+import { computeContentHash } from '../../../src/state/fingerprints.js';
 import { UserError } from '../../../src/lib/errors.js';
 
 vi.mock('node:fs', async () => {
@@ -228,6 +229,51 @@ describe('applyTableMap', () => {
     const { workflow: result, unmappedTables } = applyTableMap(workflow, FULL_MAP, 'dev', 'prod');
     expect(result).toBe(workflow);
     expect(unmappedTables).toEqual([]);
+  });
+});
+
+describe('applyTableMap mapped round-trip + cachedResultName drift', () => {
+  const datatableNode = (value: string, extra: Record<string, unknown> = {}) => ({
+    name: 'Read Table',
+    type: 'n8n-nodes-base.datatable',
+    parameters: {
+      dataTableId: { __rl: true, value, cachedResultUrl: 'https://example.com/cache', ...extra },
+    },
+  });
+
+  it('mapped table round-trip: rewrites cachedResultName to the target table name', () => {
+    const workflow = { nodes: [datatableNode('dev-id-1', { cachedResultName: 'Contacts Dev' })] };
+    const { workflow: result, unmappedTables } = applyTableMap(workflow, FULL_MAP, 'dev', 'prod');
+    const node = (result['nodes'] as Record<string, unknown>[])[0];
+    const params = node['parameters'] as Record<string, unknown>;
+    const dataTableId = params['dataTableId'] as Record<string, unknown>;
+    expect(dataTableId['value']).toBe('prod-id-1');
+    expect(dataTableId['cachedResultName']).toBe('Contacts Prod');
+    expect(unmappedTables).toEqual([]);
+  });
+
+  it('mapped table with no target name: deletes cachedResultName rather than leaking source label', () => {
+    const mapNoTargetName: TablesMap = {
+      version: 1,
+      tables: {
+        orders: {
+          dev: { id: 'dev-id-2', name: 'Orders Dev' },
+          prod: { id: 'prod-id-2', name: 'Orders Prod' },
+        },
+      },
+    };
+    const workflow = { nodes: [datatableNode('dev-id-2', { cachedResultName: 'Orders Dev' })] };
+    const { workflow: result } = applyTableMap(workflow, mapNoTargetName, 'dev', 'prod');
+    const node = (result['nodes'] as Record<string, unknown>[])[0];
+    const params = node['parameters'] as Record<string, unknown>;
+    const dataTableId = params['dataTableId'] as Record<string, unknown>;
+    expect(dataTableId['cachedResultName']).toBe('Orders Prod');
+  });
+
+  it('cached-name-only delta does not change the content hash (drift suppressed)', () => {
+    const wfA = { name: 'wf', nodes: [{ id: 'n1', ...datatableNode('prod-id-1', { cachedResultName: 'Contacts Prod' }) }] };
+    const wfB = { name: 'wf', nodes: [{ id: 'n1', ...datatableNode('prod-id-1', { cachedResultName: 'Contacts (Renamed)' }) }] };
+    expect(computeContentHash(wfA)).toBe(computeContentHash(wfB));
   });
 });
 
