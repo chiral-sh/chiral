@@ -75,7 +75,7 @@ function extractTableIds(workflows: SnapshotWorkflow[]): Map<string, FoundTableR
     for (const node of nodes) {
       if (typeof node !== 'object' || node === null) continue;
       const n = node as Record<string, unknown>;
-      if (n['type'] !== 'n8n-nodes-base.datatable') continue;
+      if (n['type'] !== 'n8n-nodes-base.dataTable') continue;
       const params = n['parameters'] as Record<string, unknown> | undefined;
       const dtId = params?.['dataTableId'] as Record<string, unknown> | undefined;
       if (!dtId || dtId['__rl'] !== true) continue;

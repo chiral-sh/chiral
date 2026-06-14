@@ -175,7 +175,7 @@ describe('removeTableEnvEntry', () => {
 describe('applyTableMap', () => {
   const datatableNode = (value: string, extra: Record<string, unknown> = {}) => ({
     name: 'Read Table',
-    type: 'n8n-nodes-base.datatable',
+    type: 'n8n-nodes-base.dataTable',
     parameters: {
       dataTableId: { __rl: true, value, cachedResultUrl: 'https://example.com/cache', ...extra },
     },
@@ -235,7 +235,7 @@ describe('applyTableMap', () => {
 describe('applyTableMap mapped round-trip + cachedResultName drift', () => {
   const datatableNode = (value: string, extra: Record<string, unknown> = {}) => ({
     name: 'Read Table',
-    type: 'n8n-nodes-base.datatable',
+    type: 'n8n-nodes-base.dataTable',
     parameters: {
       dataTableId: { __rl: true, value, cachedResultUrl: 'https://example.com/cache', ...extra },
     },

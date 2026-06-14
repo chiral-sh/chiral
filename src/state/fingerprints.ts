@@ -81,7 +81,7 @@ export function normalizeNode(node: Record<string, unknown>): Record<string, unk
     normalized = { ...normalized, credentials: normalizedCreds };
   }
 
-  if (normalized['type'] === 'n8n-nodes-base.datatable') {
+  if (normalized['type'] === 'n8n-nodes-base.dataTable') {
     const params = normalized['parameters'];
     if (typeof params === 'object' && params !== null) {
       const paramsObj = params as Record<string, unknown>;

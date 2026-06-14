@@ -1615,7 +1615,7 @@ describe('runPull - table map auto-heal', () => {
   const DATATABLE_NODE = (tableId: string, cachedResultName: string) => ({
     id: 'n1',
     name: 'Get rows',
-    type: 'n8n-nodes-base.datatable',
+    type: 'n8n-nodes-base.dataTable',
     parameters: {
       dataTableId: {
         __rl: true,

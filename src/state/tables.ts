@@ -68,7 +68,7 @@ export function removeTableEnvEntry(
   }
 }
 
-/** Collects `n8n-nodes-base.datatable` references: source table ID → cachedResultName (if present). */
+/** Collects `n8n-nodes-base.dataTable` references: source table ID → cachedResultName (if present). */
 export function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<string, string | undefined> {
   const refs = new Map<string, string | undefined>();
   for (const wf of workflows) {
@@ -77,7 +77,7 @@ export function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<stri
     for (const node of nodes) {
       if (typeof node !== 'object' || node === null) continue;
       const nodeObj = node as Record<string, unknown>;
-      if (nodeObj['type'] !== 'n8n-nodes-base.datatable') continue;
+      if (nodeObj['type'] !== 'n8n-nodes-base.dataTable') continue;
 
       const params = nodeObj['parameters'];
       if (typeof params !== 'object' || params === null) continue;
@@ -107,7 +107,7 @@ export interface TableWarning {
   affectedNodes: string[];
 }
 
-/** Remaps `n8n-nodes-base.datatable` node references from `sourceEnv` ids to `targetEnv` ids using `tableMap`. */
+/** Remaps `n8n-nodes-base.dataTable` node references from `sourceEnv` ids to `targetEnv` ids using `tableMap`. */
 export function applyTableMap(
   workflow: Record<string, unknown>,
   tableMap: TablesMap,
@@ -123,7 +123,7 @@ export function applyTableMap(
     if (typeof node !== 'object' || node === null) return node;
     const nodeObj = node as Record<string, unknown>;
 
-    if (nodeObj['type'] !== 'n8n-nodes-base.datatable') return node;
+    if (nodeObj['type'] !== 'n8n-nodes-base.dataTable') return node;
 
     const params = nodeObj['parameters'];
     if (typeof params !== 'object' || params === null) return node;

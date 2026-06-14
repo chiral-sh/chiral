@@ -97,7 +97,7 @@ describe('normalizeNode', () => {
     const node: Record<string, unknown> = {
       id: 'node-3',
       name: 'Data Table',
-      type: 'n8n-nodes-base.datatable',
+      type: 'n8n-nodes-base.dataTable',
       typeVersion: 1,
       position: [0, 0],
       parameters: {
@@ -123,7 +123,7 @@ describe('normalizeNode', () => {
     const node: Record<string, unknown> = {
       id: 'node-4',
       name: 'Data Table',
-      type: 'n8n-nodes-base.datatable',
+      type: 'n8n-nodes-base.dataTable',
       typeVersion: 1,
       position: [0, 0],
       parameters: {
@@ -261,7 +261,7 @@ describe('computeContentHash', () => {
           {
             id: 'node-3',
             name: 'Data Table',
-            type: 'n8n-nodes-base.datatable',
+            type: 'n8n-nodes-base.dataTable',
             typeVersion: 1,
             position: [0, 0],
             parameters: {
@@ -285,7 +285,7 @@ describe('computeContentHash', () => {
           {
             id: 'node-3',
             name: 'Data Table',
-            type: 'n8n-nodes-base.datatable',
+            type: 'n8n-nodes-base.dataTable',
             typeVersion: 1,
             position: [0, 0],
             parameters: {

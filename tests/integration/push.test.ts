@@ -205,6 +205,7 @@ describe('chiral push (integration)', () => {
       targetCred = await createCredential(url, apiKey, targetCredName, 'httpBasicAuth', {
         user: 'chiral',
         password: 'chiral-secret',
+        allowedDomains: '',
       });
 
       writeCredentials(chiralDir, {
@@ -224,6 +225,14 @@ describe('chiral push (integration)', () => {
 
       const sourceNodes = [
         {
+          id: '0',
+          name: 'Schedule Trigger',
+          type: 'n8n-nodes-base.scheduleTrigger',
+          typeVersion: 1.2,
+          position: [-200, 0] as [number, number],
+          parameters: { rule: { interval: [{ field: 'days' }] } },
+        },
+        {
           id: '1',
           name: 'HTTP',
           type: 'n8n-nodes-base.httpRequest',
@@ -237,7 +246,7 @@ describe('chiral push (integration)', () => {
         {
           id: '2',
           name: 'Read Table',
-          type: 'n8n-nodes-base.datatable',
+          type: 'n8n-nodes-base.dataTable',
           typeVersion: 1,
           position: [200, 0] as [number, number],
           parameters: {
@@ -256,7 +265,16 @@ describe('chiral push (integration)', () => {
       // the deactivate -> update -> reactivate path.
       const created = await client.createWorkflow({
         name: wfName,
-        nodes: [],
+        nodes: [
+          {
+            id: 'trigger',
+            name: 'Schedule Trigger',
+            type: 'n8n-nodes-base.scheduleTrigger',
+            typeVersion: 1.2,
+            position: [0, 0] as [number, number],
+            parameters: { rule: { interval: [{ field: 'days' }] } },
+          },
+        ],
         connections: {},
         settings: {},
       } as unknown as WorkflowFull);
@@ -288,7 +306,7 @@ describe('chiral push (integration)', () => {
       const httpCreds = (httpNodeAfter['credentials'] as Record<string, { name: string }>)['httpBasicAuth'];
       expect(httpCreds.name).toBe(targetCredName);
 
-      const dtNodeAfter = nodesAfterRun1.find((n) => n['type'] === 'n8n-nodes-base.datatable')!;
+      const dtNodeAfter = nodesAfterRun1.find((n) => n['type'] === 'n8n-nodes-base.dataTable')!;
       const dtIdAfter = (dtNodeAfter['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
       expect(dtIdAfter['value']).toBe('tgt-table-1');
       expect(dtIdAfter['cachedResultUrl']).toBeUndefined();
@@ -315,6 +333,7 @@ describe('chiral push (integration)', () => {
       rotatedCred = await createCredential(url, apiKey, rotatedCredName, 'httpBasicAuth', {
         user: 'chiral',
         password: 'chiral-secret-2',
+        allowedDomains: '',
       });
 
       writeSourceSnapshot(chiralDir, 'dev', [
@@ -322,8 +341,9 @@ describe('chiral push (integration)', () => {
           id: `${RUN_ID_PREFIX}-push-maps-fixture`,
           name: wfName,
           nodes: [
-            { ...sourceNodes[0], credentials: { httpBasicAuth: { id: 'src-cred-id-2', name: rotatedCredName } } },
-            sourceNodes[1],
+            sourceNodes[0],
+            { ...sourceNodes[1], credentials: { httpBasicAuth: { id: 'src-cred-id-2', name: rotatedCredName } } },
+            sourceNodes[2],
           ],
           connections: {},
           settings: {},

@@ -1452,7 +1452,7 @@ function makeSnapshotWfWithDataTable(
   const nodes = tableNodes.map((t) => ({
     id: `node-${t.nodeName}`,
     name: t.nodeName,
-    type: 'n8n-nodes-base.datatable',
+    type: 'n8n-nodes-base.dataTable',
     parameters: {
       dataTableId: {
         __rl: true,
