@@ -52,7 +52,8 @@ export async function syncToRemote(
     }
 
     const status = await git.status();
-    if (status.staged.length === 0) {
+    const stagedChiral = status.staged.filter((p) => toStage.includes(p));
+    if (stagedChiral.length === 0) {
       return { skipped: false, success: true, nothingToCommit: true };
     }
 

@@ -48,7 +48,7 @@ function makeConfig(gitSync?: Config['gitSync']): Config {
 beforeEach(() => {
   vi.clearAllMocks();
   mockExistsSync.mockReturnValue(true);
-  mockStatus.mockResolvedValue({ staged: ['some-file'] });
+  mockStatus.mockResolvedValue({ staged: ['.chiral/workflows.json'] });
   mockAdd.mockResolvedValue(undefined);
   mockCommit.mockResolvedValue(undefined);
   mockPush.mockResolvedValue(undefined);
@@ -125,6 +125,15 @@ describe('syncToRemote', () => {
     await syncToRemote('/project/.chiral', config, 'msg');
     const stagedPaths: string[] = mockAdd.mock.calls[0][0] as string[];
     expect(stagedPaths.every((p) => !p.includes('snapshots'))).toBe(true);
+  });
+
+  it('reports nothingToCommit when only an unrelated file is staged', async () => {
+    const config = makeConfig({ enabled: true, remote: 'origin', branch: 'main' });
+    mockStatus.mockResolvedValue({ staged: ['unrelated.txt'] });
+    const result = await syncToRemote('/project/.chiral', config, 'msg');
+    expect(result.nothingToCommit).toBe(true);
+    expect(mockCommit).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it('commits only the staged .chiral pathspec, not the whole index', async () => {
