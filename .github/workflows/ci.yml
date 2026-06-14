@@ -74,6 +74,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@chiral.sh"
+          git config --global user.name "Chiral CI"
+
       - name: Run integration tests
         run: pnpm test:integration
 
@@ -96,6 +101,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@chiral.sh"
+          git config --global user.name "Chiral CI"
 
       - name: Build
         run: pnpm build
