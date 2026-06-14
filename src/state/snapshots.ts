@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
+import { writeJsonAtomic } from './atomic.js';
 import {
   normalizeWorkflowSnapshot,
   NORMALIZATION_VERSION,
@@ -69,11 +70,7 @@ export function writeSnapshot(
   const output = { id: workflow.id, ...normalized.workflow };
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, `${workflow.id}.json`),
-      JSON.stringify(output, null, 2),
-      'utf-8',
-    );
+    writeJsonAtomic(join(dir, `${workflow.id}.json`), output);
   } catch {
     throw new UserError(`Could not write snapshot for workflow "${workflow.id}"`);
   }
@@ -171,23 +168,33 @@ export function findLatestDeploymentForEnv(
   return undefined;
 }
 
+export interface ReadAllWorkflowsResult {
+  workflows: SnapshotWorkflow[];
+  corruptCount: number;
+}
+
 export function readAllWorkflowsInDeployment(
   chiralDir: string,
   deploymentId: string,
-): SnapshotWorkflow[] {
+): ReadAllWorkflowsResult {
   const dir = join(chiralDir, 'snapshots', deploymentId);
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) return { workflows: [], corruptCount: 0 };
   const workflows: SnapshotWorkflow[] = [];
+  let corruptCount = 0;
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'meta.json')) {
     try {
       const raw: unknown = JSON.parse(readFileSync(join(dir, file), 'utf-8'));
       const result = SnapshotWorkflowSchema.safeParse(raw);
-      if (result.success) workflows.push(result.data);
+      if (result.success) {
+        workflows.push(result.data);
+      } else {
+        corruptCount++;
+      }
     } catch {
-      // skip corrupted snapshot files - pull will overwrite them
+      corruptCount++;
     }
   }
-  return workflows;
+  return { workflows, corruptCount };
 }
 
 export function pruneSnapshots(chiralDir: string, keep: number): number {

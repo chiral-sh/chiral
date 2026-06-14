@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
+import { writeJsonAtomic } from './atomic.js';
 
 export const WorkflowEntrySchema = z.object({
   name: z.string().min(1),
@@ -73,11 +74,7 @@ export function loadWorkflowMapRequired(chiralDir: string): WorkflowMap {
 
 export function writeWorkflowMap(chiralDir: string, data: WorkflowMap): void {
   const path = join(chiralDir, 'workflows.json');
-  try {
-    writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-  } catch {
-    throw new UserError(`Could not write to ${path}`);
-  }
+  writeJsonAtomic(path, data);
 }
 
 // Returns the workflow name in targetEnv for a workflow whose name in sourceEnv is sourceName.

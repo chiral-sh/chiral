@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
+import { writeJsonAtomic } from './atomic.js';
 import {
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
@@ -44,11 +45,7 @@ export function loadCredentials(chiralDir: string): Credentials {
 
 export function writeCredentials(chiralDir: string, data: Credentials): void {
   const credPath = join(chiralDir, 'credentials.json');
-  try {
-    writeFileSync(credPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-  } catch {
-    throw new UserError(`Could not write to ${credPath}`);
-  }
+  writeJsonAtomic(credPath, data);
 }
 
 // ── Credential remapping ───────────────────────────────────────────────────────
@@ -176,7 +173,7 @@ export function extractCredentialsFromSnapshots(
 
     let workflows: SnapshotWorkflow[];
     try {
-      workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+      workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId).workflows;
     } catch {
       continue;
     }
