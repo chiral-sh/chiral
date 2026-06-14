@@ -292,7 +292,7 @@ describe('runStatus — unmapped Data Table IDs', () => {
       name: 'Workflow 0',
       nodes: [
         {
-          type: 'n8n-nodes-base.datatable',
+          type: 'n8n-nodes-base.dataTable',
           parameters: {
             dataTableId: { __rl: true, value: tableId, mode: 'list', cachedResultName },
           },

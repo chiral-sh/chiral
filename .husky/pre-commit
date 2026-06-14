@@ -1,1 +1,1 @@
-pnpm typecheck && pnpm lint && pnpm test
+pnpm typecheck && pnpm lint && FORCE_COLOR=0 pnpm test

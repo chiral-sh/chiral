@@ -281,7 +281,7 @@ describe('runTableList', () => {
       active: true,
       nodes: [
         {
-          type: 'n8n-nodes-base.datatable',
+          type: 'n8n-nodes-base.dataTable',
           parameters: {
             dataTableId: {
               __rl: true,
@@ -322,7 +322,7 @@ describe('runTableList', () => {
       active: true,
       nodes: [
         {
-          type: 'n8n-nodes-base.datatable',
+          type: 'n8n-nodes-base.dataTable',
           parameters: {
             dataTableId: { __rl: true, value: 'aB3kLm9nPq', cachedResultName: 'orders' },
           },
@@ -361,7 +361,7 @@ describe('runTableList', () => {
       active: true,
       nodes: [
         {
-          type: 'n8n-nodes-base.datatable',
+          type: 'n8n-nodes-base.dataTable',
           parameters: {
             dataTableId: {
               __rl: true,

@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight, plural } from '../lib/cli.js';
+import { padRight, plural, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMapRequired,
@@ -53,7 +53,7 @@ function checkNameConflict(
 function lookupSnapshotId(chiralDir: string, env: string, name: string): string | undefined {
   const dId = findLatestDeploymentForEnv(chiralDir, env);
   if (!dId) return undefined;
-  return readAllWorkflowsInDeployment(chiralDir, dId).find((w) => w.name === name)?.id;
+  return readAllWorkflowsInDeployment(chiralDir, dId).workflows.find((w) => w.name === name)?.id;
 }
 
 interface ParsedArgs {
@@ -281,7 +281,7 @@ export async function runWorkflowMap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       match_method: 'manual',
       match_score: null,
     });
@@ -335,7 +335,7 @@ export async function runWorkflowMap(
   for (const env of envs) {
     const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
     if (!deploymentId) continue;
-    const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+    const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
     snapshotWorkflowsCache.set(env, workflows.map((w) => ({ name: w.name, id: w.id })));
     for (const wf of workflows) {
       if (!isAlreadyMapped(map, env, wf.name)) {
@@ -452,7 +452,7 @@ export async function runWorkflowMap(
           workflow_ids: [],
           result: 'success',
           error: null,
-          chiral_version: '0.1.0',
+          chiral_version: getChiralVersion(),
           match_method: 'manual',
           match_score: null,
         });
@@ -514,7 +514,7 @@ async function runWorkflowPrune(
     for (const [env, entry] of Object.entries(envMap)) {
       const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
       if (!deploymentId) continue;
-      const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+      const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
       if (!workflows.some((w) => w.name === entry.name)) {
         stale.push({ logical, env, name: entry.name });
       }
@@ -564,7 +564,7 @@ async function runWorkflowPrune(
         workflow_ids: [],
         result: 'success',
         error: null,
-        chiral_version: '0.1.0',
+        chiral_version: getChiralVersion(),
       });
       console.log(`  ${chalk.green('✓')} Removed "${logical}" → ${env} mapping.`);
       removed++;
@@ -610,7 +610,7 @@ function collectUnmapped(
   for (const env of envs) {
     const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
     if (!deploymentId) continue;
-    const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+    const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
     for (const wf of workflows) {
       if (!isAlreadyMapped(map, env, wf.name)) {
         results.push({ env, name: wf.name, id: wf.id });
@@ -899,7 +899,7 @@ export async function runWorkflowUnmap(
     workflow_ids: [],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   });
 
   if (options.env) {
@@ -1148,7 +1148,7 @@ export async function runWorkflowMatch(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       match_method: 'exact',
       match_score: null,
       resource: 'workflow',

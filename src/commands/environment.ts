@@ -207,7 +207,7 @@ export async function runEnvironmentAdd(
     if (!apiKey) {
       console.log(
         chalk.dim(
-          '  Scopes needed: workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
+          '  Scopes needed: workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate workflow:deactivate\n' +
           '                 credential:list  tag:list  tag:create  (n8n Settings → API)',
         ),
       );

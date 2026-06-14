@@ -12,8 +12,11 @@ const API_KEY_SCOPES = [
   'workflow:create',
   'workflow:update',
   'workflow:activate',
+  'workflow:deactivate',
   'workflow:delete',
   'credential:list',
+  'credential:create',
+  'credential:delete',
   'tag:list',
   'tag:create',
 ];

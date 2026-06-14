@@ -27,22 +27,23 @@ describe('buildStructureIndex', () => {
     expect(buildStructureIndex(undefined).size).toBe(0);
   });
 
-  it('maps display name to structureHash', () => {
+  it('maps workflow id to name and structureHash', () => {
     const env: Fingerprints['envs'][string] = {
       'wf-1': fpEntry('Order Sync', 'sha256:abc'),
     };
     const index = buildStructureIndex(env);
-    expect(index.get('Order Sync')).toBe('sha256:abc');
+    expect(index.get('wf-1')).toEqual({ id: 'wf-1', name: 'Order Sync', structureHash: 'sha256:abc' });
   });
 
-  it('collapses duplicate display names last-wins', () => {
+  it('retains both entries when display names collide', () => {
     const env: Fingerprints['envs'][string] = {
       'wf-1': fpEntry('Dup', 'sha256:first'),
       'wf-2': fpEntry('Dup', 'sha256:second'),
     };
     const index = buildStructureIndex(env);
-    expect(index.get('Dup')).toBe('sha256:second');
-    expect(index.size).toBe(1);
+    expect(index.size).toBe(2);
+    expect(index.get('wf-1')).toEqual({ id: 'wf-1', name: 'Dup', structureHash: 'sha256:first' });
+    expect(index.get('wf-2')).toEqual({ id: 'wf-2', name: 'Dup', structureHash: 'sha256:second' });
   });
 });
 
@@ -108,7 +109,7 @@ describe('matchExact', () => {
     expect(result.unmatchedTarget).toEqual(['Lonely Target']);
   });
 
-  it('collapses duplicate names within one env last-wins without throwing', () => {
+  it('keeps both source entries with duplicate names without throwing', () => {
     const src = buildStructureIndex({
       'wf-1': fpEntry('Dup', 'sha256:first'),
       'wf-2': fpEntry('Dup', 'sha256:second'),
@@ -116,9 +117,26 @@ describe('matchExact', () => {
     const tgt = buildStructureIndex({ 'wf-3': fpEntry('Dup', 'sha256:second') });
     expect(() => matchExact(src, tgt, emptyMap(), 'dev', 'prod')).not.toThrow();
     const result = matchExact(src, tgt, emptyMap(), 'dev', 'prod');
+    // The 'wf-2' source (hash second) matches the lone target; the 'wf-1'
+    // source (hash first) is reported unmatched rather than silently dropped.
     expect(result.matches).toEqual([
       { sourceName: 'Dup', targetName: 'Dup', structureHash: 'sha256:second' },
     ]);
+    expect(result.unmatchedSource).toEqual(['Dup']);
+  });
+
+  it('flags a hash match against a duplicate-named target as ambiguous, not a silent match', () => {
+    const src = buildStructureIndex({ 'wf-1': fpEntry('Dup', 'sha256:abc') });
+    const tgt = buildStructureIndex({
+      'wf-2': fpEntry('Dup', 'sha256:abc'),
+      'wf-3': fpEntry('Dup', 'sha256:other'),
+    });
+    const result = matchExact(src, tgt, emptyMap(), 'dev', 'prod');
+    expect(result.matches).toHaveLength(0);
+    expect(result.ambiguous).toEqual([{ sourceName: 'Dup', targetNames: ['Dup'] }]);
+    // Both duplicate-named target entries are represented — neither is
+    // silently dropped from matching or left unaccounted for.
+    expect(result.unmatchedTarget).toHaveLength(0);
   });
 });
 

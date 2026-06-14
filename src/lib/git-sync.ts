@@ -52,11 +52,12 @@ export async function syncToRemote(
     }
 
     const status = await git.status();
-    if (status.staged.length === 0) {
+    const stagedChiral = status.staged.filter((p) => toStage.includes(p));
+    if (stagedChiral.length === 0) {
       return { skipped: false, success: true, nothingToCommit: true };
     }
 
-    await git.commit(commitMsg);
+    await git.commit(commitMsg, toStage);
 
     // Detect branch mismatch before pushing: if the configured branch doesn't
     // exist locally, git push fails with the cryptic "src refspec does not match any".

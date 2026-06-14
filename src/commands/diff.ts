@@ -5,7 +5,7 @@ import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob, formatAge } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, formatAge, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
@@ -21,6 +21,18 @@ import { renderStatRows, renderNodeGroups, type StatRow } from '../lib/node-diff
 import { pageOutput } from '../lib/pager.js';
 import { listLocksByEnv, type LockFile } from '../state/locks.js';
 import { peekEnvId } from '../state/envs.js';
+import { loadCredentials, buildCredentialMap, applyCredentialMap, type Credentials } from '../state/credentials.js';
+
+// diff is read-only and may run before `chiral init` has set up credentials.json -
+// treat a missing/invalid file as "no mappings configured" (all credentials passthrough)
+// rather than aborting the whole comparison.
+function loadCredentialsOrEmpty(chiralDir: string): Credentials {
+  try {
+    return loadCredentials(chiralDir);
+  } catch {
+    return { version: 1, credentials: {} };
+  }
+}
 
 function formatLockBadgeAge(timestamp: string): { label: string; stale: boolean } {
   const ageSeconds = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
@@ -74,6 +86,12 @@ interface FingerprintContext {
   chiralDir: string;
 }
 
+function toNodes(wf: Record<string, unknown> | null): unknown[] {
+  if (!wf) return [];
+  const nodes = wf['nodes'];
+  return Array.isArray(nodes) ? (nodes as unknown[]) : [];
+}
+
 async function classifyChange(
   src: WorkflowSummary,
   tgt: WorkflowSummary,
@@ -100,8 +118,21 @@ async function classifyChange(
     tgtEntry ? Promise.resolve(null) : ctx.targetClient.getWorkflow(tgt.id),
   ]);
 
-  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcFull as Record<string, unknown>);
-  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtFull as Record<string, unknown>);
+  // Normalize credential names to the target env before hashing, so mapped/
+  // passthrough credential pairs collapse to the same hash while a genuine
+  // credential swap (different name, no mapping) produces a different hash.
+  const credentials = loadCredentialsOrEmpty(ctx.chiralDir);
+  const credMap = buildCredentialMap(
+    [...toNodes(srcFull), ...toNodes(tgtFull)],
+    sourceEnv,
+    targetEnv,
+    credentials,
+  );
+  const srcRemapped = srcFull ? applyCredentialMap(srcFull, credMap) : null;
+  const tgtRemapped = tgtFull ? applyCredentialMap(tgtFull, credMap) : null;
+
+  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcRemapped as Record<string, unknown>);
+  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtRemapped as Record<string, unknown>);
   const srcStructureHash = srcEntry?.structureHash ?? computeStructureHash(srcFull as Record<string, unknown>);
   const tgtStructureHash = tgtEntry?.structureHash ?? computeStructureHash(tgtFull as Record<string, unknown>);
   const now = new Date().toISOString();
@@ -230,7 +261,7 @@ export async function runDiff(
     source_env: options.source,
     target_env: options.target,
     workflow_ids: [] as string[],
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   };
 
   const outputMode = resolveOutputMode(options);
@@ -293,13 +324,24 @@ export async function runDiff(
 
     // Fetch full content and compute node-level diffs for every modified workflow.
     if (diff.modified.length > 0) {
+      const credentials = loadCredentialsOrEmpty(chiralDir);
       await Promise.all(
         diff.modified.map(async (entry) => {
           const [srcFull, tgtFull] = await Promise.all([
             sourceClient.getWorkflow(entry.sourceId),
             targetClient.getWorkflow(entry.targetId),
           ]);
-          entry.nodes = diffWorkflowNodes(tgtFull, srcFull);
+          // Normalize credential names to the target env so a mapped/passthrough
+          // credential pair doesn't show up as a spurious 'credentials' change.
+          const credMap = buildCredentialMap(
+            [...toNodes(srcFull), ...toNodes(tgtFull)],
+            options.source,
+            options.target,
+            credentials,
+          );
+          const srcRemapped = applyCredentialMap(srcFull, credMap);
+          const tgtRemapped = applyCredentialMap(tgtFull, credMap);
+          entry.nodes = diffWorkflowNodes(tgtRemapped, srcRemapped);
         }),
       );
     }

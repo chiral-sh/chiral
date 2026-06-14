@@ -384,7 +384,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
 
     if (deploymentId) {
       try {
-        const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+        const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
         unmappedTables = countUnmappedTableIds(tableMap, envName, workflows as unknown as { nodes?: unknown }[]);
       } catch {
         // unreadable snapshot workflows — skip unmapped-table detection for this env
@@ -418,8 +418,8 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       const latestMeta = readSnapshotMeta(chiralDir, latestDepId);
       const prevMeta = readSnapshotMeta(chiralDir, prevDepId);
       if (latestMeta && prevMeta) {
-        const latestWorkflows = readAllWorkflowsInDeployment(chiralDir, latestDepId);
-        const prevWorkflows = readAllWorkflowsInDeployment(chiralDir, prevDepId);
+        const latestWorkflows = readAllWorkflowsInDeployment(chiralDir, latestDepId).workflows;
+        const prevWorkflows = readAllWorkflowsInDeployment(chiralDir, prevDepId).workflows;
         drift = computeDrift(latestMeta, prevMeta, latestWorkflows, prevWorkflows);
       }
     }

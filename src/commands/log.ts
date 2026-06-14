@@ -1,13 +1,13 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, watch as fsWatch } from 'node:fs';
+import { watch as fsWatch } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfigAndDir } from '../lib/config.js';
 import { UserError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { visibleLen, padRight } from '../lib/cli.js';
-import { readAuditLog, AuditEntrySchema, AuditActionSchema, type AuditEntry } from '../state/audit.js';
+import { readAuditLog, AuditActionSchema, type AuditEntry } from '../state/audit.js';
 import { readStatusSentinel } from '../state/sentinel.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -257,40 +257,6 @@ function printWithPager(content: string, rowCount: number): void {
   console.log(content);
 }
 
-// ── Lenient audit read ────────────────────────────────────────────────────────
-
-function readAuditLogLenient(chiralDir: string): AuditEntry[] {
-  const auditPath = join(chiralDir, 'audit.jsonl');
-  if (!existsSync(auditPath)) return [];
-
-  const lines = readFileSync(auditPath, 'utf-8')
-    .split('\n')
-    .filter((l) => l.trim() !== '');
-
-  const entries: AuditEntry[] = [];
-  let skipped = 0;
-
-  for (const line of lines) {
-    try {
-      const raw = JSON.parse(line) as unknown;
-      const result = AuditEntrySchema.safeParse(raw);
-      if (result.success) {
-        entries.push(result.data);
-      } else {
-        skipped++;
-      }
-    } catch {
-      skipped++;
-    }
-  }
-
-  if (skipped > 0) {
-    console.error(`  Warning: skipped ${skipped} malformed line(s) in audit.jsonl`);
-  }
-
-  return entries;
-}
-
 // ── Run function ──────────────────────────────────────────────────────────────
 
 export async function runLog(options: LogOptions, _cwd = process.cwd()): Promise<void> {
@@ -314,17 +280,8 @@ export async function runLog(options: LogOptions, _cwd = process.cwd()): Promise
       sinceDate = parseSinceDuration(options.since, chiralDir);
     }
 
-    // Load audit entries (lenient — tolerate corruption)
-    let allEntries: AuditEntry[];
-    try {
-      allEntries = readAuditLog(chiralDir);
-    } catch (err) {
-      if (err instanceof UserError) {
-        allEntries = readAuditLogLenient(chiralDir);
-      } else {
-        throw err;
-      }
-    }
+    // Load audit entries
+    const allEntries: AuditEntry[] = readAuditLog(chiralDir);
 
     // Entries in file are oldest-first; reverse for newest-first display
     const reversed = [...allEntries].reverse();

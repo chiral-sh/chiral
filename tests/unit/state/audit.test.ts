@@ -53,6 +53,27 @@ describe('writeAuditEntry', () => {
   });
 });
 
+describe('concurrent writeAuditEntry calls', () => {
+  it('keeps all lines well-formed when many writes are interleaved', async () => {
+    vol.fromJSON({ '/project/.chiral/': null });
+    const count = 25;
+    await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        Promise.resolve().then(() =>
+          writeAuditEntry('/project/.chiral', {
+            ...VALID_ENTRY,
+            event_id: `123e4567-e89b-12d3-a456-42661417${String(i).padStart(4, '0')}`,
+          })
+        )
+      )
+    );
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(count);
+    const ids = new Set(entries.map((e) => e.event_id));
+    expect(ids.size).toBe(count);
+  });
+});
+
 describe('readAuditLog', () => {
   it('returns empty array when audit.jsonl does not exist', () => {
     vol.fromJSON({ '/project/.chiral/': null });
@@ -76,17 +97,41 @@ describe('readAuditLog', () => {
     expect(entries).toHaveLength(2);
   });
 
-  it('throws UserError on corrupted JSON line', () => {
-    vol.fromJSON({ '/project/.chiral/audit.jsonl': 'not-json\n' });
-    expect(() => readAuditLog('/project/.chiral')).toThrow(UserError);
-    expect(() => readAuditLog('/project/.chiral')).toThrow('corrupted at line 1');
+  it('skips a corrupted JSON line without throwing', () => {
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({ '/project/.chiral/audit.jsonl': `not-json\n${valid}\n` });
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(VALID_ENTRY);
   });
 
-  it('throws UserError on invalid entry schema', () => {
+  it('skips an invalid entry schema without throwing', () => {
     const bad = JSON.stringify({ event_id: 'not-a-uuid', action: 'unknown' });
-    vol.fromJSON({ '/project/.chiral/audit.jsonl': bad + '\n' });
-    expect(() => readAuditLog('/project/.chiral')).toThrow(UserError);
-    expect(() => readAuditLog('/project/.chiral')).toThrow('invalid entry at line 1');
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({ '/project/.chiral/audit.jsonl': `${bad}\n${valid}\n` });
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(VALID_ENTRY);
+  });
+
+  it('skips a git merge-conflict marker line without throwing', () => {
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({
+      '/project/.chiral/audit.jsonl': `${valid}\n<<<<<<< HEAD\n${valid}\n=======\n>>>>>>> branch\n`,
+    });
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(2);
+  });
+
+  it('warns at most once per process for repeated reads with a malformed line', () => {
+    const bad = JSON.stringify({ event_id: 'not-a-uuid', action: 'unknown' });
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({ '/project/dedupe-chiral/audit.jsonl': `${bad}\n${valid}\n` });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    readAuditLog('/project/dedupe-chiral');
+    readAuditLog('/project/dedupe-chiral');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
   });
 
   it('ignores blank lines', () => {

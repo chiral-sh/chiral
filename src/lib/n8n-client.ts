@@ -76,7 +76,7 @@ export class N8nClient {
   private scopeHint(): string {
     return (
       '  Recreate your key at n8n Settings → API with these scopes:\n' +
-      '    workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate\n' +
+      '    workflow:list  workflow:read  workflow:create  workflow:update  workflow:activate  workflow:deactivate\n' +
       '    credential:list  tag:list  tag:create\n' +
       `  Then run: chiral environment configure ${this.envName}`
     );
@@ -235,7 +235,7 @@ export class N8nClient {
   async deactivateWorkflow(id: string): Promise<void> {
     await this.request<void>(
       `/workflows/${id}/deactivate`,
-      { method: 'POST', scope: 'workflow:activate' },
+      { method: 'POST', scope: 'workflow:deactivate' },
     );
   }
 }

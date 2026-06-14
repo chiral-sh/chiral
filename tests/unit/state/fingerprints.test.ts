@@ -86,11 +86,61 @@ describe('normalizeNode', () => {
     expect(result).not.toHaveProperty('typeVersion');
   });
 
-  it('strips credential id but preserves credentials.name', () => {
+  it('strips credential id but keeps name', () => {
     const result = normalizeNode(baseNode);
     const creds = result['credentials'] as Record<string, Record<string, unknown>>;
     expect(creds['httpBasicAuth']).not.toHaveProperty('id');
-    expect(creds['httpBasicAuth']?.['name']).toBe('dev_api_key');
+    expect(creds['httpBasicAuth']).toHaveProperty('name', 'dev_api_key');
+  });
+
+  it('strips dataTableId value and cachedResultUrl for datatable nodes', () => {
+    const node: Record<string, unknown> = {
+      id: 'node-3',
+      name: 'Data Table',
+      type: 'n8n-nodes-base.dataTable',
+      typeVersion: 1,
+      position: [0, 0],
+      parameters: {
+        operation: 'getRows',
+        dataTableId: {
+          __rl: true,
+          value: 'table-dev-123',
+          mode: 'list',
+          cachedResultUrl: 'https://dev.example.com/tables/table-dev-123',
+        },
+      },
+    };
+    const result = normalizeNode(node);
+    const params = result['parameters'] as Record<string, unknown>;
+    const dataTableId = params['dataTableId'] as Record<string, unknown>;
+    expect(dataTableId).not.toHaveProperty('value');
+    expect(dataTableId).not.toHaveProperty('cachedResultUrl');
+    expect(dataTableId['__rl']).toBe(true);
+    expect(dataTableId['mode']).toBe('list');
+  });
+
+  it('leaves dataTableId untouched for __rl !== true (matches collect/remap predicate)', () => {
+    const node: Record<string, unknown> = {
+      id: 'node-4',
+      name: 'Data Table',
+      type: 'n8n-nodes-base.dataTable',
+      typeVersion: 1,
+      position: [0, 0],
+      parameters: {
+        operation: 'getRows',
+        dataTableId: {
+          __rl: false,
+          value: 'table-dev-123',
+          mode: 'id',
+          cachedResultUrl: 'https://dev.example.com/tables/table-dev-123',
+        },
+      },
+    };
+    const result = normalizeNode(node);
+    const params = result['parameters'] as Record<string, unknown>;
+    const dataTableId = params['dataTableId'] as Record<string, unknown>;
+    expect(dataTableId).toHaveProperty('value', 'table-dev-123');
+    expect(dataTableId).toHaveProperty('cachedResultUrl', 'https://dev.example.com/tables/table-dev-123');
   });
 
   it('preserves parameters', () => {
@@ -191,14 +241,65 @@ describe('computeContentHash', () => {
     expect(computeContentHash(withCredId)).toBe(computeContentHash(withDifferentCredId));
   });
 
-  it('returns a different hash when credential name changes', () => {
+  it('returns a different hash when credential name changes (genuine swap; cred-map normalization happens upstream)', () => {
     const wf = makeWorkflow();
     const wfChanged = makeWorkflow();
     const nodes = wfChanged['nodes'] as Record<string, unknown>[];
     (nodes[0]!['credentials'] as Record<string, Record<string, unknown>>)['httpBasicAuth']!['name'] =
       'prod_api_key';
 
+    // computeContentHash itself no longer collapses credential name changes
+    // (S1) - callers must pass a credential-map-normalized workflow first so
+    // that mapped/passthrough pairs collapse before hashing.
     expect(computeContentHash(wf)).not.toBe(computeContentHash(wfChanged));
+  });
+
+  it('returns the same hash when dataTableId.value differs across envs', () => {
+    const makeWithDataTable = (tableId: string, cachedUrl: string) =>
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-3',
+            name: 'Data Table',
+            type: 'n8n-nodes-base.dataTable',
+            typeVersion: 1,
+            position: [0, 0],
+            parameters: {
+              operation: 'getRows',
+              dataTableId: { __rl: true, value: tableId, mode: 'list', cachedResultUrl: cachedUrl },
+            },
+          },
+        ],
+        connections: {},
+      });
+
+    const dev = computeContentHash(makeWithDataTable('table-dev-123', 'https://dev.example.com/tables/table-dev-123'));
+    const prod = computeContentHash(makeWithDataTable('table-prod-456', 'https://prod.example.com/tables/table-prod-456'));
+    expect(dev).toBe(prod);
+  });
+
+  it('returns a different hash when a non-datatable parameter actually changes alongside a mapped table', () => {
+    const makeWithDataTable = (tableId: string, mode: string) =>
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'node-3',
+            name: 'Data Table',
+            type: 'n8n-nodes-base.dataTable',
+            typeVersion: 1,
+            position: [0, 0],
+            parameters: {
+              operation: 'getRows',
+              dataTableId: { __rl: true, value: tableId, mode, cachedResultUrl: 'https://x/' + tableId },
+            },
+          },
+        ],
+        connections: {},
+      });
+
+    const a = computeContentHash(makeWithDataTable('table-1', 'list'));
+    const b = computeContentHash(makeWithDataTable('table-2', 'id'));
+    expect(a).not.toBe(b);
   });
 
   it('returns the same hash regardless of node array order (sorted by node id)', () => {
@@ -331,6 +432,55 @@ describe('computeStructureHash', () => {
     const dev = makeWorkflow({ name: 'Order Processor [DEV]' });
     const prod = makeWorkflow({ name: 'Order Processor' });
     expect(computeStructureHash(dev)).toBe(computeStructureHash(prod));
+  });
+
+  it('distinguishes topologies sharing a node-type multiset and edge-type set (F7)', () => {
+    // Both workflows have nodeTypes [httpRequest, httpRequest, postgres] and
+    // the only edge type pair is httpRequest -> postgres, but the wiring differs:
+    // fan-in (both HTTP nodes feed Postgres) vs. one HTTP node feeding Postgres twice.
+    const fanIn = makeWorkflow({
+      nodes: [
+        { id: 'n1', name: 'HTTP 1', type: 'n8n-nodes-base.httpRequest', typeVersion: 1, position: [0, 0], parameters: {} },
+        { id: 'n2', name: 'HTTP 2', type: 'n8n-nodes-base.httpRequest', typeVersion: 1, position: [0, 100], parameters: {} },
+        { id: 'n3', name: 'Postgres', type: 'n8n-nodes-base.postgres', typeVersion: 2, position: [200, 50], parameters: {} },
+      ],
+      connections: {
+        'HTTP 1': { main: [[{ node: 'Postgres', type: 'main', index: 0 }]] },
+        'HTTP 2': { main: [[{ node: 'Postgres', type: 'main', index: 0 }]] },
+      },
+    });
+
+    const doubleEdge = makeWorkflow({
+      nodes: [
+        { id: 'n1', name: 'HTTP 1', type: 'n8n-nodes-base.httpRequest', typeVersion: 1, position: [0, 0], parameters: {} },
+        { id: 'n2', name: 'HTTP 2', type: 'n8n-nodes-base.httpRequest', typeVersion: 1, position: [0, 100], parameters: {} },
+        { id: 'n3', name: 'Postgres', type: 'n8n-nodes-base.postgres', typeVersion: 2, position: [200, 50], parameters: {} },
+      ],
+      connections: {
+        'HTTP 1': {
+          main: [[
+            { node: 'Postgres', type: 'main', index: 0 },
+            { node: 'Postgres', type: 'main', index: 0 },
+          ]],
+        },
+      },
+    });
+
+    expect(computeStructureHash(fanIn)).not.toBe(computeStructureHash(doubleEdge));
+  });
+
+  it('still treats a pure rename as identical when adjacency multiset matches (invariant §3)', () => {
+    const wfA = makeWorkflow();
+    const wfB = makeWorkflow();
+    const bNodes = wfB['nodes'] as Record<string, unknown>[];
+    const bConns = wfB['connections'] as Record<string, unknown>;
+
+    const oldName = bNodes[0]!['name'] as string;
+    bNodes[0]!['name'] = 'Renamed HTTP Node';
+    bConns['Renamed HTTP Node'] = bConns[oldName];
+    delete bConns[oldName];
+
+    expect(computeStructureHash(wfA)).toBe(computeStructureHash(wfB));
   });
 });
 

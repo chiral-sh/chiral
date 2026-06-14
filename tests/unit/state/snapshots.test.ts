@@ -242,6 +242,13 @@ describe('writeSnapshotMeta / readSnapshotMeta', () => {
     expect(result?.normalizationVersion).toBe(1);
   });
 
+  it('writes meta.json atomically, leaving no leftover tmp files', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META);
+    const files = vol.readdirSync(`/fd/snapshots/${DEPLOYMENT_A}`) as string[];
+    expect(files).toEqual(['meta.json']);
+  });
+
   it('parses a meta.json written before normalizationVersion existed via the schema default', () => {
     // BASE_META has no normalizationVersion field, simulating a pre-change meta.json
     vol.fromJSON({
@@ -292,33 +299,35 @@ describe('readAllWorkflowsInDeployment', () => {
     vol.fromJSON({ '/fd/': null });
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
     writeSnapshot('/fd', DEPLOYMENT_A, { id: 'wf-2', name: 'Second' });
-    const workflows = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
+    const { workflows, corruptCount } = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
     expect(workflows).toHaveLength(2);
     expect(workflows.map((w) => w.id).sort()).toEqual(['wf-2', 'wf-abc123']);
+    expect(corruptCount).toBe(0);
   });
 
   it('excludes meta.json from results', () => {
     vol.fromJSON({ '/fd/': null });
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
     writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META);
-    const workflows = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
+    const { workflows } = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
     expect(workflows).toHaveLength(1);
     expect(workflows[0].id).toBe('wf-abc123');
   });
 
-  it('returns empty array when deployment directory does not exist', () => {
+  it('returns empty result when deployment directory does not exist', () => {
     vol.fromJSON({ '/fd/': null });
-    expect(readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A)).toEqual([]);
+    expect(readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A)).toEqual({ workflows: [], corruptCount: 0 });
   });
 
-  it('skips corrupted workflow files silently', () => {
+  it('skips corrupted workflow files and reports a corrupt count', () => {
     vol.fromJSON({
       [`/fd/snapshots/${DEPLOYMENT_A}/wf-good.json`]: JSON.stringify({ id: 'wf-good', name: 'Good' }),
       [`/fd/snapshots/${DEPLOYMENT_A}/wf-bad.json`]: 'not json',
     });
-    const workflows = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
+    const { workflows, corruptCount } = readAllWorkflowsInDeployment('/fd', DEPLOYMENT_A);
     expect(workflows).toHaveLength(1);
     expect(workflows[0].id).toBe('wf-good');
+    expect(corruptCount).toBe(1);
   });
 });
 

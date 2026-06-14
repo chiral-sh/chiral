@@ -21,12 +21,21 @@ vi.mock('../../../src/lib/n8n-client.js', () => ({
   N8nClient: vi.fn(),
 }));
 
+vi.mock('../../../src/state/snapshots.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/state/snapshots.js')>(
+    '../../../src/state/snapshots.js',
+  );
+  return { ...actual };
+});
+
 import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
-import { runPush } from '../../../src/commands/push.js';
+import { runPush, pushCommand } from '../../../src/commands/push.js';
 import { computeContentHash } from '../../../src/state/fingerprints.js';
+import { readAuditLog } from '../../../src/state/audit.js';
 import type { WorkflowSummary, CredentialSummary, TagSummary } from '../../../src/lib/n8n-client.js';
 import type { SnapshotWorkflow } from '../../../src/state/snapshots.js';
+import * as snapshots from '../../../src/state/snapshots.js';
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
@@ -394,6 +403,26 @@ describe('runPush (dry-run) - stale snapshot', () => {
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(0);
     expect(prompts.confirm).toHaveBeenCalled();
+  });
+
+  it('prompts as stale when meta.json is unreadable/corrupt (readSnapshotMeta returns null)', async () => {
+    setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
+
+    // findLatestDeploymentForEnv resolves the deployment via its own internal
+    // (unmocked) call to readSnapshotMeta. The subsequent stale-check call -
+    // the one push.ts makes directly - returns null (e.g. a torn meta.json
+    // read mid-write); this must still be treated as stale, not silently
+    // skipped.
+    const spy = vi.spyOn(snapshots, 'readSnapshotMeta').mockReturnValue(null);
+
+    vi.mocked(prompts.confirm).mockResolvedValue(false);
+
+    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }).catch(e => e);
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(0);
+    expect(prompts.confirm).toHaveBeenCalled();
+
+    spy.mockRestore();
   });
 
   it('skips prompt when --yes is passed', async () => {
@@ -780,6 +809,193 @@ describe('runPush (live) - fingerprint writes', () => {
   });
 });
 
+// ── live push idempotency with mapped credentials (C1/M3/M6) ──────────────────
+
+describe('runPush (live) - idempotency with a mapped credential', () => {
+  it('classifies as skipped on re-push when only the mapped credential name differs', async () => {
+    const wf = makeSnapshotWf('src-1', 'Cred WF', 'v1', [], ['dev_pg']);
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'created-v1' });
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([]),
+          listCredentials: vi.fn().mockResolvedValue([{ name: 'prod_pg' } as CredentialSummary]),
+          listTags: vi.fn().mockResolvedValue([]),
+          createWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+
+    // First push: creates the workflow and writes a target fingerprint over
+    // the remapped (prod_pg) credential name.
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(createWorkflow).toHaveBeenCalledOnce();
+
+    const fpRaw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(fpRaw);
+    expect(fp.envs?.prod?.['tgt-1']).toBeDefined();
+
+    // Second push: target now reports a different versionId for the same
+    // workflow (simulating n8n bumping versionId without a logic change),
+    // but the stored content hash still matches.
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'updated-v1' });
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([makeSummary('tgt-1', 'Cred WF', 'different-v1', false)]),
+          listCredentials: vi.fn().mockResolvedValue([{ name: 'prod_pg' } as CredentialSummary]),
+          listTags: vi.fn().mockResolvedValue([]),
+          updateWorkflow,
+          deactivateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(updateWorkflow).not.toHaveBeenCalled();
+    expect(deactivateWorkflow).not.toHaveBeenCalled();
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Cred WF');
+    expect(joined).toContain('skipped');
+  });
+});
+
+// ── credential-rotation regression (S1/T1/T6) ──────────────────────────────────
+
+describe('runPush (live) - credential-rotation detection', () => {
+  it('classifies as would-update on re-push when the node credential is swapped to a different, unmapped instance (genuine rotation)', async () => {
+    const wf = makeSnapshotWf('src-1', 'Cred WF', 'v1', [], ['dev_pg']);
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'created-v1' });
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([]),
+          listCredentials: vi.fn().mockResolvedValue([{ name: 'prod_pg' } as CredentialSummary]),
+          listTags: vi.fn().mockResolvedValue([]),
+          createWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+
+    // First push: creates the workflow and writes a target fingerprint over
+    // the remapped (prod_pg) credential name.
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(createWorkflow).toHaveBeenCalledOnce();
+
+    // Second push: the source node now points at a completely different,
+    // unmapped credential of the same type (rotation), with a versionId that
+    // differs from the target's reported versionId so the fast path is
+    // bypassed and the content hash must be compared.
+    const rotatedWf = makeSnapshotWf('src-1', 'Cred WF', 'v2', [], ['dev_stripe']);
+    vol.writeFileSync(
+      `/project/.chiral/snapshots/20260522T120000Z-abcdef12/src-1.json`,
+      JSON.stringify(rotatedWf),
+    );
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([makeSummary('tgt-1', 'Cred WF', 'different-v1', false)]),
+          listCredentials: vi.fn().mockResolvedValue([{ name: 'prod_pg' } as CredentialSummary]),
+          listTags: vi.fn().mockResolvedValue([]),
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Cred WF');
+    expect(joined).toContain('will be updated');
+    expect(joined).not.toContain('skipped');
+  });
+
+  it('still classifies as skipped on re-push when only the mapped credential name differs (mapped rotation, C1 preserved)', async () => {
+    const wf = makeSnapshotWf('src-1', 'Cred WF', 'v1', [], ['dev_pg']);
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'created-v1' });
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([]),
+          listCredentials: vi.fn().mockResolvedValue([{ name: 'prod_pg' } as CredentialSummary]),
+          listTags: vi.fn().mockResolvedValue([]),
+          createWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+
+    // First push: creates the workflow and writes a target fingerprint over
+    // the remapped (prod_pg) credential name.
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(createWorkflow).toHaveBeenCalledOnce();
+
+    // Second push: source still references the mapped dev credential, with a
+    // versionId that differs from the target's reported versionId so the
+    // content hash must be compared. The cred-map normalizes dev_pg ->
+    // prod_pg on both sides, so the hash should match and the workflow is
+    // still reported skipped.
+    const wf2 = makeSnapshotWf('src-1', 'Cred WF', 'v2', [], ['dev_pg']);
+    vol.writeFileSync(
+      `/project/.chiral/snapshots/20260522T120000Z-abcdef12/src-1.json`,
+      JSON.stringify(wf2),
+    );
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([makeSummary('tgt-1', 'Cred WF', 'different-v1', false)]),
+          listCredentials: vi.fn().mockResolvedValue([{ name: 'prod_pg' } as CredentialSummary]),
+          listTags: vi.fn().mockResolvedValue([]),
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('Cred WF');
+    expect(joined).toContain('skipped');
+    expect(joined).not.toContain('will be updated');
+  });
+});
+
 // ── live push workflow map registration ───────────────────────────────────────
 
 describe('runPush (live) - workflow map registration', () => {
@@ -969,6 +1185,28 @@ describe('runPush - stale snapshot with --yes', () => {
 
     await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
 
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+
+  it('JSON mode with stale snapshot and pending changes without --yes is rejected by the --yes guard, not silently allowed through', async () => {
+    setupProject([makeSnapshotWf('src-1', 'W1', 'v2')], [makeSummary('tgt-1', 'W1', 'v1')]);
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    vol.writeFileSync(
+      '/project/.chiral/snapshots/20260522T120000Z-abcdef12/meta.json',
+      JSON.stringify({
+        deployment_id: '20260522T120000Z-abcdef12',
+        env: 'dev',
+        command: 'pull',
+        timestamp: twoDaysAgo,
+        workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+    );
+
+    const err = await runPush({ source: 'dev', target: 'prod', json: true }).catch(e => e);
+
+    expect(err).toBeInstanceOf(UserError);
+    expect((err as UserError).message).toContain('--yes');
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
 });
@@ -1214,7 +1452,7 @@ function makeSnapshotWfWithDataTable(
   const nodes = tableNodes.map((t) => ({
     id: `node-${t.nodeName}`,
     name: t.nodeName,
-    type: 'n8n-nodes-base.datatable',
+    type: 'n8n-nodes-base.dataTable',
     parameters: {
       dataTableId: {
         __rl: true,
@@ -1317,7 +1555,7 @@ describe('runPush - Data Table ID substitution', () => {
     expect(dtId).not.toHaveProperty('cachedResultUrl');
   });
 
-  it('leaves cachedResultName untouched on substituted node', async () => {
+  it('rewrites cachedResultName to the target table name on substituted node', async () => {
     const wf = makeSnapshotWfWithDataTable('src-1', 'WF', 'v1', [
       { nodeName: 'Get Row', tableId: 'dev-table-id', cachedResultName: 'Contacts Dev', cachedResultUrl: 'https://dev/...' },
     ]);
@@ -1347,7 +1585,7 @@ describe('runPush - Data Table ID substitution', () => {
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
     const dtId = (nodes[0]['parameters'] as Record<string, unknown>)['dataTableId'] as Record<string, unknown>;
-    expect(dtId['cachedResultName']).toBe('Contacts Dev');
+    expect(dtId['cachedResultName']).toBe('Contacts Prod');
   });
 
   it('passes source ID through unchanged when no tables.json mapping exists', async () => {
@@ -1447,5 +1685,506 @@ describe('runPush - Data Table ID substitution', () => {
 
     const parsed = JSON.parse(output[0]);
     expect(parsed.data.table_warnings).toEqual([]);
+  });
+});
+
+// ── JSON live push ────────────────────────────────────────────────────────────
+
+describe('runPush (live) - JSON output', () => {
+  it('performs a live push and emits dry_run: false with applied results when json+yes', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ source: 'dev', target: 'prod', json: true, yes: true });
+
+    expect(createWorkflow).toHaveBeenCalled();
+    expect(output).toHaveLength(1);
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.dry_run).toBe(false);
+    expect(parsed.data.created).toContain('New WF');
+  });
+
+  it('does not write when json+dryRun, emitting dry_run: true preview', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ source: 'dev', target: 'prod', json: true, dryRun: true, yes: true });
+
+    expect(createWorkflow).not.toHaveBeenCalled();
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.dry_run).toBe(true);
+  });
+
+  it('throws UserError and makes no writes when json without --yes and changes are pending', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' });
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    const err = await runPush({ source: 'dev', target: 'prod', json: true }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UserError);
+    expect(createWorkflow).not.toHaveBeenCalled();
+    expect(output).toHaveLength(0);
+  });
+
+  it('produces pure JSON stdout (single object, no stray bytes) for a live json push', async () => {
+    const wf = makeSnapshotWf('src-1', 'New WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'created-v1' }),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ source: 'dev', target: 'prod', json: true, yes: true });
+
+    expect(output).toHaveLength(1);
+    expect(() => JSON.parse(output[0])).not.toThrow();
+  });
+});
+
+// ── corrupted snapshot files ─────────────────────────────────────────────────
+
+describe('runPush (dry-run) - corrupted snapshot files', () => {
+  it('warns to stderr and still pushes the readable workflows', async () => {
+    setupProject([makeSnapshotWf('src-1', 'Good WF', 'v1')], []);
+
+    const deploymentId = '20260522T120000Z-abcdef12';
+    const snapshotDir = `/project/.chiral/snapshots/${deploymentId}`;
+    vol.writeFileSync(`${snapshotDir}/src-2.json`, 'not valid json');
+
+    const logOutput: string[] = [];
+    const errOutput: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => logOutput.push(args.join(' ')));
+    vi.spyOn(console, 'error').mockImplementation((...args) => errOutput.push(args.join(' ')));
+
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    expect(errOutput.join('\n')).toContain('corrupted');
+    const joined = logOutput.join('\n');
+    expect(joined).toContain('Good WF');
+    expect(joined).not.toContain('src-2');
+  });
+});
+
+// ── active-workflow update failure restores activation (L3) ───────────────────
+
+describe('runPush (live) - active workflow update failure', () => {
+  it('restores activation and records failure when updateWorkflow rejects for an active workflow', async () => {
+    const wfOk = makeSnapshotWf('src-ok', 'OK WF', 'v1');
+    const wfActive = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWfActive = makeSummary('tgt-1', 'Active WF', 'v1', true);
+    setupProject([wfOk, wfActive], [targetWfActive]);
+
+    const updateWorkflow = vi.fn().mockRejectedValue(new Error('API error'));
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-ok', versionId: 'created-v1' });
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([targetWfActive]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          getWorkflow: vi.fn().mockResolvedValue({ ...targetWfActive, nodes: [], connections: {}, settings: {} }),
+          createWorkflow,
+          updateWorkflow,
+          deactivateWorkflow,
+          activateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+    vi.spyOn(console, 'error').mockImplementation(function () { });
+
+    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect((err as ControlledExit).code).toBe(1);
+
+    // Deactivated before the update attempt, then reactivated after the
+    // update failed - the workflow's active state is restored, not left off.
+    expect(deactivateWorkflow).toHaveBeenCalledWith('tgt-1');
+    expect(activateWorkflow).toHaveBeenCalledWith('tgt-1');
+
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.result).toBe('partial');
+  });
+
+  it('warns distinctly when both updateWorkflow and the restore activateWorkflow reject', async () => {
+    const wfActive = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWfActive = makeSummary('tgt-1', 'Active WF', 'v1', true);
+    setupProject([wfActive], [targetWfActive]);
+
+    const updateWorkflow = vi.fn().mockRejectedValue(new Error('API error'));
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn().mockRejectedValue(new Error('restore error'));
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([targetWfActive]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          getWorkflow: vi.fn().mockResolvedValue({ ...targetWfActive, nodes: [], connections: {}, settings: {} }),
+          updateWorkflow,
+          deactivateWorkflow,
+          activateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(function () { });
+
+    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect((err as ControlledExit).code).toBe(1);
+
+    const warning = errorSpy.mock.calls.map(call => call.join(' ')).find(line => line.includes('Active WF'));
+    expect(warning).toBeDefined();
+    expect(warning).toContain('inactive');
+    expect(warning).toContain('manual reactivation needed');
+  });
+
+  it('does not warn about a failed restore when the restore activateWorkflow succeeds', async () => {
+    const wfActive = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWfActive = makeSummary('tgt-1', 'Active WF', 'v1', true);
+    setupProject([wfActive], [targetWfActive]);
+
+    const updateWorkflow = vi.fn().mockRejectedValue(new Error('API error'));
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn().mockResolvedValue(undefined);
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([targetWfActive]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          getWorkflow: vi.fn().mockResolvedValue({ ...targetWfActive, nodes: [], connections: {}, settings: {} }),
+          updateWorkflow,
+          deactivateWorkflow,
+          activateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(function () { });
+
+    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect((err as ControlledExit).code).toBe(1);
+
+    const warning = errorSpy.mock.calls.map(call => call.join(' ')).find(line => line.includes('manual reactivation needed'));
+    expect(warning).toBeUndefined();
+  });
+});
+
+// ── success-path reactivation guard (S2/SM2) ──────────────────────────────────
+
+describe('runPush (live) - success-path reactivation failure', () => {
+  it('reports a successful update with a failed reactivation distinctly and does not persist a current fingerprint', async () => {
+    const wf = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Active WF', 'v1', true); // active
+    setupProject([wf], [targetWf]);
+
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'updated-v1' });
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn().mockRejectedValue(new Error('activation error'));
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+          updateWorkflow,
+          deactivateWorkflow,
+          activateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+    vi.spyOn(console, 'error').mockImplementation(function () { });
+
+    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch((e) => e);
+
+    // The update itself succeeded - this is not reported as a plain push failure.
+    expect(err).toBeUndefined();
+    expect(updateWorkflow).toHaveBeenCalledOnce();
+    expect(activateWorkflow).toHaveBeenCalledWith('tgt-1');
+
+    // The fingerprint is marked as needing reactivation, not "current".
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const fp = JSON.parse(raw);
+    const entry = fp.envs?.prod?.['tgt-1'];
+    expect(entry).toBeDefined();
+    expect(entry.needsReactivation).toBe(true);
+  });
+
+  it('re-attempts reactivation on the next push instead of reporting up to date', async () => {
+    const wf = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Active WF', 'v1', true); // active
+
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'updated-v1' });
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn()
+      .mockRejectedValueOnce(new Error('activation error'))
+      .mockResolvedValue(undefined);
+
+    function setupClients() {
+      MockN8nClient.mockImplementation(function (_env, envName) {
+        if (envName === 'prod') {
+          return makeFullTargetClientMock({
+            listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+            listCredentials: vi.fn().mockResolvedValue([]),
+            listTags: vi.fn().mockResolvedValue([]),
+            getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+            updateWorkflow,
+            deactivateWorkflow,
+            activateWorkflow,
+          }) as never;
+        }
+        return makeTargetClientMock() as never;
+      });
+    }
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+    vi.spyOn(console, 'error').mockImplementation(function () { });
+
+    setupProject([wf], [targetWf]);
+    setupClients();
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    let raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    expect(JSON.parse(raw).envs?.prod?.['tgt-1']?.needsReactivation).toBe(true);
+
+    // Re-run push against the same snapshot/state.
+    setupClients();
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    // The workflow is re-attempted (updateWorkflow + activateWorkflow called again),
+    // not silently classified as "skipped".
+    expect(updateWorkflow).toHaveBeenCalledTimes(2);
+    expect(activateWorkflow).toHaveBeenCalledTimes(2);
+
+    raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const entry = JSON.parse(raw).envs?.prod?.['tgt-1'];
+    expect(entry.needsReactivation).toBeFalsy();
+  });
+
+  it('records "updated (reactivated)" and persists the fingerprint on the happy path', async () => {
+    const wf = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Active WF', 'v1', true); // active
+    setupProject([wf], [targetWf]);
+
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'updated-v1' });
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn().mockResolvedValue(undefined);
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+          updateWorkflow,
+          deactivateWorkflow,
+          activateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(activateWorkflow).toHaveBeenCalledWith('tgt-1');
+    expect(output.some((l) => typeof l === 'string' && l.includes('Updated') && l.includes('reactivated'))).toBe(true);
+
+    const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
+    const entry = JSON.parse(raw).envs?.prod?.['tgt-1'];
+    expect(entry).toBeDefined();
+    expect(entry.needsReactivation).toBeFalsy();
+    expect(entry.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+});
+
+// ── audit result: partial vs failure vs success (L3) ──────────────────────────
+
+describe('runPush (live) - audit result classification', () => {
+  it('records result: partial when some workflows succeed and some fail', async () => {
+    const wfOk = makeSnapshotWf('src-ok', 'OK WF', 'v1');
+    const wfFail = makeSnapshotWf('src-fail', 'Failing WF', 'v1');
+    setupProject([wfOk, wfFail], []);
+
+    const createWorkflow = vi.fn().mockImplementation((body: { name: string }) => {
+      if (body.name === 'Failing WF') return Promise.reject(new Error('API error'));
+      return Promise.resolve({ id: 'tgt-ok', versionId: 'created-v1' });
+    });
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function() { });
+    vi.spyOn(console, 'error').mockImplementation(function() { });
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }).catch((err) => {
+      expect(err).toBeInstanceOf(ControlledExit);
+      expect((err as ControlledExit).code).toBe(1);
+    });
+
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.result).toBe('partial');
+  });
+
+  it('records result: failure when all workflows fail', async () => {
+    const wf = makeSnapshotWf('src-fail', 'Failing WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockRejectedValue(new Error('API error')),
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function() { });
+    vi.spyOn(console, 'error').mockImplementation(function() { });
+
+    await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
+
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.result).toBe('failure');
+  });
+
+  it('records result: success when push has no failures', async () => {
+    const wf = makeSnapshotWf('src-ok', 'OK WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-ok', versionId: 'created-v1' }),
+      }) as never;
+    });
+
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.result).toBe('success');
+  });
+});
+
+// ── flag-conflict and stale-lock-after validation ─────────────────────────────
+
+describe('pushCommand - flag conflicts', () => {
+  beforeEach(() => {
+    pushCommand.exitOverride();
+  });
+
+  it('errors when --yes and --dry-run are combined', async () => {
+    await expect(
+      pushCommand.parseAsync(
+        ['--source', 'dev', '--target', 'prod', '--dry-run', '--yes'],
+        { from: 'user' },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('errors when --no-activate and --dry-run are combined', async () => {
+    await expect(
+      pushCommand.parseAsync(
+        ['--source', 'dev', '--target', 'prod', '--dry-run', '--no-activate'],
+        { from: 'user' },
+      ),
+    ).rejects.toThrow();
+  });
+});
+
+describe('pushCommand - --stale-lock-after validation', () => {
+  const staleLockAfterOption = pushCommand.options.find((o) => o.long === '--stale-lock-after');
+
+  it('rejects 0', () => {
+    expect(() => staleLockAfterOption?.parseArg?.('0', undefined)).toThrow();
+  });
+
+  it('rejects negative values', () => {
+    expect(() => staleLockAfterOption?.parseArg?.('-5', undefined)).toThrow();
+  });
+
+  it('returns the integer for a valid value', () => {
+    expect(staleLockAfterOption?.parseArg?.('24', undefined)).toBe(24);
   });
 });

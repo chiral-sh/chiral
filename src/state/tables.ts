@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
+import { writeJsonAtomic } from './atomic.js';
 
 export const TableEntrySchema = z.object({
   id: z.string().min(1),
@@ -38,13 +39,7 @@ export function loadTableMap(chiralDir: string): TablesMap {
 
 export function writeTableMap(chiralDir: string, data: TablesMap): void {
   const path = join(chiralDir, 'tables.json');
-  const tmp = path + '.tmp';
-  try {
-    writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-    renameSync(tmp, path);
-  } catch {
-    throw new UserError(`Could not write to ${path}`);
-  }
+  writeJsonAtomic(path, data);
 }
 
 export function upsertTableEnvEntry(
@@ -73,7 +68,7 @@ export function removeTableEnvEntry(
   }
 }
 
-/** Collects `n8n-nodes-base.datatable` references: source table ID → cachedResultName (if present). */
+/** Collects `n8n-nodes-base.dataTable` references: source table ID → cachedResultName (if present). */
 export function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<string, string | undefined> {
   const refs = new Map<string, string | undefined>();
   for (const wf of workflows) {
@@ -82,7 +77,7 @@ export function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<stri
     for (const node of nodes) {
       if (typeof node !== 'object' || node === null) continue;
       const nodeObj = node as Record<string, unknown>;
-      if (nodeObj['type'] !== 'n8n-nodes-base.datatable') continue;
+      if (nodeObj['type'] !== 'n8n-nodes-base.dataTable') continue;
 
       const params = nodeObj['parameters'];
       if (typeof params !== 'object' || params === null) continue;
@@ -98,6 +93,83 @@ export function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<stri
     }
   }
   return refs;
+}
+
+export function findLogicalNameByTableId(tableMap: TablesMap, sourceEnv: string, sourceId: string): string | undefined {
+  for (const [logicalName, envMap] of Object.entries(tableMap.tables)) {
+    if (envMap[sourceEnv]?.id === sourceId) return logicalName;
+  }
+  return undefined;
+}
+
+export interface TableWarning {
+  sourceId: string;
+  affectedNodes: string[];
+}
+
+/** Remaps `n8n-nodes-base.dataTable` node references from `sourceEnv` ids to `targetEnv` ids using `tableMap`. */
+export function applyTableMap(
+  workflow: Record<string, unknown>,
+  tableMap: TablesMap,
+  sourceEnv: string,
+  targetEnv: string,
+): { workflow: Record<string, unknown>; unmappedTables: TableWarning[] } {
+  const nodes = workflow['nodes'];
+  if (!Array.isArray(nodes)) return { workflow, unmappedTables: [] };
+
+  const unmappedBySourceId = new Map<string, string[]>();
+
+  const newNodes = nodes.map((node: unknown) => {
+    if (typeof node !== 'object' || node === null) return node;
+    const nodeObj = node as Record<string, unknown>;
+
+    if (nodeObj['type'] !== 'n8n-nodes-base.dataTable') return node;
+
+    const params = nodeObj['parameters'];
+    if (typeof params !== 'object' || params === null) return node;
+    const paramsObj = params as Record<string, unknown>;
+
+    const dataTableId = paramsObj['dataTableId'];
+    if (typeof dataTableId !== 'object' || dataTableId === null) return node;
+    const dtObj = dataTableId as Record<string, unknown>;
+
+    if (dtObj['__rl'] !== true) return node;
+
+    const sourceId = dtObj['value'];
+    if (typeof sourceId !== 'string') return node;
+
+    const logicalName = findLogicalNameByTableId(tableMap, sourceEnv, sourceId);
+    const targetId = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.id : undefined;
+
+    if (!targetId) {
+      const nodeName = typeof nodeObj['name'] === 'string' ? nodeObj['name'] : 'unnamed node';
+      const existing = unmappedBySourceId.get(sourceId);
+      if (existing) {
+        existing.push(nodeName);
+      } else {
+        unmappedBySourceId.set(sourceId, [nodeName]);
+      }
+      return node;
+    }
+
+    const targetName = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.name : undefined;
+
+    const newDtObj: Record<string, unknown> = { ...dtObj, value: targetId };
+    delete newDtObj['cachedResultUrl'];
+    if (targetName !== undefined) {
+      newDtObj['cachedResultName'] = targetName;
+    } else {
+      delete newDtObj['cachedResultName'];
+    }
+
+    return { ...nodeObj, parameters: { ...paramsObj, dataTableId: newDtObj } };
+  });
+
+  const unmappedTables: TableWarning[] = Array.from(unmappedBySourceId.entries()).map(
+    ([sourceId, affectedNodes]) => ({ sourceId, affectedNodes }),
+  );
+
+  return { workflow: { ...workflow, nodes: newNodes }, unmappedTables };
 }
 
 /** Counts Data Table IDs referenced by `workflows` for `env` that have no entry in `tableMap`. */
