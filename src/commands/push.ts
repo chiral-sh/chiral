@@ -888,7 +888,17 @@ export async function runPush(
         }
 
         // Update
-        const updateResult = await targetClient.updateWorkflow(targetWorkflow.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
+        let updateResult;
+        try {
+          updateResult = await targetClient.updateWorkflow(targetWorkflow.id, sanitizedForUpdate as Parameters<typeof targetClient.updateWorkflow>[1]);
+        } catch (updateErr) {
+          // Best-effort restore so a failed update doesn't leave a previously
+          // active workflow stuck deactivated.
+          if (targetWorkflow.active) {
+            await targetClient.activateWorkflow(targetWorkflow.id).catch(() => undefined);
+          }
+          throw updateErr;
+        }
         fingerprints.envs[options.target][targetWorkflow.id] = {
           name: c.resolvedName,
           versionId: updateResult.versionId,

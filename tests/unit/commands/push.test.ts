@@ -1038,6 +1038,28 @@ describe('runPush - stale snapshot with --yes', () => {
 
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
+
+  it('JSON mode with stale snapshot and pending changes without --yes is rejected by the --yes guard, not silently allowed through', async () => {
+    setupProject([makeSnapshotWf('src-1', 'W1', 'v2')], [makeSummary('tgt-1', 'W1', 'v1')]);
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    vol.writeFileSync(
+      '/project/.chiral/snapshots/20260522T120000Z-abcdef12/meta.json',
+      JSON.stringify({
+        deployment_id: '20260522T120000Z-abcdef12',
+        env: 'dev',
+        command: 'pull',
+        timestamp: twoDaysAgo,
+        workflow_count: 1,
+        filters: { tag: null, pattern: null, onlyActive: false, id: null },
+      }),
+    );
+
+    const err = await runPush({ source: 'dev', target: 'prod', json: true }).catch(e => e);
+
+    expect(err).toBeInstanceOf(UserError);
+    expect((err as UserError).message).toContain('--yes');
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
 });
 
 // ── prod type-to-confirm ──────────────────────────────────────────────────────
@@ -1638,6 +1660,54 @@ describe('runPush (dry-run) - corrupted snapshot files', () => {
     const joined = logOutput.join('\n');
     expect(joined).toContain('Good WF');
     expect(joined).not.toContain('src-2');
+  });
+});
+
+// ── active-workflow update failure restores activation (L3) ───────────────────
+
+describe('runPush (live) - active workflow update failure', () => {
+  it('restores activation and records failure when updateWorkflow rejects for an active workflow', async () => {
+    const wfOk = makeSnapshotWf('src-ok', 'OK WF', 'v1');
+    const wfActive = makeSnapshotWf('src-1', 'Active WF', 'v2');
+    const targetWfActive = makeSummary('tgt-1', 'Active WF', 'v1', true);
+    setupProject([wfOk, wfActive], [targetWfActive]);
+
+    const updateWorkflow = vi.fn().mockRejectedValue(new Error('API error'));
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const activateWorkflow = vi.fn().mockResolvedValue(undefined);
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-ok', versionId: 'created-v1' });
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([targetWfActive]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          getWorkflow: vi.fn().mockResolvedValue({ ...targetWfActive, nodes: [], connections: {}, settings: {} }),
+          createWorkflow,
+          updateWorkflow,
+          deactivateWorkflow,
+          activateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(function () { });
+    vi.spyOn(console, 'error').mockImplementation(function () { });
+
+    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect((err as ControlledExit).code).toBe(1);
+
+    // Deactivated before the update attempt, then reactivated after the
+    // update failed - the workflow's active state is restored, not left off.
+    expect(deactivateWorkflow).toHaveBeenCalledWith('tgt-1');
+    expect(activateWorkflow).toHaveBeenCalledWith('tgt-1');
+
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.result).toBe('partial');
   });
 });
 
