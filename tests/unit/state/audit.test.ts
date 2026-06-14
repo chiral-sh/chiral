@@ -76,17 +76,30 @@ describe('readAuditLog', () => {
     expect(entries).toHaveLength(2);
   });
 
-  it('throws UserError on corrupted JSON line', () => {
-    vol.fromJSON({ '/project/.chiral/audit.jsonl': 'not-json\n' });
-    expect(() => readAuditLog('/project/.chiral')).toThrow(UserError);
-    expect(() => readAuditLog('/project/.chiral')).toThrow('corrupted at line 1');
+  it('skips a corrupted JSON line without throwing', () => {
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({ '/project/.chiral/audit.jsonl': `not-json\n${valid}\n` });
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(VALID_ENTRY);
   });
 
-  it('throws UserError on invalid entry schema', () => {
+  it('skips an invalid entry schema without throwing', () => {
     const bad = JSON.stringify({ event_id: 'not-a-uuid', action: 'unknown' });
-    vol.fromJSON({ '/project/.chiral/audit.jsonl': bad + '\n' });
-    expect(() => readAuditLog('/project/.chiral')).toThrow(UserError);
-    expect(() => readAuditLog('/project/.chiral')).toThrow('invalid entry at line 1');
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({ '/project/.chiral/audit.jsonl': `${bad}\n${valid}\n` });
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(VALID_ENTRY);
+  });
+
+  it('skips a git merge-conflict marker line without throwing', () => {
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({
+      '/project/.chiral/audit.jsonl': `${valid}\n<<<<<<< HEAD\n${valid}\n=======\n>>>>>>> branch\n`,
+    });
+    const entries = readAuditLog('/project/.chiral');
+    expect(entries).toHaveLength(2);
   });
 
   it('ignores blank lines', () => {

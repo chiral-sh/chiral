@@ -23,6 +23,7 @@ import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
 import { pageOutput } from '../../../src/lib/pager.js';
 import { runDiff } from '../../../src/commands/diff.js';
+import { computeContentHash, computeStructureHash } from '../../../src/state/fingerprints.js';
 import type { WorkflowSummary } from '../../../src/lib/n8n-client.js';
 
 const mockExecSync = vi.mocked(execSync);
@@ -795,6 +796,154 @@ describe('runDiff - fingerprint-based change detection', () => {
     // Content is the same → classified as unchanged (versionId bump was cosmetic)
     expect(output.join('\n')).toContain('identical');
     expect(output.join('\n')).not.toContain('~');
+  });
+
+  it('reports unchanged when logically identical workflows differ only by mapped credential name', async () => {
+    setupProject();
+
+    const baseWorkflow = {
+      name: 'Workflow One',
+      description: '',
+      nodes: [
+        {
+          id: 'node-a',
+          name: 'HTTP Request',
+          type: 'n8n-nodes-base.httpRequest',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: {},
+          credentials: { httpHeaderAuth: { id: 'cred-id-dev', name: 'dev_stripe' } },
+        },
+      ],
+      connections: {},
+      settings: {},
+    };
+    const srcWorkflow = baseWorkflow;
+    const tgtWorkflow = {
+      ...baseWorkflow,
+      nodes: [
+        {
+          ...baseWorkflow.nodes[0],
+          credentials: { httpHeaderAuth: { id: 'cred-id-prod', name: 'prod_stripe' } },
+        },
+      ],
+    };
+
+    const srcContentHash = computeContentHash(srcWorkflow);
+    const tgtContentHash = computeContentHash(tgtWorkflow);
+    const srcStructureHash = computeStructureHash(srcWorkflow);
+    const tgtStructureHash = computeStructureHash(tgtWorkflow);
+
+    // Credential name differences must not affect the content hash.
+    expect(srcContentHash).toBe(tgtContentHash);
+
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/fingerprints.json`,
+      JSON.stringify({
+        version: 1,
+        envs: {
+          dev: { 'src-1': { name: 'Workflow One', versionId: 'v1', contentHash: srcContentHash, structureHash: srcStructureHash, updatedAt: '2024-01-01T00:00:00.000Z' } },
+          prod: { 'tgt-1': { name: 'Workflow One', versionId: 'v2', contentHash: tgtContentHash, structureHash: tgtStructureHash, updatedAt: '2024-01-01T00:00:00.000Z' } },
+        },
+      }),
+    );
+
+    const srcGetWorkflow = vi.fn();
+    const tgtGetWorkflow = vi.fn();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]), getWorkflow: srcGetWorkflow }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]), getWorkflow: tgtGetWorkflow }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const printed = JSON.parse(output.join(''));
+    expect(printed.data.unchanged).toEqual([]);
+    expect(printed.data.modified).toEqual([]);
+
+    // Re-run with --show-unchanged in JSON mode to confirm classification.
+    vi.clearAllMocks();
+    mockExecSync.mockReturnValue('actor@example.com\n' as never);
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]), getWorkflow: srcGetWorkflow }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]), getWorkflow: tgtGetWorkflow }),
+    );
+    const output2: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output2.push(args.join(' ')));
+    await runDiff({ source: 'dev', target: 'prod', json: true, showUnchanged: true });
+    const printed2 = JSON.parse(output2.join(''));
+    expect(printed2.data.unchanged.map((u: { name: string }) => u.name)).toContain('Workflow One');
+    expect(printed2.data.modified).toEqual([]);
+
+    expect(srcGetWorkflow).not.toHaveBeenCalled();
+    expect(tgtGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('reports a genuine logic change as modified even after the credential-name fix', async () => {
+    setupProject();
+
+    const srcWorkflow = {
+      name: 'Workflow One',
+      description: '',
+      nodes: [
+        {
+          id: 'node-a',
+          name: 'HTTP Request',
+          type: 'n8n-nodes-base.httpRequest',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: { url: 'https://example.com/a' },
+          credentials: { httpHeaderAuth: { id: 'cred-id-dev', name: 'dev_stripe' } },
+        },
+      ],
+      connections: {},
+      settings: {},
+    };
+    const tgtWorkflow = {
+      ...srcWorkflow,
+      nodes: [
+        {
+          ...srcWorkflow.nodes[0],
+          parameters: { url: 'https://example.com/b' },
+          credentials: { httpHeaderAuth: { id: 'cred-id-prod', name: 'prod_stripe' } },
+        },
+      ],
+    };
+
+    const srcContentHash = computeContentHash(srcWorkflow);
+    const tgtContentHash = computeContentHash(tgtWorkflow);
+    const srcStructureHash = computeStructureHash(srcWorkflow);
+    const tgtStructureHash = computeStructureHash(tgtWorkflow);
+
+    expect(srcContentHash).not.toBe(tgtContentHash);
+
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/fingerprints.json`,
+      JSON.stringify({
+        version: 1,
+        envs: {
+          dev: { 'src-1': { name: 'Workflow One', versionId: 'v1', contentHash: srcContentHash, structureHash: srcStructureHash, updatedAt: '2024-01-01T00:00:00.000Z' } },
+          prod: { 'tgt-1': { name: 'Workflow One', versionId: 'v2', contentHash: tgtContentHash, structureHash: tgtStructureHash, updatedAt: '2024-01-01T00:00:00.000Z' } },
+        },
+      }),
+    );
+
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]), getWorkflow: vi.fn().mockResolvedValue(srcWorkflow) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1_UPDATED]), getWorkflow: vi.fn().mockResolvedValue(tgtWorkflow) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const printed = JSON.parse(output.join(''));
+    expect(printed.data.modified.map((m: { name: string }) => m.name)).toContain('Workflow One');
+    expect(printed.data.unchanged).toEqual([]);
   });
 });
 

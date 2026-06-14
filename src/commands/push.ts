@@ -8,7 +8,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient, type WorkflowSummary, type CredentialSummary, type TagSummary } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob, formatAge } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, formatAge, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMap,
@@ -23,7 +23,7 @@ import {
 import { listLocksByEnv } from '../state/locks.js';
 import { peekEnvId } from '../state/envs.js';
 import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
-import { loadTableMap, type TablesMap } from '../state/tables.js';
+import { loadTableMap, applyTableMap, type TableWarning } from '../state/tables.js';
 import {
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
@@ -80,8 +80,7 @@ function sanitizeWorkflowForApi(
   for (const [key, value] of Object.entries(workflow)) {
     if (allowed.has(key)) {
       if (key === 'nodes') {
-        // Transform credential references: n8n API expects just the ID, not { id, name }
-        sanitized[key] = transformCredentialReferences(value);
+        sanitized[key] = value;
       } else if (key === 'settings' && typeof value === 'object' && value !== null) {
         // Filter settings to only include valid fields
         const settingsObj = value as Record<string, unknown>;
@@ -98,29 +97,6 @@ function sanitizeWorkflowForApi(
     }
   }
   return sanitized;
-}
-
-function transformCredentialReferences(nodes: unknown): unknown {
-  if (!Array.isArray(nodes)) return nodes;
-
-  return (nodes as unknown[]).map((node) => {
-    if (typeof node !== 'object' || node === null) return node;
-    const nodeObj = node as Record<string, unknown>;
-
-    // If node has credentials, keep both id and name as in source
-    // n8n API accepts { id, name } format per official documentation
-    // If credential doesn't exist in target by ID, it may fail at runtime,
-    // which is the expected behavior for unmapped credentials
-    if (nodeObj['credentials']) {
-      const creds = nodeObj['credentials'];
-      if (typeof creds === 'object' && creds !== null) {
-        // Keep credentials as-is; the credential map validation already checked this
-        return nodeObj;
-      }
-    }
-
-    return node;
-  });
 }
 
 // ── Lock check helpers ────────────────────────────────────────────────────────
@@ -189,75 +165,6 @@ function collectLockViolations(
   }
 
   return violations;
-}
-
-function findLogicalNameByTableId(tableMap: TablesMap, sourceEnv: string, sourceId: string): string | undefined {
-  for (const [logicalName, envMap] of Object.entries(tableMap.tables)) {
-    if (envMap[sourceEnv]?.id === sourceId) return logicalName;
-  }
-  return undefined;
-}
-
-interface TableWarning {
-  sourceId: string;
-  affectedNodes: string[];
-}
-
-function applyTableMap(
-  workflow: Record<string, unknown>,
-  tableMap: TablesMap,
-  sourceEnv: string,
-  targetEnv: string,
-): { workflow: Record<string, unknown>; unmappedTables: TableWarning[] } {
-  const nodes = workflow['nodes'];
-  if (!Array.isArray(nodes)) return { workflow, unmappedTables: [] };
-
-  const unmappedBySourceId = new Map<string, string[]>();
-
-  const newNodes = nodes.map((node: unknown) => {
-    if (typeof node !== 'object' || node === null) return node;
-    const nodeObj = node as Record<string, unknown>;
-
-    if (nodeObj['type'] !== 'n8n-nodes-base.datatable') return node;
-
-    const params = nodeObj['parameters'];
-    if (typeof params !== 'object' || params === null) return node;
-    const paramsObj = params as Record<string, unknown>;
-
-    const dataTableId = paramsObj['dataTableId'];
-    if (typeof dataTableId !== 'object' || dataTableId === null) return node;
-    const dtObj = dataTableId as Record<string, unknown>;
-
-    if (dtObj['__rl'] !== true) return node;
-
-    const sourceId = dtObj['value'];
-    if (typeof sourceId !== 'string') return node;
-
-    const logicalName = findLogicalNameByTableId(tableMap, sourceEnv, sourceId);
-    const targetId = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.id : undefined;
-
-    if (!targetId) {
-      const nodeName = typeof nodeObj['name'] === 'string' ? nodeObj['name'] : 'unnamed node';
-      const existing = unmappedBySourceId.get(sourceId);
-      if (existing) {
-        existing.push(nodeName);
-      } else {
-        unmappedBySourceId.set(sourceId, [nodeName]);
-      }
-      return node;
-    }
-
-    const newDtObj: Record<string, unknown> = { ...dtObj, value: targetId };
-    delete newDtObj['cachedResultUrl'];
-
-    return { ...nodeObj, parameters: { ...paramsObj, dataTableId: newDtObj } };
-  });
-
-  const unmappedTables: TableWarning[] = Array.from(unmappedBySourceId.entries()).map(
-    ([sourceId, affectedNodes]) => ({ sourceId, affectedNodes }),
-  );
-
-  return { workflow: { ...workflow, nodes: newNodes }, unmappedTables };
 }
 
 // Records that a workflow pushed/created in targetEnv is the same logical entity
@@ -395,7 +302,14 @@ export async function runPush(
   }
 
   // ── Load snapshot workflows ───────────────────────────────────────────────
-  let snapshotWorkflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+  const { workflows: snapshotWorkflowsRaw, corruptCount } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+  if (corruptCount > 0) {
+    console.error(
+      `  Warning: ${corruptCount} snapshot file${corruptCount === 1 ? '' : 's'} in deployment ${deploymentId} ${corruptCount === 1 ? 'is' : 'are'} corrupted and were skipped.`,
+    );
+    console.error(`     Run 'chiral pull --env ${options.source}' to refresh the snapshot.`);
+  }
+  let snapshotWorkflows = snapshotWorkflowsRaw;
 
   // Apply client-side filters
   snapshotWorkflows = snapshotWorkflows.filter((wf) => {
@@ -575,8 +489,8 @@ export async function runPush(
     throw new ControlledExit(clear ? 0 : 1);
   }
 
-  // ── JSON output ───────────────────────────────────────────────────────────
-  if (outputMode === 'json') {
+  // ── JSON dry-run preview ─────────────────────────────────────────────────
+  if (outputMode === 'json' && options.dryRun) {
     printJson({
       source: options.source,
       target: options.target,
@@ -599,11 +513,20 @@ export async function runPush(
     return;
   }
 
+  const changeCount = toCreate.length + toUpdate.length;
+
+  // ── JSON live push requires --yes when changes are pending ─────────────────
+  if (outputMode === 'json' && changeCount > 0 && !options.yes) {
+    throw new UserError(
+      `${changeCount} change(s) pending for ${options.target} - pass --yes to apply them in JSON mode`,
+    );
+  }
+
   // ── Human output ─────────────────────────────────────────────────────────
-  console.log();
+  if (outputMode === 'human') console.log();
 
   // Credential map section
-  if (credMap.length > 0) {
+  if (outputMode === 'human' && credMap.length > 0) {
     console.log(`  Credential map:`);
     for (const entry of credMap) {
       const src = padEnd(entry.sourceName, CRED_COL_WIDTH);
@@ -627,68 +550,87 @@ export async function runPush(
 
   // Credential errors - abort before showing changeset
   if (credentialErrors.length > 0) {
-    const hint = credentialErrors.map((e) => {
-      const logical = e.logicalName ?? e.sourceName;
-      return `  chiral credential map ${logical} ${options.target}=${e.targetName}`;
-    });
-    console.log(
-      `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Map ${credentialErrors.length === 1 ? 'it' : 'them'} to an existing ${chalk.cyan(options.target)} credential:`,
-    );
-    for (const h of hint) console.log(chalk.dim(h));
-    console.log(chalk.dim(`  To see available credentials: chiral credential list --env ${options.target}`));
-    console.log();
+    if (outputMode === 'json') {
+      printJson({
+        source: options.source,
+        target: options.target,
+        dry_run: false,
+        deployment_id: deploymentId,
+        created: [], updated: [], skipped: [], failed: [],
+        credential_map: credMap.map(({ sourceName, targetName, status }) => ({
+          sourceName, targetName, status,
+        })),
+        tag_warnings: tagWarnings.map((t) => t.name),
+        credential_errors: credentialErrors.map(({ sourceName, targetName }) => ({
+          sourceName, targetName,
+        })),
+        table_warnings: allTableWarnings,
+      });
+    } else {
+      const hint = credentialErrors.map((e) => {
+        const logical = e.logicalName ?? e.sourceName;
+        return `  chiral credential map ${logical} ${options.target}=${e.targetName}`;
+      });
+      console.log(
+        `  ${chalk.red('✗')}  Cannot push - ${plural(credentialErrors.length, 'credential')} not found in ${chalk.cyan(options.target)}. Map ${credentialErrors.length === 1 ? 'it' : 'them'} to an existing ${chalk.cyan(options.target)} credential:`,
+      );
+      for (const h of hint) console.log(chalk.dim(h));
+      console.log(chalk.dim(`  To see available credentials: chiral credential list --env ${options.target}`));
+      console.log();
+    }
     throw new ControlledExit(1);
   }
 
   // Changeset
-  for (const c of toCreate) {
-    const wasMapped = c.resolvedName !== c.workflow.name;
-    const createNote = wasMapped
-      ? `will be created as "${c.resolvedName}" - run: chiral workflow map --validate to check`
-      : 'will be created';
-    console.log(
-      `  ${chalk.green('+')} ${c.resolvedName}  ${chalk.dim(`(${createNote})`)}`,
-    );
-  }
-  for (const c of toUpdate) {
-    const activeNote = c.targetActive ? ' - active, will be paused briefly' : '';
-    console.log(
-      `  ${chalk.yellow('~')} ${c.resolvedName}  ${chalk.dim(`(will be updated${activeNote})`)}`,
-    );
-  }
-  for (const c of toSkip) {
-    console.log(
-      `  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`,
-    );
-  }
-
-  // Tag warnings
-  if (tagWarnings.length > 0) {
-    console.log();
-    for (const tw of tagWarnings) {
+  if (outputMode === 'human') {
+    for (const c of toCreate) {
+      const wasMapped = c.resolvedName !== c.workflow.name;
+      const createNote = wasMapped
+        ? `will be created as "${c.resolvedName}" - run: chiral workflow map --validate to check`
+        : 'will be created';
       console.log(
-        `  ${chalk.yellow('⚠')}  Tag "${tw.name}" not found in ${chalk.cyan(options.target)} - it will not be assigned to pushed workflows`,
+        `  ${chalk.green('+')} ${c.resolvedName}  ${chalk.dim(`(${createNote})`)}`,
       );
     }
-  }
+    for (const c of toUpdate) {
+      const activeNote = c.targetActive ? ' - active, will be paused briefly' : '';
+      console.log(
+        `  ${chalk.yellow('~')} ${c.resolvedName}  ${chalk.dim(`(will be updated${activeNote})`)}`,
+      );
+    }
+    for (const c of toSkip) {
+      console.log(
+        `  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`,
+      );
+    }
 
-  // Table warnings
-  if (allTableWarnings.length > 0) {
-    console.log();
-    for (const tw of allTableWarnings) {
-      console.log(
-        `  ${chalk.yellow('⚠')}  Table ID "${tw.sourceId}" has no ${chalk.cyan(options.target)} mapping.`,
-      );
-      console.log(`     Affected nodes: ${tw.affectedNodes.join(', ')}`);
-      console.log(
-        `     Fix: ${chalk.dim(`chiral table map <name> ${options.source}=${tw.sourceId} ${options.target}=<${options.target}-id>`)}`,
-      );
+    // Tag warnings
+    if (tagWarnings.length > 0) {
+      console.log();
+      for (const tw of tagWarnings) {
+        console.log(
+          `  ${chalk.yellow('⚠')}  Tag "${tw.name}" not found in ${chalk.cyan(options.target)} - it will not be assigned to pushed workflows`,
+        );
+      }
+    }
+
+    // Table warnings
+    if (allTableWarnings.length > 0) {
+      console.log();
+      for (const tw of allTableWarnings) {
+        console.log(
+          `  ${chalk.yellow('⚠')}  Table ID "${tw.sourceId}" has no ${chalk.cyan(options.target)} mapping.`,
+        );
+        console.log(`     Affected nodes: ${tw.affectedNodes.join(', ')}`);
+        console.log(
+          `     Fix: ${chalk.dim(`chiral table map <name> ${options.source}=${tw.sourceId} ${options.target}=<${options.target}-id>`)}`,
+        );
+      }
     }
   }
 
   // ── Dry-run mode: show summary and exit ──────────────────────────────────
   if (options.dryRun) {
-    const changeCount = toCreate.length + toUpdate.length;
     console.log();
     if (changeCount === 0) {
       console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync - no changes needed`);
@@ -711,13 +653,31 @@ export async function runPush(
   }
 
   // ── Live push mode ──────────────────────────────────────────────────────
-  const changeCount = toCreate.length + toUpdate.length;
 
   // No changes needed
   if (changeCount === 0) {
-    console.log();
-    console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync - no changes needed`);
-    console.log();
+    if (outputMode === 'json') {
+      printJson({
+        source: options.source,
+        target: options.target,
+        dry_run: false,
+        deployment_id: deploymentId,
+        created: [],
+        updated: [],
+        skipped: toSkip.map((c) => c.workflow.name),
+        failed: [],
+        credential_map: credMap.map(({ sourceName, targetName, status }) => ({
+          sourceName, targetName, status,
+        })),
+        tag_warnings: tagWarnings.map((t) => t.name),
+        credential_errors: [],
+        table_warnings: allTableWarnings,
+      });
+    } else {
+      console.log();
+      console.log(`  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are already in sync - no changes needed`);
+      console.log();
+    }
     return;
   }
 
@@ -761,10 +721,12 @@ export async function runPush(
     );
 
     if (lockViolations.length > 0) {
-      console.log();
-      for (const v of lockViolations) {
-        const staleNote = v.stale ? ` — may be abandoned` : '';
-        console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatAge(v.ageSeconds, 'long')}${staleNote}).`);
+      if (outputMode === 'human') {
+        console.log();
+        for (const v of lockViolations) {
+          const staleNote = v.stale ? ` — may be abandoned` : '';
+          console.log(`  ${chalk.yellow('⚠')}  ${v.logicalName} is locked by ${v.actor} (${formatAge(v.ageSeconds, 'long')}${staleNote}).`);
+        }
       }
 
       if (!options.yes) {
@@ -836,14 +798,16 @@ export async function runPush(
   }
 
   // ── Apply changes ──────────────────────────────────────────────────────
-  console.log();
+  if (outputMode === 'human') console.log();
   const results = { created: [] as string[], updated: [] as string[], skipped: [] as string[], failed: [] as Array<{ name: string; error: string }> };
   let mapDirty = false;
   let fingerprintsDirty = false;
 
   for (const c of classified) {
     if (c.action === 'skipped') {
-      console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`);
+      if (outputMode === 'human') {
+        console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`);
+      }
       results.skipped.push(c.workflow.name);
       continue;
     }
@@ -864,7 +828,9 @@ export async function runPush(
             default: false,
           });
           if (!createIt) {
-            console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
+            if (outputMode === 'human') {
+              console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(skipped at user request)')}`);
+            }
             results.skipped.push(c.workflow.name);
             continue;
           }
@@ -890,9 +856,11 @@ export async function runPush(
         registerWorkflowMapEntry(workflowMap, c, options.source, options.target, createResult.id);
         mapDirty = true;
 
-        const mappedNote = c.resolvedName !== c.workflow.name
-          ? ` ${chalk.dim(`(mapped from "${c.workflow.name}")`)}` : '';
-        console.log(`  ${chalk.green('✓')} Created  ${c.resolvedName}${mappedNote}`);
+        if (outputMode === 'human') {
+          const mappedNote = c.resolvedName !== c.workflow.name
+            ? ` ${chalk.dim(`(mapped from "${c.workflow.name}")`)}` : '';
+          console.log(`  ${chalk.green('✓')} Created  ${c.resolvedName}${mappedNote}`);
+        }
         results.created.push(c.workflow.name);
       } else if (c.action === 'would-update' && targetWorkflow) {
         // Warn and confirm for active workflows with ongoing executions
@@ -937,16 +905,22 @@ export async function runPush(
         // Reactivate if was active and --no-activate not set
         if (targetWorkflow.active && !options.noActivate) {
           await targetClient.activateWorkflow(targetWorkflow.id);
-          console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}  ${chalk.dim('(reactivated)')}`);
+          if (outputMode === 'human') {
+            console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}  ${chalk.dim('(reactivated)')}`);
+          }
         } else {
-          console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}`);
+          if (outputMode === 'human') {
+            console.log(`  ${chalk.green('✓')} Updated  ${c.resolvedName}`);
+          }
         }
 
         results.updated.push(c.workflow.name);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.log(`  ${chalk.red('✗')} Failed   ${c.resolvedName}  ${chalk.dim(`(${msg})`)}`);
+      if (outputMode === 'human') {
+        console.log(`  ${chalk.red('✗')} Failed   ${c.resolvedName}  ${chalk.dim(`(${msg})`)}`);
+      }
       results.failed.push({ name: c.workflow.name, error: msg });
     }
   }
@@ -967,32 +941,51 @@ export async function runPush(
     source_env: options.source,
     target_env: options.target,
     workflow_ids: [...results.created, ...results.updated],
-    result: results.failed.length === 0 ? 'success' : results.created.length + results.updated.length === 0 ? 'failure' : 'aborted',
+    result: results.failed.length === 0 ? 'success' : results.created.length + results.updated.length === 0 ? 'failure' : 'partial',
     error: results.failed.length > 0 ? `${results.failed.length} workflow(s) failed` : null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   };
   writeAuditEntry(chiralDir, auditEntry);
 
   // ── Summary ────────────────────────────────────────────────────────────
-  console.log();
-  if (results.failed.length === 0) {
-    console.log(
-      `  ${chalk.green('✓')} Push complete - ${plural(results.created.length + results.updated.length, 'change')}`,
-    );
-    console.log(`    Deployment: ${targetDeploymentId}`);
+  if (outputMode === 'json') {
+    printJson({
+      source: options.source,
+      target: options.target,
+      dry_run: false,
+      deployment_id: targetDeploymentId,
+      created: results.created,
+      updated: results.updated,
+      skipped: results.skipped,
+      failed: results.failed,
+      credential_map: credMap.map(({ sourceName, targetName, status }) => ({
+        sourceName, targetName, status,
+      })),
+      tag_warnings: tagWarnings.map((t) => t.name),
+      credential_errors: [],
+      table_warnings: allTableWarnings,
+    });
   } else {
-    console.log(
-      `  ${chalk.red('✗')} Push incomplete - ${plural(results.created.length + results.updated.length, 'change')} of ${plural(changeCount, 'change')} applied.`,
-    );
-    console.log(`    Pre-push snapshot saved at .chiral/snapshots/${targetDeploymentId}/`);
-    if (results.failed.length > 0) {
-      console.log(`    Failed: ${results.failed.map((f) => f.name).join(', ')}`);
+    console.log();
+    if (results.failed.length === 0) {
+      console.log(
+        `  ${chalk.green('✓')} Push complete - ${plural(results.created.length + results.updated.length, 'change')}`,
+      );
+      console.log(`    Deployment: ${targetDeploymentId}`);
+    } else {
+      console.log(
+        `  ${chalk.red('✗')} Push incomplete - ${plural(results.created.length + results.updated.length, 'change')} of ${plural(changeCount, 'change')} applied.`,
+      );
+      console.log(`    Pre-push snapshot saved at .chiral/snapshots/${targetDeploymentId}/`);
+      if (results.failed.length > 0) {
+        console.log(`    Failed: ${results.failed.map((f) => f.name).join(', ')}`);
+      }
     }
-  }
 
-  console.log();
-  console.log(`  ${chalk.dim('Next:')} chiral pull --env ${options.target}`);
-  console.log();
+    console.log();
+    console.log(`  ${chalk.dim('Next:')} chiral pull --env ${options.target}`);
+    console.log();
+  }
 
   // ── Git sync ───────────────────────────────────────────────────────────────
   if (outputMode === 'human' && results.failed.length === 0) {

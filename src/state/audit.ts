@@ -26,7 +26,7 @@ export const AuditEntrySchema = z.object({
   source_env: z.string().nullable(),
   target_env: z.string(),
   workflow_ids: z.array(z.string()),
-  result: z.enum(['success', 'failure', 'aborted']),
+  result: z.enum(['success', 'failure', 'aborted', 'partial']),
   error: z.string().nullable(),
   chiral_version: z.string(),
   match_method: z.enum(['manual', 'auto', 'exact', 'fuzzy']).nullable().optional(),
@@ -55,19 +55,30 @@ export function readAuditLog(chiralDir: string): AuditEntry[] {
     .split('\n')
     .filter((line) => line.trim() !== '');
 
-  return lines.map((line, index) => {
+  const entries: AuditEntry[] = [];
+  let skipped = 0;
+
+  for (const line of lines) {
     let raw: unknown;
     try {
       raw = JSON.parse(line);
     } catch {
-      throw new UserError(`audit.jsonl is corrupted at line ${index + 1}`);
+      skipped++;
+      continue;
     }
     const result = AuditEntrySchema.safeParse(raw);
     if (!result.success) {
-      throw new UserError(`audit.jsonl has invalid entry at line ${index + 1}`);
+      skipped++;
+      continue;
     }
-    return result.data;
-  });
+    entries.push(result.data);
+  }
+
+  if (skipped > 0) {
+    console.error(`Warning: skipped ${skipped} malformed line(s) in audit.jsonl`);
+  }
+
+  return entries;
 }
 
 export function readInitEvent(chiralDir: string): { actor: string; timestamp: string } | null {
