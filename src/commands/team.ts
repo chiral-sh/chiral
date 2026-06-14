@@ -5,7 +5,7 @@ import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight } from '../lib/cli.js';
+import { padRight, getChiralVersion } from '../lib/cli.js';
 import { readTeam, writeTeam } from '../state/team.js';
 import { writeAuditEntry } from '../state/audit.js';
 
@@ -176,7 +176,7 @@ export async function runTeamAdd(
     workflow_ids: [],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
     match_method: 'manual',
     match_score: null,
   });
@@ -273,7 +273,7 @@ export async function runTeamRemove(
     workflow_ids: [],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   });
 
   if (options.json) {
@@ -375,7 +375,7 @@ export async function runTeamSetRole(
     workflow_ids: [],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
     match_method: 'manual',
     match_score: null,
   });

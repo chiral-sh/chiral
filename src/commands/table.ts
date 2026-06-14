@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-s
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight } from '../lib/cli.js';
+import { padRight, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadTableMap,
@@ -214,7 +214,7 @@ export async function runTableMap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       match_method: 'manual',
       match_score: null,
       resource: 'table',
@@ -278,7 +278,7 @@ export async function runTableMap(
   for (const env of envs) {
     const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
     if (!deploymentId) continue;
-    const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+    const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
     const tableIds = extractTableIds(workflows);
     for (const [id, info] of tableIds) {
       if (!isTableIdMapped(map, env, id)) {
@@ -373,7 +373,7 @@ export async function runTableMap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       match_method: 'manual',
       match_score: null,
       resource: 'table',
@@ -432,7 +432,7 @@ function collectUncovered(
   for (const env of envs) {
     const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
     if (!deploymentId) continue;
-    const workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+    const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
     const tableIds = extractTableIds(workflows);
     for (const [id, info] of tableIds) {
       if (!isTableIdMapped(map, env, id)) {
@@ -628,7 +628,7 @@ export async function runTableUnmap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       resource: 'table',
     });
 
@@ -665,7 +665,7 @@ export async function runTableUnmap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       resource: 'table',
     });
 

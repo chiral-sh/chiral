@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient, type WorkflowFull } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob, detectsEnvMarker } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, detectsEnvMarker, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   generateDeploymentId,
@@ -256,7 +256,7 @@ export async function runPull(
     source_env: null,
     target_env: options.env,
     workflow_ids: [] as string[],
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   };
 
   if (outputMode === 'human') {
@@ -280,7 +280,7 @@ export async function runPull(
 
       const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
       const previousWorkflows = previousDeploymentId
-        ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId)
+        ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId).workflows
         : null;
       const prevEntry = previousWorkflows?.find((w) => w.id === options.id);
       const isNew = !prevEntry;
@@ -443,7 +443,7 @@ export async function runPull(
     // ── delta ─────────────────────────────────────────────────────────────────
     const previousDeploymentId = findLatestDeploymentForEnv(chiralDir, options.env);
     const previousWorkflows = previousDeploymentId
-      ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId)
+      ? readAllWorkflowsInDeployment(chiralDir, previousDeploymentId).workflows
       : null;
 
     const delta = previousWorkflows

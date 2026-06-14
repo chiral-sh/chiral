@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { plural, matchesGlob, detectsEnvMarker } from '../../../src/lib/cli.js';
+import { plural, matchesGlob, detectsEnvMarker, getChiralVersion } from '../../../src/lib/cli.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 describe('plural', () => {
   it('returns singular form when n is 1', () => {
@@ -101,5 +103,13 @@ describe('detectsEnvMarker', () => {
 
   it('does not match partial word occurrences', () => {
     expect(detectsEnvMarker('development pipeline', [])).toBe(false);
+  });
+});
+
+describe('getChiralVersion', () => {
+  it('returns the version field from package.json', () => {
+    const pkgPath = fileURLToPath(new URL('../../../package.json', import.meta.url));
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
+    expect(getChiralVersion()).toBe(pkg.version);
   });
 });

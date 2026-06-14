@@ -5,7 +5,7 @@ import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, detectsEnvMarker } from '../lib/cli.js';
+import { failSpinner, plural, detectsEnvMarker, getChiralVersion } from '../lib/cli.js';
 import { generateDeploymentId, writeSnapshot, writeSnapshotMeta, computeSnapshotContentHash } from '../state/snapshots.js';
 import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
@@ -45,7 +45,7 @@ export async function runAdopt(
     source_env: null,
     target_env: options.env,
     workflow_ids: [] as string[],
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   };
 
   console.log();

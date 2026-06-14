@@ -5,7 +5,7 @@ import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight } from '../lib/cli.js';
+import { padRight, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadCredentials,
@@ -146,9 +146,9 @@ function computeCoverageSummary(
     }
     if (!deploymentId) continue;
 
-    let workflows: ReturnType<typeof readAllWorkflowsInDeployment>;
+    let workflows: ReturnType<typeof readAllWorkflowsInDeployment>['workflows'];
     try {
-      workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId);
+      workflows = readAllWorkflowsInDeployment(chiralDir, deploymentId).workflows;
     } catch {
       continue;
     }
@@ -282,7 +282,7 @@ export async function runCredentialMap(
       workflow_ids: [],
       result: 'success',
       error: null,
-      chiral_version: '0.1.0',
+      chiral_version: getChiralVersion(),
       match_method: 'manual',
       match_score: null,
     });
@@ -507,7 +507,7 @@ export async function runCredentialMap(
         workflow_ids: [],
         result: 'success',
         error: null,
-        chiral_version: '0.1.0',
+        chiral_version: getChiralVersion(),
         match_method: options.smart ? 'fuzzy' : 'manual',
         match_score: null,
       });
@@ -787,7 +787,7 @@ export async function runCredentialUnmap(
     workflow_ids: [],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   });
 
   if (options.env) {

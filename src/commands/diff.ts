@@ -5,7 +5,7 @@ import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
 import { ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { failSpinner, plural, matchesGlob, formatAge } from '../lib/cli.js';
+import { failSpinner, plural, matchesGlob, formatAge, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import { loadWorkflowMap, resolveTargetName, type WorkflowMap } from '../state/workflows.js';
 import { writeAuditEntry } from '../state/audit.js';
@@ -230,7 +230,7 @@ export async function runDiff(
     source_env: options.source,
     target_env: options.target,
     workflow_ids: [] as string[],
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   };
 
   const outputMode = resolveOutputMode(options);

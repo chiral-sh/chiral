@@ -9,7 +9,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-s
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { getGitActor } from '../lib/git.js';
-import { formatAge } from '../lib/cli.js';
+import { formatAge, getChiralVersion } from '../lib/cli.js';
 import { renderLockTable, type LockListEntry } from '../lib/lock-render.js';
 import {
   writeLock,
@@ -303,7 +303,7 @@ export async function runLockClaim(
         workflow_ids: [workflowId],
         result: 'success',
         error: null,
-        chiral_version: '0.1.0',
+        chiral_version: getChiralVersion(),
       });
       printJson({
         workflowId,
@@ -337,7 +337,7 @@ export async function runLockClaim(
     workflow_ids: [workflowId],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   });
 
   if (outputMode === 'human' && unmappedEnvs.length > 0) {
@@ -600,7 +600,7 @@ export async function runUnlock(
     workflow_ids: [workflowId],
     result: 'success',
     error: null,
-    chiral_version: '0.1.0',
+    chiral_version: getChiralVersion(),
   });
 
   if (outputMode === 'json') {
