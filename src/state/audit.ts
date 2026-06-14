@@ -37,6 +37,10 @@ export const AuditEntrySchema = z.object({
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 
+// Appends are atomic under POSIX O_APPEND only for writes <= PIPE_BUF (4096
+// bytes on Linux). A serialized entry with a large `workflow_ids` array can
+// exceed this, so concurrent multi-process appends are not guaranteed
+// non-interleaving for large entries. No advisory lock is taken (deferred).
 export function writeAuditEntry(chiralDir: string, entry: AuditEntry): void {
   const auditPath = join(chiralDir, 'audit.jsonl');
   const line = JSON.stringify(entry) + '\n';
@@ -46,6 +50,11 @@ export function writeAuditEntry(chiralDir: string, entry: AuditEntry): void {
     throw new UserError(`Could not write to audit log at ${auditPath}`);
   }
 }
+
+// Tracks audit log paths that have already produced a skip-count warning in
+// this process, so repeated reads (status/log/push) don't re-warn for the
+// same malformed line(s).
+const warnedSkipPaths = new Set<string>();
 
 export function readAuditLog(chiralDir: string): AuditEntry[] {
   const auditPath = join(chiralDir, 'audit.jsonl');
@@ -74,7 +83,8 @@ export function readAuditLog(chiralDir: string): AuditEntry[] {
     entries.push(result.data);
   }
 
-  if (skipped > 0) {
+  if (skipped > 0 && !warnedSkipPaths.has(auditPath)) {
+    warnedSkipPaths.add(auditPath);
     console.error(`Warning: skipped ${skipped} malformed line(s) in audit.jsonl`);
   }
 

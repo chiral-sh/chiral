@@ -123,6 +123,17 @@ describe('readAuditLog', () => {
     expect(entries).toHaveLength(2);
   });
 
+  it('warns at most once per process for repeated reads with a malformed line', () => {
+    const bad = JSON.stringify({ event_id: 'not-a-uuid', action: 'unknown' });
+    const valid = JSON.stringify(VALID_ENTRY);
+    vol.fromJSON({ '/project/dedupe-chiral/audit.jsonl': `${bad}\n${valid}\n` });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    readAuditLog('/project/dedupe-chiral');
+    readAuditLog('/project/dedupe-chiral');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
   it('ignores blank lines', () => {
     vol.fromJSON({ '/project/.chiral/': null });
     writeAuditEntry('/project/.chiral', VALID_ENTRY);
