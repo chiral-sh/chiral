@@ -61,6 +61,22 @@ describe('createChiralDirectory', () => {
     expect(parsed.credentials).toEqual({});
   });
 
+  it('creates url-map.json with version 1 and empty urls on fresh init', () => {
+    createChiralDirectory('/project/.chiral', 'test');
+    const raw = vol.readFileSync('/project/.chiral/url-map.json', 'utf-8') as string;
+    const parsed = JSON.parse(raw);
+    expect(parsed.version).toBe(1);
+    expect(parsed.urls).toEqual({});
+  });
+
+  it('does not overwrite an existing url-map.json on re-init', () => {
+    vol.fromJSON({ '/project/.chiral/url-map.json': JSON.stringify({ version: 1, urls: { api_base: { values: { dev: 'https://dev.example.com' } } } }) });
+    createChiralDirectory('/project/.chiral', 'test');
+    const raw = vol.readFileSync('/project/.chiral/url-map.json', 'utf-8') as string;
+    const parsed = JSON.parse(raw);
+    expect(parsed.urls).toHaveProperty('api_base');
+  });
+
   it('does not mutate CONFIG_EXAMPLE_TEMPLATE across calls', () => {
     createChiralDirectory('/project/.chiral', 'project-a');
     createChiralDirectory('/project2/.chiral', 'project-b');
