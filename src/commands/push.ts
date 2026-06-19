@@ -24,6 +24,7 @@ import { listLocksByEnv } from '../state/locks.js';
 import { peekEnvId } from '../state/envs.js';
 import { loadCredentials, buildCredentialMap, type CredentialMapEntry, applyCredentialMap } from '../state/credentials.js';
 import { loadTableMap, applyTableMap, type TableWarning } from '../state/tables.js';
+import { loadUrlMap, buildUrlMap, applyUrlMap, type UrlSubstitution, type UrlWarning } from '../state/url-map.js';
 import {
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
@@ -401,6 +402,7 @@ export async function runPush(
     options.target,
     credentials,
   );
+  const urlMapData = loadUrlMap(chiralDir);
 
   const classified: WorkflowClassification[] = snapshotWorkflows.map((wf) => {
     const resolvedName = resolveTargetName(workflowMap, options.source, options.target, wf.name);
@@ -425,9 +427,12 @@ export async function runPush(
     // Fingerprint path: compute source hash from snapshot (no API call needed),
     // compare against stored target hash if available. Normalize credential
     // names to the target env first, mirroring the remappedWorkflow that the
-    // stored target hash was computed from (see SM1/S1).
+    // stored target hash was computed from (see SM1/S1). URL rewrite must be
+    // included here too (C1) so skip-detection matches the stored hash.
+    const wfNodes = ((wf as Record<string, unknown>)['nodes'] ?? []) as unknown[];
+    const { substitutions: urlSubsForHash } = buildUrlMap(wfNodes, options.source, options.target, urlMapData);
     const srcHash = computeContentHash(
-      applyCredentialMap(wf, credMapForHash),
+      applyUrlMap(applyCredentialMap(wf, credMapForHash), urlSubsForHash),
     );
     if (tgtEntry && srcHash === tgtEntry.contentHash) {
       return { workflow: wf, resolvedName, action: 'skipped', targetActive: targetMatch.active, forceReactivate: false };
@@ -493,6 +498,35 @@ export async function runPush(
     }
   }
 
+  // ── URL map (aggregate substitutions and unmapped warnings across non-skipped workflows) ─
+  const allUrlSubstitutions: UrlSubstitution[] = [];
+  const allUrlWarnings: UrlWarning[] = [];
+  for (const c of classified) {
+    if (c.action === 'skipped') continue;
+    const wfNodes = ((c.workflow as Record<string, unknown>)['nodes'] ?? []) as unknown[];
+    const { substitutions, warnings } = buildUrlMap(wfNodes, options.source, options.target, urlMapData);
+    for (const sub of substitutions) {
+      const existing = allUrlSubstitutions.find((s) => s.logicalName === sub.logicalName);
+      if (existing) {
+        for (const n of sub.affectedNodes) {
+          if (!existing.affectedNodes.includes(n)) existing.affectedNodes.push(n);
+        }
+      } else {
+        allUrlSubstitutions.push({ ...sub, affectedNodes: [...sub.affectedNodes] });
+      }
+    }
+    for (const w of warnings) {
+      const existing = allUrlWarnings.find((u) => u.value === w.value);
+      if (existing) {
+        for (const n of w.affectedNodes) {
+          if (!existing.affectedNodes.includes(n)) existing.affectedNodes.push(n);
+        }
+      } else {
+        allUrlWarnings.push({ ...w, affectedNodes: [...w.affectedNodes] });
+      }
+    }
+  }
+
   // ── --check: lock check gate ─────────────────────────────────────────────
   if (options.check) {
     const violations = collectLockViolations(
@@ -543,6 +577,8 @@ export async function runPush(
         sourceName, targetName,
       })),
       table_warnings: allTableWarnings,
+      url_substitutions: allUrlSubstitutions,
+      url_warnings: allUrlWarnings,
     });
     if (credentialErrors.length > 0) throw new ControlledExit(1);
     return;
@@ -583,6 +619,18 @@ export async function runPush(
     console.log();
   }
 
+  // URL map section
+  if (outputMode === 'human' && allUrlSubstitutions.length > 0) {
+    console.log(`  URL map:`);
+    for (const sub of allUrlSubstitutions) {
+      const nodeCount = sub.affectedNodes.length;
+      console.log(
+        `    ${chalk.dim(sub.logicalName + ':')} ${chalk.dim(sub.sourceValue)} → ${chalk.dim(sub.targetValue)}  ${chalk.dim(`(${nodeCount} ${nodeCount === 1 ? 'node' : 'nodes'})`)}`,
+      );
+    }
+    console.log();
+  }
+
   // Credential errors - abort before showing changeset
   if (credentialErrors.length > 0) {
     if (outputMode === 'json') {
@@ -600,6 +648,8 @@ export async function runPush(
           sourceName, targetName,
         })),
         table_warnings: allTableWarnings,
+        url_substitutions: allUrlSubstitutions,
+        url_warnings: allUrlWarnings,
       });
     } else {
       const hint = credentialErrors.map((e) => {
@@ -662,6 +712,20 @@ export async function runPush(
         );
       }
     }
+
+    // URL warnings
+    if (allUrlWarnings.length > 0) {
+      console.log();
+      for (const uw of allUrlWarnings) {
+        const nodeList = uw.affectedNodes.join(', ');
+        console.log(
+          `  ${chalk.yellow('⚠')}  Unmapped URL: ${uw.value}  ${chalk.dim(`(${nodeList})`)}`,
+        );
+        console.log(
+          chalk.dim(`     → Run: chiral url map add ${uw.suggestedKey} ${options.source}=${uw.value} ${options.target}=<value>`),
+        );
+      }
+    }
   }
 
   // ── Dry-run mode: show summary and exit ──────────────────────────────────
@@ -707,6 +771,8 @@ export async function runPush(
         tag_warnings: tagWarnings.map((t) => t.name),
         credential_errors: [],
         table_warnings: allTableWarnings,
+        url_substitutions: allUrlSubstitutions,
+        url_warnings: allUrlWarnings,
       });
     } else {
       console.log();
@@ -855,7 +921,14 @@ export async function runPush(
 
     const sourceWorkflow = c.workflow as Record<string, unknown>;
     const credRemappedWorkflow = applyCredentialMap(sourceWorkflow, credMap);
-    const { workflow: remappedWorkflow } = applyTableMap(credRemappedWorkflow, tableMap, options.source, options.target);
+    const { workflow: tableRemappedWorkflow } = applyTableMap(credRemappedWorkflow, tableMap, options.source, options.target);
+    const { substitutions: urlSubsForBody } = buildUrlMap(
+      (sourceWorkflow['nodes'] ?? []) as unknown[],
+      options.source,
+      options.target,
+      urlMapData,
+    );
+    const remappedWorkflow = applyUrlMap(tableRemappedWorkflow, urlSubsForBody);
     const sanitizedForCreate = sanitizeWorkflowForApi(remappedWorkflow, 'create');
     const sanitizedForUpdate = sanitizeWorkflowForApi(remappedWorkflow, 'update');
     const targetWorkflow = targetByName.get(c.resolvedName);
@@ -1053,6 +1126,8 @@ export async function runPush(
       tag_warnings: tagWarnings.map((t) => t.name),
       credential_errors: [],
       table_warnings: allTableWarnings,
+      url_substitutions: allUrlSubstitutions,
+      url_warnings: allUrlWarnings,
     });
   } else {
     console.log();

@@ -2188,3 +2188,330 @@ describe('pushCommand - --stale-lock-after validation', () => {
     expect(staleLockAfterOption?.parseArg?.('24', undefined)).toBe(24);
   });
 });
+
+// ── URL map substitution ──────────────────────────────────────────────────────
+
+function makeSnapshotWfWithUrl(
+  id: string,
+  name: string,
+  versionId: string,
+  urlNodes: Array<{ nodeName: string; url: string }>,
+): SnapshotWorkflow {
+  return {
+    id,
+    name,
+    versionId,
+    active: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+    tags: [],
+    nodes: urlNodes.map((u) => ({
+      id: `node-${u.nodeName}`,
+      name: u.nodeName,
+      type: 'n8n-nodes-base.httpRequest',
+      parameters: { url: u.url },
+    })),
+    connections: {},
+  };
+}
+
+const URL_MAP_JSON = {
+  version: 1,
+  urls: {
+    api_base: {
+      values: {
+        dev: 'https://api.dev.example.com',
+        prod: 'https://api.example.com',
+      },
+    },
+  },
+};
+
+describe('runPush - URL map substitution', () => {
+  it('replaces URL origin with target env value in push body', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://api.dev.example.com/v1/orders' },
+    ]);
+    setupProject([wf], []);
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify(URL_MAP_JSON));
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
+    const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
+    const params = nodes[0]['parameters'] as Record<string, unknown>;
+    expect(params['url']).toBe('https://api.example.com/v1/orders');
+  });
+
+  it('classifies as skipped on re-push when only the URL origin differs (idempotency)', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'URL WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://api.dev.example.com/v1/orders' },
+    ]);
+    setupProject([wf], []);
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify(URL_MAP_JSON));
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-1', versionId: 'created-v1' });
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          createWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+    expect(createWorkflow).toHaveBeenCalledOnce();
+
+    // Second push: target reports a different versionId but stored hash should match
+    const updateWorkflow = vi.fn().mockResolvedValue({ versionId: 'updated-v1' });
+    const deactivateWorkflow = vi.fn().mockResolvedValue(undefined);
+
+    MockN8nClient.mockImplementation(function (_env, envName) {
+      if (envName === 'prod') {
+        return makeFullTargetClientMock({
+          listWorkflows: vi.fn().mockResolvedValue([makeSummary('tgt-1', 'URL WF', 'different-v1', false)]),
+          listCredentials: vi.fn().mockResolvedValue([]),
+          listTags: vi.fn().mockResolvedValue([]),
+          updateWorkflow,
+          deactivateWorkflow,
+        }) as never;
+      }
+      return makeTargetClientMock() as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    expect(updateWorkflow).not.toHaveBeenCalled();
+    expect(deactivateWorkflow).not.toHaveBeenCalled();
+    expect(output.join('\n')).toContain('skipped');
+  });
+
+  it('passes URL unchanged when no url-map entry matches', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://unmapped.example.com/v1/items' },
+    ]);
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
+    const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
+    const params = nodes[0]['parameters'] as Record<string, unknown>;
+    expect(params['url']).toBe('https://unmapped.example.com/v1/items');
+  });
+
+  it('prints url map section with substitution line in human output', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://api.dev.example.com/v1/orders' },
+    ]);
+    setupProject([wf], []);
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify(URL_MAP_JSON));
+
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' }),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('URL map:');
+    expect(joined).toContain('api_base:');
+    expect(joined).toContain('https://api.dev.example.com');
+    expect(joined).toContain('https://api.example.com');
+    expect(joined).toContain('1 node');
+  });
+
+  it('prints url map section in --dry-run human output', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://api.dev.example.com/v1/orders' },
+    ]);
+    setupProject([wf], []);
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify(URL_MAP_JSON));
+
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('URL map:');
+    expect(joined).toContain('api_base:');
+  });
+
+  it('prints one deduped unmapped-URL warning per unique value with hostname-slug suggestion', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'Node A', url: 'https://unmapped.dev.example.com/v1/orders' },
+      { nodeName: 'Node B', url: 'https://unmapped.dev.example.com/v1/orders' },
+    ]);
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' }),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+    await runPush({ source: 'dev', target: 'prod', yes: true });
+
+    const joined = output.join('\n');
+    const warningCount = (joined.match(/Unmapped URL:/g) ?? []).length;
+    expect(warningCount).toBe(1);
+    expect(joined).toContain('unmapped_dev_example_com');
+    expect(joined).toContain('chiral url map add');
+  });
+
+  it('exits 0 (does not abort) when push has only unmapped URL warnings', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://unmapped.example.com/v1/items' },
+    ]);
+    setupProject([wf], []);
+
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' });
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow,
+      }) as never;
+    });
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await expect(runPush({ source: 'dev', target: 'prod', yes: true })).resolves.not.toThrow();
+    expect(createWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it('json dry-run includes url_substitutions and url_warnings', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://api.dev.example.com/v1/orders' },
+      { nodeName: 'Node B', url: 'https://unmapped.example.com/items' },
+    ]);
+    setupProject([wf], []);
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify(URL_MAP_JSON));
+
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.url_substitutions).toEqual([
+      {
+        logicalName: 'api_base',
+        sourceValue: 'https://api.dev.example.com',
+        targetValue: 'https://api.example.com',
+        exact: false,
+        affectedNodes: ['HTTP Request'],
+      },
+    ]);
+    expect(parsed.data.url_warnings).toEqual([
+      {
+        value: 'https://unmapped.example.com/items',
+        suggestedKey: 'unmapped_example_com',
+        affectedNodes: ['Node B'],
+      },
+    ]);
+  });
+
+  it('json dry-run has empty url_substitutions and url_warnings when no URLs mapped', async () => {
+    const wf = makeSnapshotWf('src-1', 'WF', 'v1');
+    setupProject([wf], []);
+
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.url_substitutions).toEqual([]);
+    expect(parsed.data.url_warnings).toEqual([]);
+  });
+
+  it('live json result includes url_substitutions and url_warnings', async () => {
+    const wf = makeSnapshotWfWithUrl('src-1', 'WF', 'v1', [
+      { nodeName: 'HTTP Request', url: 'https://api.dev.example.com/v1/orders' },
+    ]);
+    setupProject([wf], []);
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify(URL_MAP_JSON));
+
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        createWorkflow: vi.fn().mockResolvedValue({ id: 'tgt-new', versionId: 'v1' }),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+    await runPush({ source: 'dev', target: 'prod', yes: true, json: true });
+
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.url_substitutions).toHaveLength(1);
+    expect(parsed.data.url_substitutions[0].logicalName).toBe('api_base');
+    expect(parsed.data.url_warnings).toEqual([]);
+  });
+});
