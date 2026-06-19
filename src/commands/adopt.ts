@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import ora from 'ora';
+import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
@@ -10,6 +11,7 @@ import { generateDeploymentId, writeSnapshot, writeSnapshotMeta, computeSnapshot
 import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
+import { extractUrlsFromSnapshots, validateUrlValue } from '../state/url-map.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -138,6 +140,28 @@ export async function runAdopt(
     for (const wf of workflows) {
       const badge = wf.active ? chalk.green('active') : chalk.dim('inactive');
       console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
+    }
+
+    // ── URL discovery hint ────────────────────────────────────────────────────
+    const discoveredUrls = extractUrlsFromSnapshots(chiralDir, [options.env]);
+    const safeUrls = discoveredUrls.filter((d) => {
+      try { validateUrlValue(d.value); return true; } catch { return false; }
+    });
+    const uniqueHostnames = new Set(safeUrls.map((d) => d.hostname));
+    if (uniqueHostnames.size > 0) {
+      const uniqueWorkflowNames = new Set(safeUrls.flatMap((d) => d.workflowNames));
+      const domainLabel = uniqueHostnames.size === 1 ? 'domain' : 'domains';
+      const wfLabel = uniqueWorkflowNames.size === 1 ? 'workflow' : 'workflows';
+      const msg = `Found ${uniqueHostnames.size} unique ${domainLabel} across ${uniqueWorkflowNames.size} ${wfLabel}`;
+      if (process.stdout.isTTY) {
+        console.log(`\n  ${msg}.`);
+        const shouldRegister = await confirm({ message: '  Register them as URL mappings?' });
+        if (shouldRegister) {
+          console.log(chalk.dim(`     Run: chiral url map`));
+        }
+      } else {
+        console.log(`\n  ${chalk.dim(`${msg} — run chiral url map to register them.`)}`);
+      }
     }
 
     const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
