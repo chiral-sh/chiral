@@ -55,7 +55,7 @@ describe('chiral adopt (integration)', () => {
     const repo: RepoHandle = makeRepo({ url, apiKey, project });
     const { projectsDir, env } = registerTempProject(repo, project);
     try {
-      const result = await runCli(['adopt', '--env', 'dev'], { cwd: repo.dir, env });
+      const result = await runCli(['adopt', 'dev'], { cwd: repo.dir, env });
 
       expect(result.exitCode).toBe(0);
 
@@ -87,7 +87,7 @@ describe('chiral adopt (integration)', () => {
     const repo: RepoHandle = makeRepo({ url, apiKey: `${apiKey}-invalid`, project });
     const { projectsDir, env } = registerTempProject(repo, project);
     try {
-      const result = await runCli(['adopt', '--env', 'dev'], { cwd: repo.dir, env });
+      const result = await runCli(['adopt', 'dev'], { cwd: repo.dir, env });
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toLowerCase()).toContain('invalid');

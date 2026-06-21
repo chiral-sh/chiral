@@ -230,7 +230,7 @@ describe('runStatus — text table rendering', () => {
     const output = stdoutLines.join('\n');
     expect(output).toContain('0 (!)');
     expect(output).toContain('has 0 workflows');
-    expect(output).toContain("chiral pull --env dev");
+    expect(output).toContain("chiral pull dev");
   });
 });
 

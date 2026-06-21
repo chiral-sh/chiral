@@ -193,28 +193,28 @@ function setupProject(snapshotWorkflows: SnapshotWorkflow[] = [], targetWorkflow
 describe('runPush (dry-run) - guards', () => {
   it('throws UserError when source equals target', async () => {
     await expect(
-      runPush({ source: 'dev', target: 'dev', dryRun: true }),
+      runPush({ from: 'dev', to: 'dev', dryRun: true }),
     ).rejects.toThrow('source and target are both "dev"');
   });
 
   it('throws when no snapshot exists for source', async () => {
     setupProject(); // empty project, no snapshot
     await expect(
-      runPush({ source: 'dev', target: 'prod', dryRun: true }),
+      runPush({ from: 'dev', to: 'prod', dryRun: true }),
     ).rejects.toThrow('No snapshot found for dev');
   });
 
   it('throws UserError when source env is not in config', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
     await expect(
-      runPush({ source: 'staging', target: 'prod', dryRun: true }),
+      runPush({ from: 'staging', to: 'prod', dryRun: true }),
     ).rejects.toBeInstanceOf(UserError);
   });
 
   it('throws UserError when target env is not in config', async () => {
     setupProject([makeSnapshotWf('src-1', 'W1', 'v1')]);
     await expect(
-      runPush({ source: 'dev', target: 'staging', dryRun: true }),
+      runPush({ from: 'dev', to: 'staging', dryRun: true }),
     ).rejects.toBeInstanceOf(UserError);
   });
 });
@@ -228,7 +228,7 @@ describe('runPush (dry-run) - classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('+');
@@ -245,7 +245,7 @@ describe('runPush (dry-run) - classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('~');
@@ -262,7 +262,7 @@ describe('runPush (dry-run) - classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('─');
@@ -279,7 +279,7 @@ describe('runPush (dry-run) - classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('active, will be paused briefly');
   });
@@ -294,7 +294,7 @@ describe('runPush (dry-run) - credential mapping', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('Credential map:');
@@ -310,7 +310,7 @@ describe('runPush (dry-run) - credential mapping', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('dev_stripe');
@@ -332,7 +332,7 @@ describe('runPush (dry-run) - credential mapping', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', dryRun: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(1);
@@ -355,7 +355,7 @@ describe('runPush (dry-run) - tag warnings', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('⚠');
@@ -369,7 +369,7 @@ describe('runPush (dry-run) - tag warnings', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).not.toContain('Tag "billing" not found');
@@ -399,7 +399,7 @@ describe('runPush (dry-run) - stale snapshot', () => {
     // Mock confirm to return false
     vi.mocked(prompts.confirm).mockResolvedValue(false);
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', dryRun: true }).catch(e => e);
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(0);
     expect(prompts.confirm).toHaveBeenCalled();
@@ -417,7 +417,7 @@ describe('runPush (dry-run) - stale snapshot', () => {
 
     vi.mocked(prompts.confirm).mockResolvedValue(false);
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', dryRun: true }).catch(e => e);
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(0);
     expect(prompts.confirm).toHaveBeenCalled();
@@ -443,7 +443,7 @@ describe('runPush (dry-run) - stale snapshot', () => {
 
     vi.mocked(prompts.confirm).mockResolvedValue(true);
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, yes: true });
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
 });
@@ -457,13 +457,13 @@ describe('runPush (dry-run) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true });
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
 
     expect(parsed.status).toBe('ok');
-    expect(parsed.data.source).toBe('dev');
+    expect(parsed.data.from).toBe('dev');
     expect(parsed.data.dry_run).toBe(true);
     expect(parsed.data.updated).toContain('W1');
     expect(parsed.data.created).toEqual([]);
@@ -485,7 +485,7 @@ describe('runPush (dry-run) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    const err = await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(1);
@@ -501,7 +501,7 @@ describe('runPush (dry-run) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true, pattern: 'NoMatch*' });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true, pattern: 'NoMatch*' });
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
@@ -522,7 +522,7 @@ describe('runPush (dry-run) - filters', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, tag: 'billing' });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, tag: 'billing' });
 
     const joined = output.join('\n');
     expect(joined).toContain('Tagged WF');
@@ -538,7 +538,7 @@ describe('runPush (dry-run) - filters', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, pattern: 'Customer *' });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, pattern: 'Customer *' });
 
     const joined = output.join('\n');
     expect(joined).toContain('Customer Orders');
@@ -570,7 +570,7 @@ describe('runPush (dry-run) - filters', () => {
 
     // Should succeed: skipped workflow's credentials are not validated
     await expect(
-      runPush({ source: 'dev', target: 'prod', dryRun: true }),
+      runPush({ from: 'dev', to: 'prod', dryRun: true }),
     ).resolves.toBeUndefined();
 
     expect(output.join('\n')).not.toContain('Cannot push');
@@ -589,7 +589,7 @@ describe('runPush (dry-run) - summary', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('already in sync');
   });
@@ -626,7 +626,7 @@ describe('runPush (dry-run) - fingerprint-based classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('─');
@@ -661,7 +661,7 @@ describe('runPush (dry-run) - fingerprint-based classification', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('~');
@@ -676,7 +676,7 @@ describe('runPush (dry-run) - workflow map not written', () => {
   it('does not create workflows.json when dry-run mode is used', async () => {
     setupProject([makeSnapshotWf('src-1', 'New WF', 'v1')], []);
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, yes: true });
 
     expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
   });
@@ -698,7 +698,7 @@ describe('runPush (live) - fingerprint writes', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
@@ -725,7 +725,7 @@ describe('runPush (live) - fingerprint writes', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     const fp = JSON.parse(raw);
@@ -753,7 +753,7 @@ describe('runPush (live) - fingerprint writes', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
     // description must not be in the POST body
@@ -780,7 +780,7 @@ describe('runPush (live) - fingerprint writes', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
     expect(updateWorkflow).not.toHaveBeenCalled();
@@ -803,7 +803,7 @@ describe('runPush (live) - fingerprint writes', () => {
     vi.spyOn(console, 'log').mockImplementation(function() { });
     vi.spyOn(console, 'error').mockImplementation(function() { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
+    await runPush({ from: 'dev', to: 'prod', yes: true }).catch(() => { });
 
     expect(vol.existsSync('/project/.chiral/fingerprints.json')).toBe(false);
   });
@@ -834,7 +834,7 @@ describe('runPush (live) - idempotency with a mapped credential', () => {
 
     // First push: creates the workflow and writes a target fingerprint over
     // the remapped (prod_pg) credential name.
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
 
@@ -864,7 +864,7 @@ describe('runPush (live) - idempotency with a mapped credential', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(updateWorkflow).not.toHaveBeenCalled();
     expect(deactivateWorkflow).not.toHaveBeenCalled();
@@ -900,7 +900,7 @@ describe('runPush (live) - credential-rotation detection', () => {
 
     // First push: creates the workflow and writes a target fingerprint over
     // the remapped (prod_pg) credential name.
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
 
@@ -928,7 +928,7 @@ describe('runPush (live) - credential-rotation detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('Cred WF');
@@ -958,7 +958,7 @@ describe('runPush (live) - credential-rotation detection', () => {
 
     // First push: creates the workflow and writes a target fingerprint over
     // the remapped (prod_pg) credential name.
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(createWorkflow).toHaveBeenCalledOnce();
 
@@ -987,7 +987,7 @@ describe('runPush (live) - credential-rotation detection', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('Cred WF');
@@ -1012,7 +1012,7 @@ describe('runPush (live) - workflow map registration', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
@@ -1038,7 +1038,7 @@ describe('runPush (live) - workflow map registration', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const raw = vol.readFileSync('/project/.chiral/workflows.json', 'utf-8') as string;
     const map = JSON.parse(raw);
@@ -1075,7 +1075,7 @@ describe('runPush (live) - workflow map registration', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     // Success line should show resolved name with mapped-from note
     expect(output.join('\n')).toContain('Invoice Sync');
@@ -1103,7 +1103,7 @@ describe('runPush (live) - workflow map registration', () => {
     vi.spyOn(console, 'log').mockImplementation(function() { });
     vi.spyOn(console, 'error').mockImplementation(function() { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
+    await runPush({ from: 'dev', to: 'prod', yes: true }).catch(() => { });
 
     expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
   });
@@ -1118,7 +1118,7 @@ describe('runPush - header text', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('Dry run:');
     expect(output.join('\n')).not.toContain('Pushing');
@@ -1140,7 +1140,7 @@ describe('runPush - header text', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(output.join('\n')).toContain('Pushing');
     expect(output.join('\n')).not.toContain('Dry run:');
@@ -1173,7 +1173,7 @@ describe('runPush - stale snapshot with --yes', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, yes: true });
 
     expect(output.join('\n')).toContain('old');
     expect(output.join('\n')).toContain('chiral pull');
@@ -1183,7 +1183,7 @@ describe('runPush - stale snapshot with --yes', () => {
     setupStaleProject();
     vi.mocked(prompts.confirm).mockResolvedValue(true);
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, yes: true });
 
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
@@ -1203,7 +1203,7 @@ describe('runPush - stale snapshot with --yes', () => {
       }),
     );
 
-    const err = await runPush({ source: 'dev', target: 'prod', json: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', json: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(UserError);
     expect((err as UserError).message).toContain('--yes');
@@ -1234,7 +1234,7 @@ describe('runPush (live) - prod type-to-confirm', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod' });
+    await runPush({ from: 'dev', to: 'prod' });
 
     expect(prompts.input).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('"prod" to confirm') }),
@@ -1280,7 +1280,7 @@ describe('runPush - lock check integration', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
@@ -1296,7 +1296,7 @@ describe('runPush - lock check integration', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    const err = await runPush({ source: 'dev', target: 'prod' }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod' }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(0);
@@ -1325,7 +1325,7 @@ describe('runPush - lock check integration', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(prompts.confirm).not.toHaveBeenCalled();
   });
@@ -1341,7 +1341,7 @@ describe('runPush - lock check integration', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod' }).catch(() => {});
+    await runPush({ from: 'dev', to: 'prod' }).catch(() => {});
 
     expect(output.join('\n')).toContain('may be abandoned');
   });
@@ -1365,7 +1365,7 @@ describe('runPush - lock check integration', () => {
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
     // Should not throw — "cannot check" is a warning, not a block
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(output.join('\n')).toContain('cannot check for locks');
     expect(prompts.confirm).not.toHaveBeenCalledWith(
@@ -1381,7 +1381,7 @@ describe('runPush - lock check integration', () => {
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const err = await runPush({ source: 'dev', target: 'prod', check: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', check: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(1);
@@ -1395,7 +1395,7 @@ describe('runPush - lock check integration', () => {
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const err = await runPush({ source: 'dev', target: 'prod', check: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', check: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(0);
@@ -1410,7 +1410,7 @@ describe('runPush - lock check integration', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    const err = await runPush({ source: 'dev', target: 'prod', check: true, json: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', check: true, json: true }).catch(e => e);
 
     expect(err).toBeInstanceOf(ControlledExit);
     expect(err.code).toBe(1);
@@ -1432,7 +1432,7 @@ describe('runPush - lock check integration', () => {
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     // dry-run exits before lock check; confirm should NOT have been called for lock check
     expect(prompts.confirm).not.toHaveBeenCalledWith(
@@ -1514,7 +1514,7 @@ describe('runPush - Data Table ID substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
@@ -1547,7 +1547,7 @@ describe('runPush - Data Table ID substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
@@ -1580,7 +1580,7 @@ describe('runPush - Data Table ID substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
@@ -1605,7 +1605,7 @@ describe('runPush - Data Table ID substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
@@ -1623,7 +1623,7 @@ describe('runPush - Data Table ID substitution', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('unmapped-id');
@@ -1640,7 +1640,7 @@ describe('runPush - Data Table ID substitution', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     expect(output.join('\n')).toContain('unmapped-dev-id');
     expect(output.join('\n')).toContain('⚠');
@@ -1655,7 +1655,7 @@ describe('runPush - Data Table ID substitution', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true });
 
     expect(output).toHaveLength(1);
     const parsed = JSON.parse(output[0]);
@@ -1681,7 +1681,7 @@ describe('runPush - Data Table ID substitution', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true });
 
     const parsed = JSON.parse(output[0]);
     expect(parsed.data.table_warnings).toEqual([]);
@@ -1708,7 +1708,7 @@ describe('runPush (live) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', json: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', json: true, yes: true });
 
     expect(createWorkflow).toHaveBeenCalled();
     expect(output).toHaveLength(1);
@@ -1734,7 +1734,7 @@ describe('runPush (live) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', json: true, dryRun: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', json: true, dryRun: true, yes: true });
 
     expect(createWorkflow).not.toHaveBeenCalled();
     const parsed = JSON.parse(output[0]);
@@ -1758,7 +1758,7 @@ describe('runPush (live) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    const err = await runPush({ source: 'dev', target: 'prod', json: true }).catch((e) => e);
+    const err = await runPush({ from: 'dev', to: 'prod', json: true }).catch((e) => e);
 
     expect(err).toBeInstanceOf(UserError);
     expect(createWorkflow).not.toHaveBeenCalled();
@@ -1781,7 +1781,7 @@ describe('runPush (live) - JSON output', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', json: true, yes: true });
+    await runPush({ from: 'dev', to: 'prod', json: true, yes: true });
 
     expect(output).toHaveLength(1);
     expect(() => JSON.parse(output[0])).not.toThrow();
@@ -1803,7 +1803,7 @@ describe('runPush (dry-run) - corrupted snapshot files', () => {
     vi.spyOn(console, 'log').mockImplementation((...args) => logOutput.push(args.join(' ')));
     vi.spyOn(console, 'error').mockImplementation((...args) => errOutput.push(args.join(' ')));
 
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     expect(errOutput.join('\n')).toContain('corrupted');
     const joined = logOutput.join('\n');
@@ -1845,7 +1845,7 @@ describe('runPush (live) - active workflow update failure', () => {
     vi.spyOn(console, 'log').mockImplementation(function () { });
     vi.spyOn(console, 'error').mockImplementation(function () { });
 
-    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', yes: true }).catch(e => e);
     expect(err).toBeInstanceOf(ControlledExit);
     expect((err as ControlledExit).code).toBe(1);
 
@@ -1886,7 +1886,7 @@ describe('runPush (live) - active workflow update failure', () => {
     vi.spyOn(console, 'log').mockImplementation(function () { });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(function () { });
 
-    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', yes: true }).catch(e => e);
     expect(err).toBeInstanceOf(ControlledExit);
     expect((err as ControlledExit).code).toBe(1);
 
@@ -1923,7 +1923,7 @@ describe('runPush (live) - active workflow update failure', () => {
     vi.spyOn(console, 'log').mockImplementation(function () { });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(function () { });
 
-    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch(e => e);
+    const err = await runPush({ from: 'dev', to: 'prod', yes: true }).catch(e => e);
     expect(err).toBeInstanceOf(ControlledExit);
     expect((err as ControlledExit).code).toBe(1);
 
@@ -1962,7 +1962,7 @@ describe('runPush (live) - success-path reactivation failure', () => {
     vi.spyOn(console, 'log').mockImplementation(function () { });
     vi.spyOn(console, 'error').mockImplementation(function () { });
 
-    const err = await runPush({ source: 'dev', target: 'prod', yes: true }).catch((e) => e);
+    const err = await runPush({ from: 'dev', to: 'prod', yes: true }).catch((e) => e);
 
     // The update itself succeeded - this is not reported as a plain push failure.
     expect(err).toBeUndefined();
@@ -2009,14 +2009,14 @@ describe('runPush (live) - success-path reactivation failure', () => {
 
     setupProject([wf], [targetWf]);
     setupClients();
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     let raw = vol.readFileSync('/project/.chiral/fingerprints.json', 'utf-8') as string;
     expect(JSON.parse(raw).envs?.prod?.['tgt-1']?.needsReactivation).toBe(true);
 
     // Re-run push against the same snapshot/state.
     setupClients();
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     // The workflow is re-attempted (updateWorkflow + activateWorkflow called again),
     // not silently classified as "skipped".
@@ -2055,7 +2055,7 @@ describe('runPush (live) - success-path reactivation failure', () => {
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(activateWorkflow).toHaveBeenCalledWith('tgt-1');
     expect(output.some((l) => typeof l === 'string' && l.includes('Updated') && l.includes('reactivated'))).toBe(true);
@@ -2093,7 +2093,7 @@ describe('runPush (live) - audit result classification', () => {
     vi.spyOn(console, 'log').mockImplementation(function() { });
     vi.spyOn(console, 'error').mockImplementation(function() { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }).catch((err) => {
+    await runPush({ from: 'dev', to: 'prod', yes: true }).catch((err) => {
       expect(err).toBeInstanceOf(ControlledExit);
       expect((err as ControlledExit).code).toBe(1);
     });
@@ -2119,7 +2119,7 @@ describe('runPush (live) - audit result classification', () => {
     vi.spyOn(console, 'log').mockImplementation(function() { });
     vi.spyOn(console, 'error').mockImplementation(function() { });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true }).catch(() => { });
+    await runPush({ from: 'dev', to: 'prod', yes: true }).catch(() => { });
 
     const entries = readAuditLog('/project/.chiral');
     expect(entries).toHaveLength(1);
@@ -2139,7 +2139,7 @@ describe('runPush (live) - audit result classification', () => {
       }) as never;
     });
 
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const entries = readAuditLog('/project/.chiral');
     expect(entries).toHaveLength(1);
@@ -2246,7 +2246,7 @@ describe('runPush - URL map substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
@@ -2275,7 +2275,7 @@ describe('runPush - URL map substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
     expect(createWorkflow).toHaveBeenCalledOnce();
 
     // Second push: target reports a different versionId but stored hash should match
@@ -2297,7 +2297,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     expect(updateWorkflow).not.toHaveBeenCalled();
     expect(deactivateWorkflow).not.toHaveBeenCalled();
@@ -2321,7 +2321,7 @@ describe('runPush - URL map substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const postedBody = createWorkflow.mock.calls[0][0] as Record<string, unknown>;
     const nodes = postedBody['nodes'] as Array<Record<string, unknown>>;
@@ -2347,7 +2347,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('URL map:');
@@ -2374,7 +2374,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
-    await runPush({ source: 'dev', target: 'prod', dryRun: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
 
     const joined = output.join('\n');
     expect(joined).toContain('URL map:');
@@ -2399,7 +2399,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
-    await runPush({ source: 'dev', target: 'prod', yes: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true });
 
     const joined = output.join('\n');
     const warningCount = (joined.match(/Unmapped URL:/g) ?? []).length;
@@ -2425,7 +2425,7 @@ describe('runPush - URL map substitution', () => {
     });
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await expect(runPush({ source: 'dev', target: 'prod', yes: true })).resolves.not.toThrow();
+    await expect(runPush({ from: 'dev', to: 'prod', yes: true })).resolves.not.toThrow();
     expect(createWorkflow).toHaveBeenCalledOnce();
   });
 
@@ -2447,7 +2447,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true });
 
     const parsed = JSON.parse(output[0]);
     expect(parsed.data.url_substitutions).toEqual([
@@ -2482,7 +2482,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
-    await runPush({ source: 'dev', target: 'prod', dryRun: true, json: true });
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true });
 
     const parsed = JSON.parse(output[0]);
     expect(parsed.data.url_substitutions).toEqual([]);
@@ -2507,7 +2507,7 @@ describe('runPush - URL map substitution', () => {
 
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
-    await runPush({ source: 'dev', target: 'prod', yes: true, json: true });
+    await runPush({ from: 'dev', to: 'prod', yes: true, json: true });
 
     const parsed = JSON.parse(output[0]);
     expect(parsed.data.url_substitutions).toHaveLength(1);

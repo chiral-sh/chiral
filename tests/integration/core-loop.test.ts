@@ -92,16 +92,16 @@ describe('chiral core loop (integration)', () => {
       expect(await prodClient.listWorkflows()).toHaveLength(0);
 
       // ── adopt dev ────────────────────────────────────────────────────────
-      const adopt = await runCli(['adopt', '--env', 'dev'], { cwd: repo.dir, env });
+      const adopt = await runCli(['adopt', 'dev'], { cwd: repo.dir, env });
       expect(adopt.exitCode).toBe(0);
 
       // ── pull dev ─────────────────────────────────────────────────────────
-      const pull = await runCli(['pull', '--env', 'dev'], { cwd: repo.dir, env });
+      const pull = await runCli(['pull', 'dev'], { cwd: repo.dir, env });
       expect(pull.exitCode).toBe(0);
 
       // ── diff dev -> prod (prod empty - the seeded workflow shows as added) ─
       const diff = await runCli(
-        ['diff', '--source', 'dev', '--target', 'prod', '--json', '--exit-code'],
+        ['diff', '--from', 'dev', '--to', 'prod', '--json', '--exit-code'],
         { cwd: repo.dir, env },
       );
       expect(diff.exitCode).toBe(1);
@@ -113,7 +113,7 @@ describe('chiral core loop (integration)', () => {
       expect(diffPayload.data.added.map((w) => w.name)).toContain(workflowName);
 
       // ── push dev -> prod (create path - prod has no matching workflow) ────
-      const push = await runCli(['push', '--source', 'dev', '--target', 'prod', '--yes'], {
+      const push = await runCli(['push', '--from', 'dev', '--to', 'prod', '--yes'], {
         cwd: repo.dir,
         env,
       });

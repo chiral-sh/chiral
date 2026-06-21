@@ -142,14 +142,14 @@ describe('runWorkflowMatch', () => {
   it('throws UserError for unknown source env', async () => {
     setupBase(FINGERPRINTS_EXACT);
     await expect(
-      runWorkflowMatch({ source: 'staging', target: 'prod' }),
+      runWorkflowMatch({ from: 'staging', to: 'prod' }),
     ).rejects.toThrow(UserError);
   });
 
-  it('throws UserError when --source equals --target', async () => {
+  it('throws UserError when --from equals --to', async () => {
     setupBase(FINGERPRINTS_EXACT);
     await expect(
-      runWorkflowMatch({ source: 'dev', target: 'dev' }),
+      runWorkflowMatch({ from: 'dev', to: 'dev' }),
     ).rejects.toThrow(UserError);
   });
 
@@ -160,13 +160,13 @@ describe('runWorkflowMatch', () => {
       [`${PROJECT_DIR}/.chiral/audit.jsonl`]: '',
     });
     await expect(
-      runWorkflowMatch({ source: 'dev', target: 'prod' }),
-    ).rejects.toThrow(/chiral adopt --env dev/);
+      runWorkflowMatch({ from: 'dev', to: 'prod' }),
+    ).rejects.toThrow(/chiral adopt dev/);
   });
 
   it('--yes writes all exact matches and an audit entry with match_method exact', async () => {
     setupBase(FINGERPRINTS_EXACT);
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true, json: true });
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows['order-processor']).toEqual({
@@ -185,7 +185,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_EXACT);
     mockConfirm.mockResolvedValue(false);
 
-    await runWorkflowMatch({ source: 'dev', target: 'prod' });
+    await runWorkflowMatch({ from: 'dev', to: 'prod' });
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows).toEqual({});
@@ -194,7 +194,7 @@ describe('runWorkflowMatch', () => {
   it('ambiguous ties are reported and not written', async () => {
     setupBase(FINGERPRINTS_AMBIGUOUS);
 
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true, json: true });
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows).toEqual({});
@@ -218,7 +218,7 @@ describe('runWorkflowMatch', () => {
     setupBase(fingerprintsWithFanIn);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true, json: true });
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows).toEqual({});
@@ -237,7 +237,7 @@ describe('runWorkflowMatch', () => {
   it('--dry-run produces output but no file write/audit/sync', async () => {
     setupBase(FINGERPRINTS_EXACT);
 
-    await runWorkflowMatch({ source: 'dev', target: 'prod', dryRun: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', dryRun: true, json: true });
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows).toEqual({});
@@ -250,7 +250,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_NO_MATCH);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', json: true });
 
     const jsonCall = logSpy.mock.calls.find(([line]) => typeof line === 'string' && line.includes('"candidates"'));
     logSpy.mockRestore();
@@ -265,7 +265,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_WITH_STALE_TARGET);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true });
     const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
     logSpy.mockRestore();
 
@@ -278,7 +278,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_EXACT);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true });
     const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
     logSpy.mockRestore();
 
@@ -289,7 +289,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_WITH_STALE_TARGET);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true, json: true });
     const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
     logSpy.mockRestore();
 
@@ -299,7 +299,7 @@ describe('runWorkflowMatch', () => {
   it('--preview-diff without --dry-run throws UserError', async () => {
     setupBase(FINGERPRINTS_EXACT);
     await expect(
-      runWorkflowMatch({ source: 'dev', target: 'prod', previewDiff: true }),
+      runWorkflowMatch({ from: 'dev', to: 'prod', previewDiff: true }),
     ).rejects.toThrow(UserError);
   });
 
@@ -307,11 +307,11 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_EXACT);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', dryRun: true, previewDiff: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', dryRun: true, previewDiff: true });
     const lines = logSpy.mock.calls.map(([line]) => line).join('\n');
     logSpy.mockRestore();
 
-    expect(lines).toContain('Applying these 1 mapping would resolve 1 + / 1 - rows in chiral diff --source dev --target prod');
+    expect(lines).toContain('Applying these 1 mapping would resolve 1 + / 1 - rows in chiral diff --from dev --to prod');
 
     const written = JSON.parse(vol.readFileSync(`${PROJECT_DIR}/.chiral/workflows.json`, 'utf-8') as string);
     expect(written.workflows).toEqual({});
@@ -321,7 +321,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_EXACT);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', dryRun: true, previewDiff: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', dryRun: true, previewDiff: true, json: true });
     const lines = logSpy.mock.calls.map(([line]) => line);
     logSpy.mockRestore();
 
@@ -346,7 +346,7 @@ describe('runWorkflowMatch', () => {
     setupBase(FINGERPRINTS_EXACT, mapWithEntry);
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runWorkflowMatch({ source: 'dev', target: 'prod', yes: true, json: true });
+    await runWorkflowMatch({ from: 'dev', to: 'prod', yes: true, json: true });
 
     const jsonCall = logSpy.mock.calls.find(([line]) => typeof line === 'string' && line.includes('"candidates"'));
     logSpy.mockRestore();
