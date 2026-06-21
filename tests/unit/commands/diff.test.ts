@@ -1780,3 +1780,105 @@ describe('runDiff - lock badge annotations', () => {
   });
 });
 
+// ── URL map differences ───────────────────────────────────────────────────────
+
+describe('runDiff - URL map differences', () => {
+  it('lists URL keys whose source and target values differ', async () => {
+    setupProject();
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/url-map.json`,
+      JSON.stringify({
+        version: 1,
+        urls: {
+          api_base: { values: { dev: 'https://api.dev.example.com', prod: 'https://api.example.com' } },
+        },
+      }),
+    );
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('api_base');
+    expect(joined).toContain('https://api.dev.example.com');
+    expect(joined).toContain('https://api.example.com');
+  });
+
+  it('omits URL keys where source and target values are identical', async () => {
+    setupProject();
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/url-map.json`,
+      JSON.stringify({
+        version: 1,
+        urls: {
+          api_base: { values: { dev: 'https://api.example.com', prod: 'https://api.example.com' } },
+          webhook: { values: { dev: 'https://hooks.dev.com', prod: 'https://hooks.prod.com' } },
+        },
+      }),
+    );
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runDiff({ source: 'dev', target: 'prod' });
+
+    const joined = output.join('\n');
+    expect(joined).not.toContain('api_base');
+    expect(joined).toContain('webhook');
+  });
+
+  it('includes url_diffs in --json output, empty when nothing differs', async () => {
+    setupProject();
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data).toHaveProperty('url_diffs');
+    expect(result.data.url_diffs).toEqual([]);
+  });
+
+  it('includes url_diffs entries in --json output when values differ', async () => {
+    setupProject();
+    vol.writeFileSync(
+      `${PROJECT_DIR}/.chiral/url-map.json`,
+      JSON.stringify({
+        version: 1,
+        urls: {
+          api_base: { values: { dev: 'https://api.dev.example.com', prod: 'https://api.example.com' } },
+        },
+      }),
+    );
+    setupTwoClientMocks(
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([SRC_WF1]) }),
+      makeClientMock({ listWorkflows: vi.fn().mockResolvedValue([TGT_WF1]) }),
+    );
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runDiff({ source: 'dev', target: 'prod', json: true });
+
+    const result = JSON.parse(logged[0]);
+    expect(result.data.url_diffs).toHaveLength(1);
+    expect(result.data.url_diffs[0].logical_name).toBe('api_base');
+    expect(result.data.url_diffs[0].source_value).toBe('https://api.dev.example.com');
+    expect(result.data.url_diffs[0].target_value).toBe('https://api.example.com');
+  });
+});

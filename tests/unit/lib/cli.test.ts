@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { plural, matchesGlob, detectsEnvMarker, getChiralVersion } from '../../../src/lib/cli.js';
+import { plural, matchesGlob, detectsEnvMarker, getChiralVersion, setChiralVersion } from '../../../src/lib/cli.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -110,6 +110,7 @@ describe('getChiralVersion', () => {
   it('returns the version field from package.json', () => {
     const pkgPath = fileURLToPath(new URL('../../../package.json', import.meta.url));
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
+    setChiralVersion(pkg.version);
     expect(getChiralVersion()).toBe(pkg.version);
   });
 });

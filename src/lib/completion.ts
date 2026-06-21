@@ -409,6 +409,40 @@ export function getChiralCommands(): CommandInfo[] {
       ],
     },
     {
+      name: 'url',
+      description: 'Manage URL mappings across environments',
+      flags: [],
+      subcommands: [
+        {
+          name: 'map',
+          description: 'Register or update URL mappings in url-map.json',
+          flags: [
+            { long: '--env', description: 'Environment name (use with --value)', takesValue: true },
+            { long: '--value', description: 'URL value for --env', takesValue: true },
+            { long: '--exact', description: 'Match the full URL string instead of scheme+host prefix', takesValue: false },
+            { long: '--json', description: 'Emit result as JSON', takesValue: false },
+          ],
+        },
+        {
+          name: 'list',
+          description: 'List all URL mappings',
+          flags: [
+            { long: '--env', description: 'Filter to entries that include this environment', takesValue: true },
+            { long: '--json', description: 'Emit result as JSON', takesValue: false },
+          ],
+        },
+        {
+          name: 'unmap',
+          description: 'Remove a URL mapping entry or a single env from an entry',
+          flags: [
+            { long: '--env', description: 'Remove only this environment from the entry', takesValue: true },
+            { long: '--yes', description: 'Skip confirmation prompt', takesValue: false },
+            { long: '--json', description: 'Emit result as JSON', takesValue: false },
+          ],
+        },
+      ],
+    },
+    {
       name: 'completion',
       description: 'Print shell completion script for bash, zsh, or fish',
       flags: [

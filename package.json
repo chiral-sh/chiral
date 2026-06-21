@@ -64,6 +64,12 @@
     "simple-git": "^3.36.0",
     "zod": "^4.0.0"
   },
+  "pnpm": {
+    "overrides": {
+      "undici": ">=8.5.0",
+      "esbuild": ">=0.28.1"
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",

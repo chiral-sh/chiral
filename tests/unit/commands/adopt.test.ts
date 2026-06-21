@@ -15,12 +15,28 @@ vi.mock('../../../src/lib/n8n-client.js', () => ({
   N8nClient: vi.fn(),
 }));
 
+vi.mock('@inquirer/prompts', () => ({
+  confirm: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('../../../src/state/url-map.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../src/state/url-map.js')>();
+  return {
+    ...mod,
+    extractUrlsFromSnapshots: vi.fn().mockReturnValue([]),
+  };
+});
+
 import { execSync } from 'node:child_process';
+import { confirm } from '@inquirer/prompts';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
+import * as urlMapState from '../../../src/state/url-map.js';
 import { runAdopt } from '../../../src/commands/adopt.js';
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
+const mockConfirm = vi.mocked(confirm);
+const mockExtractUrls = vi.mocked(urlMapState.extractUrlsFromSnapshots);
 
 const GLOBAL_DIR = '/mock-global';
 const PROJECT_DIR = '/project';
@@ -73,6 +89,8 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  mockConfirm.mockResolvedValue(false);
+  mockExtractUrls.mockReturnValue([]);
   process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
   process.env['CHIRAL_PROJECT'] = 'test-project';
 });
@@ -427,5 +445,90 @@ describe('runAdopt - env-specific name detection', () => {
 
     vi.restoreAllMocks();
     expect(output.join('\n')).not.toContain('environment-specific');
+  });
+});
+
+describe('runAdopt - URL discovery hint', () => {
+  const DISCOVERED_URLS = [
+    { value: 'https://api.example.com/v1', hostname: 'api.example.com', env: 'dev', workflowNames: ['My Workflow'] },
+    { value: 'https://hooks.example.com/notify', hostname: 'hooks.example.com', env: 'dev', workflowNames: ['My Workflow'] },
+  ];
+
+  it('prints unique-domain count and prompts in interactive mode', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockExtractUrls.mockReturnValue(DISCOVERED_URLS);
+    mockConfirm.mockResolvedValue(false);
+
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
+    const output: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' });
+
+    spy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+
+    expect(mockConfirm).toHaveBeenCalled();
+    expect(output.join('\n')).toContain('2 unique domains');
+  });
+
+  it('prints suggested run command when user confirms registration', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockExtractUrls.mockReturnValue(DISCOVERED_URLS);
+    mockConfirm.mockResolvedValue(true);
+
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
+    const output: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' });
+
+    spy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+
+    expect(output.join('\n')).toContain('chiral url map');
+  });
+
+  it('excludes userinfo URLs from the registration suggestion', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockExtractUrls.mockReturnValue([
+      { value: 'https://token:secret@api.example.com', hostname: 'api.example.com', env: 'dev', workflowNames: ['My Workflow'] },
+    ]);
+
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
+    await runAdopt({ env: 'dev' });
+
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('does not prompt in non-interactive mode but prints count', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockExtractUrls.mockReturnValue([
+      { value: 'https://api.example.com/v1', hostname: 'api.example.com', env: 'dev', workflowNames: ['My Workflow'] },
+    ]);
+
+    // process.stdout.isTTY is already falsy in test environment
+    const output: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' });
+
+    spy.mockRestore();
+
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(output.join('\n')).toContain('1 unique domain');
+    expect(output.join('\n')).toContain('chiral url map');
   });
 });

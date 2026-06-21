@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { GitSync } from '../lib/config.js';
 import { writeTeam } from './team.js';
 import { writeTableMap } from './tables.js';
+import { writeUrlMap } from './url-map.js';
 
 const CREDENTIALS_TEMPLATE = {
   version: 1 as const,
@@ -62,6 +63,10 @@ export function createChiralDirectory(
 
   if (!existsSync(join(chiralDir, 'tables.json'))) {
     writeTableMap(chiralDir, { version: 1, tables: {} });
+  }
+
+  if (!existsSync(join(chiralDir, 'url-map.json'))) {
+    writeUrlMap(chiralDir, { version: 1, urls: {} });
   }
 
   if (ownerEmail) {

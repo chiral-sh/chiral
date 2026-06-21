@@ -22,6 +22,7 @@ import { pageOutput } from '../lib/pager.js';
 import { listLocksByEnv, type LockFile } from '../state/locks.js';
 import { peekEnvId } from '../state/envs.js';
 import { loadCredentials, buildCredentialMap, applyCredentialMap, type Credentials } from '../state/credentials.js';
+import { loadUrlMap } from '../state/url-map.js';
 
 // diff is read-only and may run before `chiral init` has set up credentials.json -
 // treat a missing/invalid file as "no mappings configured" (all credentials passthrough)
@@ -70,6 +71,27 @@ interface ModifiedEntry {
 
 interface UnchangedEntry {
   name: string;
+}
+
+interface UrlDiff {
+  logicalName: string;
+  sourceValue: string | null;
+  targetValue: string | null;
+}
+
+function computeUrlDiffs(chiralDir: string, sourceEnv: string, targetEnv: string): UrlDiff[] {
+  try {
+    const urlMap = loadUrlMap(chiralDir);
+    return Object.entries(urlMap.urls)
+      .map(([logicalName, entry]) => ({
+        logicalName,
+        sourceValue: entry.values[sourceEnv] ?? null,
+        targetValue: entry.values[targetEnv] ?? null,
+      }))
+      .filter((d) => d.sourceValue !== d.targetValue);
+  } catch {
+    return [];
+  }
 }
 
 interface DiffResult {
@@ -363,6 +385,7 @@ export async function runDiff(
     const targetIdByName = new Map(diff.modified.map((w) => [w.targetName, w.targetId]));
 
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
+    const urlDiffs = computeUrlDiffs(chiralDir, options.source, options.target);
 
     if (outputMode === 'name-only') {
       for (const w of diff.added) console.log(w.name);
@@ -396,6 +419,11 @@ export async function runDiff(
           };
         }),
         unchanged: options.showUnchanged ? diff.unchanged.map(({ name }) => ({ name })) : [],
+        url_diffs: urlDiffs.map((d) => ({
+          logical_name: d.logicalName,
+          source_value: d.sourceValue,
+          target_value: d.targetValue,
+        })),
       });
     } else {
       console.log();
@@ -507,6 +535,15 @@ export async function runDiff(
         console.log(`  ${parts.join(', ')}.`);
         console.log(chalk.dim(`  Run '${pushHint}' to preview.`));
         console.log(`\n  ${chalk.dim('Next:')} ${pushHint}`);
+      }
+      if (urlDiffs.length > 0 && (hasDiff || diff.unchanged.length > 0)) {
+        console.log();
+        console.log(`  URL map (${options.source} → ${options.target}):`);
+        for (const d of urlDiffs) {
+          const srcStr = d.sourceValue ?? chalk.dim('(not set)');
+          const tgtStr = d.targetValue ?? chalk.dim('(not set)');
+          console.log(`    ${chalk.cyan(d.logicalName)}: ${srcStr} → ${tgtStr}`);
+        }
       }
       console.log();
     }
