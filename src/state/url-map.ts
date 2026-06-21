@@ -64,6 +64,11 @@ export function validateUrlValue(value: string): void {
   }
 }
 
+export function normalizeUrlValue(value: string): string {
+  validateUrlValue(value);
+  return value.endsWith('/') && new URL(value).pathname === '/' ? value.slice(0, -1) : value;
+}
+
 export interface UrlSubstitution {
   logicalName: string;
   sourceValue: string;
@@ -228,7 +233,7 @@ export interface DiscoveredUrl {
 
 function collectHttpUrls(obj: unknown, found: Set<string>): void {
   if (typeof obj === 'string') {
-    if (isHttpUrl(obj)) found.add(obj);
+    if (isHttpUrl(obj)) found.add(obj.endsWith('/') && new URL(obj).pathname === '/' ? obj.slice(0, -1) : obj);
     return;
   }
   if (Array.isArray(obj)) {

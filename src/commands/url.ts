@@ -10,7 +10,7 @@ import { printJson } from '../lib/output.js';
 import {
   loadUrlMap,
   writeUrlMap,
-  validateUrlValue,
+  normalizeUrlValue,
   extractUrlsFromSnapshots,
   deriveUrlLogicalName,
 } from '../state/url-map.js';
@@ -189,8 +189,7 @@ export async function runUrlMap(
           const value = answer.trim() || discovered.value;
           if (value) {
             try {
-              validateUrlValue(value);
-              envValues[env] = value;
+              envValues[env] = normalizeUrlValue(value);
             } catch (err) {
               if (err instanceof UserError) {
                 console.log(chalk.yellow(`  ⚠ ${err.message} — skipping ${env}`));
@@ -205,8 +204,7 @@ export async function runUrlMap(
           const value = answer.trim();
           if (value) {
             try {
-              validateUrlValue(value);
-              envValues[env] = value;
+              envValues[env] = normalizeUrlValue(value);
             } catch (err) {
               if (err instanceof UserError) {
                 console.log(chalk.yellow(`  ⚠ ${err.message} — skipping ${env}`));
@@ -283,9 +281,9 @@ export async function runUrlMap(
     throw new UserError('Logical name is required: chiral url map <logical> <env>=<url> ...');
   }
 
-  // Validate all values before any write
-  for (const value of Object.values(perEnvValues)) {
-    validateUrlValue(value);
+  // Validate and normalize all values before any write
+  for (const [env, value] of Object.entries(perEnvValues)) {
+    perEnvValues[env] = normalizeUrlValue(value);
   }
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
