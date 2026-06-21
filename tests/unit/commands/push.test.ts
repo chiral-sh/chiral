@@ -1441,6 +1441,294 @@ describe('runPush - lock check integration', () => {
   });
 });
 
+// ── Concurrent push detection ─────────────────────────────────────────────────
+
+describe('runPush - concurrent push detection', () => {
+  function writeAuditEntries(
+    entries: Array<{ action: string; source_env: string | null; target_env: string; timestamp: string }>,
+  ): void {
+    const lines = entries.map((e) =>
+      JSON.stringify({
+        event_id: '00000000-0000-0000-0000-000000000001',
+        event_schema_version: 1,
+        timestamp: e.timestamp,
+        actor: 'other@example.com',
+        action: e.action,
+        project: 'test-project',
+        source_env: e.source_env,
+        target_env: e.target_env,
+        workflow_ids: [],
+        result: 'success',
+        error: null,
+        chiral_version: '0.0.0',
+      }),
+    );
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/audit.jsonl`, lines.join('\n') + '\n');
+  }
+
+  function setupLivePushWithUpdate(): void {
+    const wf = makeSnapshotWf('src-1', 'WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'WF', 'v1', false);
+    setupProject([wf], [targetWf]);
+    MockN8nClient.mockImplementation(function() {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+        updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+      }) as never;
+    });
+  }
+
+  it('warns when push to target is more recent than last pull from target', async () => {
+    setupLivePushWithUpdate();
+    const t1 = new Date(Date.now() - 2000).toISOString();
+    const t2 = new Date(Date.now() - 1000).toISOString();
+    writeAuditEntries([
+      { action: 'pull', source_env: null, target_env: 'prod', timestamp: t1 },
+      { action: 'push', source_env: 'dev', target_env: 'prod', timestamp: t2 },
+    ]);
+    vi.mocked(prompts.confirm).mockResolvedValue(false);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    const err = await runPush({ from: 'dev', to: 'prod' }).catch(e => e);
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(0);
+    expect(prompts.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: 'Push anyway?' }));
+    expect(output.join('\n')).toContain('was last pushed by');
+  });
+
+  it('does not warn when pull is more recent than last push to target', async () => {
+    setupLivePushWithUpdate();
+    const t1 = new Date(Date.now() - 3000).toISOString();
+    const t2 = new Date(Date.now() - 2000).toISOString();
+    const t3 = new Date(Date.now() - 1000).toISOString();
+    writeAuditEntries([
+      { action: 'pull', source_env: null, target_env: 'prod', timestamp: t1 },
+      { action: 'push', source_env: 'dev', target_env: 'prod', timestamp: t2 },
+      { action: 'pull', source_env: null, target_env: 'prod', timestamp: t3 },
+    ]);
+    vi.mocked(prompts.input).mockResolvedValue('prod');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod' });
+    expect(output.join('\n')).not.toContain('was last pushed by');
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when push exists but no prior pull from target', async () => {
+    setupLivePushWithUpdate();
+    writeAuditEntries([
+      { action: 'push', source_env: 'dev', target_env: 'prod', timestamp: new Date(Date.now() - 1000).toISOString() },
+    ]);
+    vi.mocked(prompts.input).mockResolvedValue('prod');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod' });
+    expect(output.join('\n')).not.toContain('was last pushed by');
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when audit log is empty', async () => {
+    setupLivePushWithUpdate();
+    vi.mocked(prompts.input).mockResolvedValue('prod');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod' });
+    expect(output.join('\n')).not.toContain('was last pushed by');
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+});
+
+// ── Target drift detection ────────────────────────────────────────────────────
+
+describe('runPush - target drift detection', () => {
+  // Writes a target fingerprint so the workflow classifies as would-update while
+  // its recorded versionId can be made to match or differ from the live target.
+  function writeTargetFingerprint(targetId: string, name: string, versionId: string): void {
+    vol.writeFileSync(
+      '/project/.chiral/fingerprints.json',
+      JSON.stringify({
+        version: 1,
+        envs: {
+          prod: {
+            [targetId]: {
+              name,
+              versionId,
+              contentHash: 'sha256:' + 'b'.repeat(64), // differs from source → would-update
+              structureHash: 'sha256:' + 'b'.repeat(64),
+              updatedAt: '2024-01-01T00:00:00.000Z',
+            },
+          },
+        },
+      }),
+    );
+  }
+
+  function setupDriftLivePush(targetVersionId: string): void {
+    const wf = makeSnapshotWf('src-1', 'Drift WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Drift WF', targetVersionId, false);
+    setupProject([wf], [targetWf]);
+    MockN8nClient.mockImplementation(function () {
+      return makeFullTargetClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([targetWf]),
+        listCredentials: vi.fn().mockResolvedValue([]),
+        listTags: vi.fn().mockResolvedValue([]),
+        getWorkflow: vi.fn().mockResolvedValue({ ...targetWf, nodes: [], connections: {}, settings: {} }),
+        updateWorkflow: vi.fn().mockResolvedValue({ versionId: 'updated-v1' }),
+      }) as never;
+    });
+  }
+
+  it('does not detect drift when target env has no fingerprints', async () => {
+    setupDriftLivePush('live-v1'); // no fingerprints.json written
+    vi.mocked(prompts.confirm).mockResolvedValue(true);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod', yes: true });
+
+    expect(output.join('\n')).not.toContain('edited directly in prod');
+  });
+
+  it('does not detect drift when live versionId matches the fingerprint', async () => {
+    setupDriftLivePush('live-v1');
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'live-v1'); // matches live → no drift
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod', yes: true });
+
+    expect(output.join('\n')).not.toContain('edited directly in prod');
+  });
+
+  it('detects drift in human mode, shows warning, and prompts', async () => {
+    setupDriftLivePush('live-v1');
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'old-v1'); // live differs → drift
+    vi.mocked(prompts.confirm).mockResolvedValue(false);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    const err = await runPush({ from: 'dev', to: 'prod' }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ControlledExit);
+    expect(err.code).toBe(0);
+    expect(prompts.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: 'Push anyway?' }));
+    const joined = output.join('\n');
+    expect(joined).toContain('edited directly in prod');
+    expect(joined).toContain('Drift WF');
+  });
+
+  it('throws UserError with names and hint when --yes is set without --skip-drifted', async () => {
+    setupDriftLivePush('live-v1');
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'old-v1');
+
+    const err = await runPush({ from: 'dev', to: 'prod', yes: true }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UserError);
+    expect((err as UserError).message).toContain('Drift WF');
+    expect((err as UserError).message).toContain('Target drift detected in prod');
+  });
+
+  it('reclassifies drifted workflows to skipped (not updated) with --yes --skip-drifted, no error', async () => {
+    setupDriftLivePush('live-v1');
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'old-v1');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ from: 'dev', to: 'prod', yes: true, json: true, skipDrifted: true });
+
+    expect(output).toHaveLength(1);
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.skipped).toContain('Drift WF');
+    expect(parsed.data.updated).not.toContain('Drift WF');
+    expect(parsed.data.target_drifted).toEqual(['Drift WF']);
+  });
+
+  it('shows drift warning in dry-run with no prompt and no error', async () => {
+    const wf = makeSnapshotWf('src-1', 'Drift WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Drift WF', 'live-v1', false);
+    setupProject([wf], [targetWf]);
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'old-v1');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
+
+    expect(output.join('\n')).toContain('edited directly in prod');
+    expect(prompts.confirm).not.toHaveBeenCalled();
+  });
+
+  it('--skip-drifted with no drift is a normal push', async () => {
+    setupDriftLivePush('live-v1');
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'live-v1'); // matches → no drift
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ from: 'dev', to: 'prod', yes: true, json: true, skipDrifted: true });
+
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.updated).toContain('Drift WF');
+    expect(parsed.data.target_drifted).toEqual([]);
+  });
+
+  it('does not flag a workflow with no fingerprint entry as drifted', async () => {
+    setupDriftLivePush('live-v1'); // no fingerprints written → no entry for tgt-1
+    vi.mocked(prompts.confirm).mockResolvedValue(true);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod', yes: true });
+
+    expect(output.join('\n')).not.toContain('edited directly in prod');
+  });
+
+  it('does not check would-create workflows for drift', async () => {
+    const wf = makeSnapshotWf('src-1', 'Brand New WF', 'v1');
+    setupProject([wf], []); // not in target → would-create
+    // A stray fingerprint for an unrelated id must not cause a false positive.
+    writeTargetFingerprint('some-other-id', 'Other', 'old-v1');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPush({ from: 'dev', to: 'prod', dryRun: true });
+
+    expect(output.join('\n')).not.toContain('edited directly in prod');
+  });
+
+  it('includes target_drifted in dry-run JSON', async () => {
+    const wf = makeSnapshotWf('src-1', 'Drift WF', 'v2');
+    const targetWf = makeSummary('tgt-1', 'Drift WF', 'live-v1', false);
+    setupProject([wf], [targetWf]);
+    writeTargetFingerprint('tgt-1', 'Drift WF', 'old-v1');
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => output.push(line));
+
+    await runPush({ from: 'dev', to: 'prod', dryRun: true, json: true });
+
+    const parsed = JSON.parse(output[0]);
+    expect(parsed.data.target_drifted).toEqual(['Drift WF']);
+  });
+});
+
 // ── Data Table ID substitution ────────────────────────────────────────────────
 
 function makeSnapshotWfWithDataTable(
