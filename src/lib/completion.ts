@@ -171,16 +171,16 @@ export function getChiralCommands(): CommandInfo[] {
     {
       name: 'adopt',
       description: 'Adopt an existing n8n environment into chiral management',
+      envNamePositional: true,
       flags: [
-        { long: '--env', description: 'Environment name', takesValue: true },
         { long: '--json', description: 'Output result as JSON', takesValue: false },
       ],
     },
     {
       name: 'pull',
       description: 'Sync workflow snapshots from an n8n environment',
+      envNamePositional: true,
       flags: [
-        { long: '--env', description: 'Environment to pull from', takesValue: true },
         { long: '--tag', description: 'Only pull workflows with this tag', takesValue: true },
         { long: '--pattern', description: 'Glob pattern matched against workflow names', takesValue: true },
         { long: '--id', description: 'Pull a single workflow by its n8n ID', takesValue: true },
@@ -196,8 +196,8 @@ export function getChiralCommands(): CommandInfo[] {
       name: 'diff',
       description: 'Show differences between two n8n environments',
       flags: [
-        { long: '--source', description: 'Source environment', takesValue: true },
-        { long: '--target', description: 'Target environment', takesValue: true },
+        { long: '--from', description: 'Source environment', takesValue: true },
+        { long: '--to', description: 'Target environment', takesValue: true },
         { long: '--tag', description: 'Filter to workflows with this tag', takesValue: true },
         { long: '--pattern', description: 'Glob pattern matched against workflow names', takesValue: true },
         { long: '--show-unchanged', description: 'Include identical workflows in output', takesValue: false },
@@ -213,8 +213,8 @@ export function getChiralCommands(): CommandInfo[] {
       name: 'push',
       description: 'Push local workflow snapshots to an n8n environment',
       flags: [
-        { long: '--source', description: 'Source environment', takesValue: true },
-        { long: '--target', description: 'Target environment', takesValue: true },
+        { long: '--from', description: 'Source environment', takesValue: true },
+        { long: '--to', description: 'Target environment', takesValue: true },
         { long: '--dry-run', description: 'Preview changes only - no writes made', takesValue: false },
         { long: '--tag', description: 'Only push workflows with this tag', takesValue: true },
         { long: '--pattern', description: 'Glob pattern matched against workflow names', takesValue: true },
@@ -256,6 +256,18 @@ export function getChiralCommands(): CommandInfo[] {
           description: 'Remove a workflow mapping',
           flags: [
             { long: '--env', description: "Remove only this environment's mapping", takesValue: true },
+          ],
+        },
+        {
+          name: 'match',
+          description: 'Auto-detect workflows with the same structure across environments',
+          flags: [
+            { long: '--from', description: 'Source environment', takesValue: true },
+            { long: '--to', description: 'Target environment', takesValue: true },
+            { long: '--yes', description: 'Auto-accept exact structure matches', takesValue: false },
+            { long: '--dry-run', description: 'Compute candidates without writing', takesValue: false },
+            { long: '--preview-diff', description: 'Print how many diff rows the mapping would resolve', takesValue: false },
+            { long: '--json', description: 'Emit machine-readable JSON', takesValue: false },
           ],
         },
       ],
@@ -452,7 +464,7 @@ export function getChiralCommands(): CommandInfo[] {
   ];
 }
 
-const ENV_FLAGS = new Set(['--env', '--source', '--target']);
+const ENV_FLAGS = new Set(['--env', '--from', '--to']);
 
 // ── Bash ──────────────────────────────────────────────────────────────────────
 
@@ -560,6 +572,15 @@ ${subCases}${fallbackCase}
           return `    ${cmd.name})
       if [[ ${dollar}COMP_CWORD -eq 2 ]]; then
         _chiral_complete_workflows "${dollar}cur"
+        return
+      fi
+${body}
+      ;;`;
+        }
+        if (cmd.envNamePositional) {
+          return `    ${cmd.name})
+      if [[ ${dollar}COMP_CWORD -eq 2 ]]; then
+        _chiral_complete_envs "${dollar}cur"
         return
       fi
 ${body}
@@ -675,13 +696,20 @@ ${fallback}
       esac
       ;;`;
       } else {
-        if (cmd.flags.length === 0) {
+        if (cmd.flags.length === 0 && !cmd.envNamePositional) {
           return `    (${cmd.name})\n      ;;`;
         }
-        const defs = zshFlagDefs(cmd.flags, '      ');
+        const defs = cmd.flags.length > 0 ? zshFlagDefs(cmd.flags, '      ') : '';
         if (cmd.workflowPositional) {
           const workflowDef = `      ':workflow:($(chiral _complete_workflows 2>/dev/null))'`;
           return `    (${cmd.name})\n      _arguments \\\n${workflowDef} \\\n${defs}\n      ;;`;
+        }
+        if (cmd.envNamePositional) {
+          const envDef = `      ':env:($(chiral _complete_envs 2>/dev/null))'`;
+          if (defs) {
+            return `    (${cmd.name})\n      _arguments \\\n${envDef} \\\n${defs}\n      ;;`;
+          }
+          return `    (${cmd.name})\n      _arguments \\\n${envDef}\n      ;;`;
         }
         return `    (${cmd.name})\n      _arguments \\\n${defs}\n      ;;`;
       }
@@ -811,6 +839,13 @@ export function generateFishScript(commands: CommandInfo[], version: string): st
         lines.push(`# ${cmd.name} workflow name (positional)`);
         lines.push(
           `complete -c chiral -n '__fish_seen_subcommand_from ${cmd.name}' -a '(__chiral_complete_workflows)' -d 'Workflow name'`,
+        );
+      }
+      if (cmd.envNamePositional) {
+        lines.push('');
+        lines.push(`# ${cmd.name} env name (positional)`);
+        lines.push(
+          `complete -c chiral -n '__fish_seen_subcommand_from ${cmd.name}' -a '(__chiral_complete_envs)' -d 'Environment name'`,
         );
       }
       if (cmd.flags.length === 0) continue;
