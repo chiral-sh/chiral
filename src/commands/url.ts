@@ -123,7 +123,7 @@ export async function runUrlMap(
         console.log(
           `  No snapshots found — chiral doesn't know what URLs exist yet.\n\n` +
             `  ${chalk.dim('Run this first to discover your URLs:')}\n` +
-            `    chiral adopt --env ${firstEnv}\n\n` +
+            `    chiral adopt ${firstEnv}\n\n` +
             `  ${chalk.dim('Or map a URL manually without snapshots:')}\n` +
             `    chiral url map <logical> ${firstEnv}=<url> ${secondEnv}=<url>\n`,
         );

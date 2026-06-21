@@ -275,7 +275,7 @@ export async function runEnvironmentAdd(
 
   const results: EnvResult[] = [{ name, url: normalizedUrl, workflowCount, status }];
   printEnvTable(state.project, state.environments, results);
-  console.log(`\n  ${chalk.dim('Next:')} chiral adopt --env ${name}\n`);
+  console.log(`\n  ${chalk.dim('Next:')} chiral adopt ${name}\n`);
 }
 
 // ── environment configure ──────────────────────────────────────────────────────
@@ -385,7 +385,7 @@ export async function runEnvironmentConfigure(
 
   const results: EnvResult[] = [{ name: envName, url: normalizedUrl, workflowCount, status }];
   printEnvTable(state.project, state.environments, results);
-  console.log(`\n  ${chalk.dim('Next:')} chiral adopt --env ${envName}\n`);
+  console.log(`\n  ${chalk.dim('Next:')} chiral adopt ${envName}\n`);
 }
 
 // ── environment list ──────────────────────────────────────────────────────────

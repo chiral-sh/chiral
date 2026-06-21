@@ -542,7 +542,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       for (const line of renderTable(envRows, noHumanize, tableCols)) console.log(line);
 
       for (const envName of zeroWorkflowEnvs) {
-        console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
+        console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull ${envName}' to resync.`);
       }
 
       for (const row of envRows) {

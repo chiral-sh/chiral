@@ -229,7 +229,7 @@ export async function runTableMap(
         console.log(`    ${padRight(chalk.cyan(env), envPad)} → ${entry.id}`);
       }
       console.log();
-      console.log(chalk.dim('  Next: chiral push --source dev --target prod --dry-run'));
+      console.log(chalk.dim('  Next: chiral push --from dev --to prod --dry-run'));
       console.log();
     }
 
@@ -295,7 +295,7 @@ export async function runTableMap(
     console.log(
       `  No snapshots found — chiral doesn't know what tables exist yet.\n\n` +
         `  ${chalk.dim('Run this first to discover your workflows:')}\n` +
-        `    chiral adopt --env ${firstEnv}\n\n` +
+        `    chiral adopt ${firstEnv}\n\n` +
         `  ${chalk.dim('Or map a table manually without snapshots:')}\n` +
         `    chiral table map <logical-name> ${firstEnv}=<id> ${secondEnv}=<id>\n`,
     );
@@ -426,7 +426,7 @@ function collectUncovered(
   envs: string[],
 ): UncoveredTableId[] {
   if (listDeployments(chiralDir).length === 0) {
-    throw new UserError("No snapshots found. Run 'chiral adopt --env <env>' first.");
+    throw new UserError("No snapshots found. Run 'chiral adopt <env>' first.");
   }
   const results: UncoveredTableId[] = [];
   for (const env of envs) {

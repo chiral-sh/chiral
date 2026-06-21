@@ -359,7 +359,7 @@ export async function runCredentialMap(
     console.log(
       `  No snapshots found - chiral doesn't know what credentials exist yet.\n\n` +
       `  ${chalk.dim('Run this first to discover your credentials:')}\n` +
-      `    chiral adopt --env ${firstEnv}\n\n` +
+      `    chiral adopt ${firstEnv}\n\n` +
       `  ${chalk.dim('Or map a credential manually without snapshots:')}\n` +
       `    chiral credential map <logical-name> ${firstEnv}="<name in ${firstEnv}>" ${secondEnv}="<name in ${secondEnv}>"\n`,
     );
@@ -629,7 +629,7 @@ export async function runCredentialList(
   // ── --uncovered mode ──────────────────────────────────────────────────────
   if (options.uncovered) {
     if (listDeployments(chiralDir).length === 0) {
-      throw new UserError("No snapshots found. Run 'chiral adopt --env <env>' first.");
+      throw new UserError("No snapshots found. Run 'chiral adopt <env>' first.");
     }
 
     const targetEnvs = options.env ? [options.env] : envList;

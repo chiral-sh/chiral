@@ -356,7 +356,7 @@ export async function runWorkflowMap(
     console.log(
       `  No snapshots found - chiral doesn't know what workflows exist yet.\n\n` +
       `  ${chalk.dim('Run this first to discover your workflows:')}\n` +
-      `    chiral adopt --env ${firstEnv}\n\n` +
+      `    chiral adopt ${firstEnv}\n\n` +
       `  ${chalk.dim('Or map a workflow manually without snapshots:')}\n` +
       `    chiral workflow map <logical-name> ${firstEnv}="<name in ${firstEnv}>" ${secondEnv}="<name in ${secondEnv}>"\n`,
     );
@@ -604,7 +604,7 @@ function collectUnmapped(
   envs: string[],
 ): UnmappedResult[] {
   if (listDeployments(chiralDir).length === 0) {
-    throw new UserError("No snapshots found. Run 'chiral adopt --env <env>' first.");
+    throw new UserError("No snapshots found. Run 'chiral adopt <env>' first.");
   }
   const results: UnmappedResult[] = [];
   for (const env of envs) {
@@ -719,7 +719,7 @@ function renderUnmappedHuman(results: UnmappedResult[], envList: string[]): void
   const targetEnv = envList[1] ?? envList[0] ?? 'prod';
   console.log(
     chalk.dim(
-      `  Run 'chiral workflow match --source ${sourceEnv} --target ${targetEnv}' to auto-detect matches.\n` +
+      `  Run 'chiral workflow match --from ${sourceEnv} --to ${targetEnv}' to auto-detect matches.\n` +
       `  Or map manually: chiral workflow map <logical-name> ${sourceEnv}="..." ${targetEnv}="..."\n`,
     ),
   );
@@ -930,8 +930,8 @@ export async function runWorkflowUnmap(
 // ── workflow match ────────────────────────────────────────────────────────────
 
 export interface WorkflowMatchOptions {
-  source?: string;
-  target?: string;
+  from?: string;
+  to?: string;
   yes?: boolean;
   dryRun?: boolean;
   json?: boolean;
@@ -948,13 +948,13 @@ function resolveMatchOutputMode(options: WorkflowMatchOptions): MatchOutputMode 
 function validateMatchOptions(
   options: WorkflowMatchOptions,
   config: Config,
-): { source: string; target: string } {
-  if (!options.source) throw new UserError('--source is required');
-  if (!options.target) throw new UserError('--target is required');
-  resolveEnv(config, options.source);
-  resolveEnv(config, options.target);
-  if (options.source === options.target) {
-    throw new UserError('--source and --target must be different environments');
+): { from: string; to: string } {
+  if (!options.from) throw new UserError('--from is required');
+  if (!options.to) throw new UserError('--to is required');
+  resolveEnv(config, options.from);
+  resolveEnv(config, options.to);
+  if (options.from === options.to) {
+    throw new UserError('--from and --to must be different environments');
   }
   if (options.yes && options.dryRun) {
     throw new UserError('--yes has no effect with --dry-run');
@@ -962,7 +962,7 @@ function validateMatchOptions(
   if (options.previewDiff && !options.dryRun) {
     throw new UserError('--preview-diff requires --dry-run');
   }
-  return { source: options.source, target: options.target };
+  return { from: options.from, to: options.to };
 }
 
 interface MatchCandidate {
@@ -1017,21 +1017,21 @@ export async function runWorkflowMatch(
   }
 
   const { config } = loadConfigAndDir(cwd);
-  const { source, target } = validateMatchOptions(options, config);
+  const { from, to } = validateMatchOptions(options, config);
 
   const fingerprints = loadFingerprints(chiralDir);
-  if (!fingerprints.envs[source]) {
-    throw new UserError(`No fingerprints found for ${source}. Run: chiral adopt --env ${source}`);
+  if (!fingerprints.envs[from]) {
+    throw new UserError(`No fingerprints found for ${from}. Run: chiral adopt ${from}`);
   }
-  if (!fingerprints.envs[target]) {
-    throw new UserError(`No fingerprints found for ${target}. Run: chiral adopt --env ${target}`);
+  if (!fingerprints.envs[to]) {
+    throw new UserError(`No fingerprints found for ${to}. Run: chiral adopt ${to}`);
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
 
-  const srcIndex = buildStructureIndex(fingerprints.envs[source]);
-  const tgtIndex = buildStructureIndex(fingerprints.envs[target]);
-  const result = matchExact(srcIndex, tgtIndex, map, source, target);
+  const srcIndex = buildStructureIndex(fingerprints.envs[from]);
+  const tgtIndex = buildStructureIndex(fingerprints.envs[to]);
+  const result = matchExact(srcIndex, tgtIndex, map, from, to);
   const reserved = reserveLogicalNames(map, result.matches, Object.keys(config.environments));
 
   // ── Decide whether to write ──────────────────────────────────────────────
@@ -1054,12 +1054,12 @@ export async function runWorkflowMatch(
   // a printed "✓ Wrote" success message ───────────────────────────────────
   if (shouldWrite) {
     for (const r of reserved) {
-      upsertEnvEntry(map, r.logicalName, source, { name: r.sourceName });
-      upsertEnvEntry(map, r.logicalName, target, { name: r.targetName });
+      upsertEnvEntry(map, r.logicalName, from, { name: r.sourceName });
+      upsertEnvEntry(map, r.logicalName, to, { name: r.targetName });
     }
 
-    validateNoDuplicateTargets(map, source, target);
-    validateNoCircularMapping(map, source, target);
+    validateNoDuplicateTargets(map, from, to);
+    validateNoCircularMapping(map, from, to);
   }
 
   // Names already reserved for Pass-1 matches, so manual-resolution hints for
@@ -1075,7 +1075,7 @@ export async function runWorkflowMatch(
   // ── Human output: Pass 1 block ───────────────────────────────────────────
   if (outputMode === 'human') {
     if (reserved.length > 0) {
-      console.log(`\n  Pass 1 — exact structure matches (${source} → ${target}):\n`);
+      console.log(`\n  Pass 1 — exact structure matches (${from} → ${to}):\n`);
       const srcCol = Math.max(...reserved.map((r) => `"${r.sourceName}"`.length));
       for (const r of reserved) {
         console.log(`    ${padRight(`"${r.sourceName}"`, srcCol)}   →  "${r.targetName}"`);
@@ -1085,51 +1085,51 @@ export async function runWorkflowMatch(
         console.log(`\n  Dry run - would write ${reserved.length} mapping${reserved.length === 1 ? '' : 's'}:`);
         const logicalCol = Math.max(...reserved.map((r) => r.logicalName.length));
         for (const r of reserved) {
-          console.log(`    ${padRight(r.logicalName, logicalCol)}  ${source}="${r.sourceName}"  ${target}="${r.targetName}"`);
+          console.log(`    ${padRight(r.logicalName, logicalCol)}  ${from}="${r.sourceName}"  ${to}="${r.targetName}"`);
         }
         console.log();
         if (options.previewDiff) {
           const n = previewDiffResolved;
           console.log(
-            `  Applying these ${plural(reserved.length, 'mapping')} would resolve ${n} + / ${n} - rows in chiral diff --source ${source} --target ${target}\n`,
+            `  Applying these ${plural(reserved.length, 'mapping')} would resolve ${n} + / ${n} - rows in chiral diff --from ${from} --to ${to}\n`,
           );
         }
       } else if (shouldWrite) {
         console.log(`\n  ${chalk.green('✓')} Wrote ${reserved.length} mapping${reserved.length === 1 ? '' : 's'}`);
         const logicalCol = Math.max(...reserved.map((r) => r.logicalName.length));
         for (const r of reserved) {
-          console.log(`    ${padRight(r.logicalName, logicalCol)}  ${source}="${r.sourceName}"  ${target}="${r.targetName}"`);
+          console.log(`    ${padRight(r.logicalName, logicalCol)}  ${from}="${r.sourceName}"  ${to}="${r.targetName}"`);
         }
         console.log();
       }
     }
 
     if (result.ambiguous.length > 0) {
-      console.log(`\n  Ambiguous matches (same structure, multiple candidates in ${target}):\n`);
+      console.log(`\n  Ambiguous matches (same structure, multiple candidates in ${to}):\n`);
       for (const a of result.ambiguous) {
-        console.log(`    "${a.sourceName}" matches ${a.targetNames.length} workflows in ${target}:`);
+        console.log(`    "${a.sourceName}" matches ${a.targetNames.length} workflows in ${to}:`);
         for (const tName of a.targetNames) {
           console.log(`      - "${tName}"`);
         }
         const hintBase = deriveLogicalName(a.sourceName, Object.keys(config.environments));
         const hintLogical = claimLogicalName(hintBase, reservedNames);
         console.log(
-          `\n  → Resolve manually: chiral workflow map ${hintLogical} ${source}="${a.sourceName}" ${target}="${a.targetNames[0]}"\n`,
+          `\n  → Resolve manually: chiral workflow map ${hintLogical} ${from}="${a.sourceName}" ${to}="${a.targetNames[0]}"\n`,
         );
       }
     }
 
     if (reserved.length === 0 && result.ambiguous.length === 0) {
-      console.log(`\n  No exact structure matches found between ${source} and ${target}.\n`);
+      console.log(`\n  No exact structure matches found between ${from} and ${to}.\n`);
     }
 
     if (shouldWrite) {
       for (const name of result.unmatchedTarget) {
-        console.log(`\n  Note: "${name}" in ${target} has no match in ${source} — removed, or needs chiral workflow map?\n`);
+        console.log(`\n  Note: "${name}" in ${to} has no match in ${from} — removed, or needs chiral workflow map?\n`);
       }
     }
 
-    console.log(`  Next: chiral workflow match --source ${source} --target ${target} --smart\n`);
+    console.log(`  Next: chiral workflow match --from ${from} --to ${to} --smart\n`);
   }
 
   // ── Write ─────────────────────────────────────────────────────────────────
@@ -1143,8 +1143,8 @@ export async function runWorkflowMatch(
       actor,
       action: 'map',
       project: config.project,
-      source_env: source,
-      target_env: target,
+      source_env: from,
+      target_env: to,
       workflow_ids: [],
       result: 'success',
       error: null,
@@ -1157,7 +1157,7 @@ export async function runWorkflowMatch(
     const syncResult = await syncToRemote(
       chiralDir,
       config,
-      `chore(chiral): workflow match --source ${source} --target ${target}`,
+      `chore(chiral): workflow match --from ${from} --to ${to}`,
     );
     if (outputMode === 'human' && !syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
@@ -1259,8 +1259,8 @@ Examples:
 
 const workflowMatchCmd = new Command('match')
   .description('Auto-detect workflows that are the same under different names across environments')
-  .requiredOption('--source <env>', 'Source environment')
-  .requiredOption('--target <env>', 'Target environment')
+  .requiredOption('--from <env>', 'Source environment')
+  .requiredOption('--to <env>', 'Target environment')
   .option('--yes', 'Auto-accept exact structure matches (Pass 1 only)')
   .option('--dry-run', 'Compute and print candidates without writing workflows.json')
   .option('--preview-diff', 'Requires --dry-run. Print how many chiral diff +/- rows the mapping would resolve')
@@ -1270,16 +1270,16 @@ const workflowMatchCmd = new Command('match')
     `
 Examples:
   Find and confirm exact structure matches:
-    chiral workflow match --source dev --target prod
+    chiral workflow match --from dev --to prod
 
   Auto-accept all exact matches:
-    chiral workflow match --source dev --target prod --yes
+    chiral workflow match --from dev --to prod --yes
 
   Preview without writing:
-    chiral workflow match --source dev --target prod --dry-run
+    chiral workflow match --from dev --to prod --dry-run
 
   Preview how many diff rows a match would resolve:
-    chiral workflow match --source dev --target prod --dry-run --preview-diff
+    chiral workflow match --from dev --to prod --dry-run --preview-diff
 `,
   )
   .action(async (options: WorkflowMatchOptions) => {

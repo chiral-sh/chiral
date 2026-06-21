@@ -129,15 +129,15 @@ function buildNextHint(
 
   if (hasChanges && !isFirstPull) {
     const parts = [
-      `--source ${env}`,
-      `--target ${target}`,
+      `--from ${env}`,
+      `--to ${target}`,
       filters.tag ? `--tag ${filters.tag}` : '',
       filters.pattern ? `--pattern "${filters.pattern}"` : '',
       '--dry-run',
     ].filter(Boolean);
     return `chiral push ${parts.join(' ')}`;
   }
-  return `chiral diff --source ${env} --target ${target}`;
+  return `chiral diff --from ${env} --to ${target}`;
 }
 
 function checkStaleness(chiralDir: string, env: string): void {
@@ -182,7 +182,7 @@ function warnIfEnvSpecificNames(
     `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
   );
   console.log(chalk.dim(`     If they exist under different names in other environments, run:`));
-  console.log(chalk.dim(`     chiral workflow match --source ${env} --target ${targetHint}`));
+  console.log(chalk.dim(`     chiral workflow match --from ${env} --to ${targetHint}`));
 }
 
 /**
@@ -706,7 +706,7 @@ export async function runPull(
 
 export const pullCommand = new Command('pull')
   .description('Sync workflow snapshots from an n8n environment')
-  .requiredOption('--env <env>', 'Environment to pull from')
+  .argument('<env>', 'Environment to pull from')
   .addOption(new Option('--tag <tag>', 'Only pull workflows with this tag name').conflicts('id'))
   .addOption(new Option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")').conflicts('id'))
   .option('--verbose', 'Expand updated workflows\' named node changes, grouped by risk, routed through pager')
@@ -723,15 +723,15 @@ export const pullCommand = new Command('pull')
     `
 Examples:
   Pull all workflows from dev:
-    chiral pull --env dev
+    chiral pull dev
 
   Pull only workflows tagged "production":
-    chiral pull --env dev --tag production
+    chiral pull dev --tag production
 
   Exit 1 if changes detected (for CI scripts):
-    chiral pull --env dev --exit-code
+    chiral pull dev --exit-code
 `,
   )
-  .action(async (options: Omit<PullOptions, 'noPager' | 'noPinData'> & { pager?: boolean; pinData?: boolean }) => {
-    await runPull({ ...options, noPager: options.pager === false, noPinData: options.pinData === false });
+  .action(async (env: string, options: Omit<PullOptions, 'noPager' | 'noPinData' | 'env'> & { pager?: boolean; pinData?: boolean }) => {
+    await runPull({ ...options, env, noPager: options.pager === false, noPinData: options.pinData === false });
   });

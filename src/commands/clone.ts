@@ -312,7 +312,7 @@ export async function runClone(
     console.log(`  ${chalk.green('✓')} Credentials saved → ${chalk.dim(`${targetDir}/.chiral/config.json`)}`);
     console.log();
     if (firstEnv) {
-      console.log(`  ${chalk.dim('Next:')} chiral pull --env ${firstEnv}`);
+      console.log(`  ${chalk.dim('Next:')} chiral pull ${firstEnv}`);
     }
     console.log();
   }
