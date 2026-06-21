@@ -1,17 +1,14 @@
-import { createRequire } from 'node:module';
 import chalk from 'chalk';
 import type ora from 'ora';
 
-const require = createRequire(import.meta.url);
+let _chiralVersion = '0.0.0';
 
-let cachedChiralVersion: string | undefined;
+export function setChiralVersion(v: string): void {
+  _chiralVersion = v;
+}
 
 export function getChiralVersion(): string {
-  if (cachedChiralVersion === undefined) {
-    const { version } = require('../../package.json') as { version: string };
-    cachedChiralVersion = version;
-  }
-  return cachedChiralVersion;
+  return _chiralVersion;
 }
 
 export function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {

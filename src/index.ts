@@ -6,6 +6,8 @@ const require = createRequire(import.meta.url);
 const { version } = require('../package.json') as { version: string };
 import { ExitPromptError } from '@inquirer/core';
 import { UserError, ControlledExit } from './lib/errors.js';
+import { setChiralVersion } from './lib/cli.js';
+setChiralVersion(version);
 import { printJsonError, isJsonFlagActive } from './lib/output.js';
 import { cloneCommand } from './commands/clone.js';
 import { initCommand } from './commands/init.js';
