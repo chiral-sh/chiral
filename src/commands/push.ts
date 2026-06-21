@@ -183,6 +183,27 @@ function registerWorkflowMapEntry(
   upsertEnvEntry(workflowMap, logicalName, targetEnv, { name: c.resolvedName, id: targetId });
 }
 
+// Flags would-update workflows whose live target versionId no longer matches the
+// versionId chiral recorded at the last push - i.e. edited directly in the target
+// instance (out-of-band drift). Uses only data already fetched; no extra API calls.
+function collectTargetDrift(
+  classified: WorkflowClassification[],
+  targetByName: Map<string, WorkflowSummary>,
+  fingerprintsForTarget: Record<string, { versionId: string }> | undefined,
+): WorkflowClassification[] {
+  const drifted: WorkflowClassification[] = [];
+  for (const c of classified) {
+    if (c.action !== 'would-update') continue;
+    if (c.forceReactivate) continue; // chiral's own incomplete-reactivation retry, not out-of-band drift
+    const targetSummary = targetByName.get(c.resolvedName);
+    if (!targetSummary) continue;
+    const lastKnown = fingerprintsForTarget?.[targetSummary.id];
+    if (!lastKnown) continue; // never pushed via chiral - no reference versionId
+    if (targetSummary.versionId !== lastKnown.versionId) drifted.push(c);
+  }
+  return drifted;
+}
+
 /** Width used for credential map column alignment */
 const CRED_COL_WIDTH = 24;
 
@@ -210,6 +231,7 @@ export interface PushOptions {
   json?: boolean;
   check?: boolean;
   staleLockAfter?: number;
+  skipDrifted?: boolean;
 }
 
 interface WorkflowClassification {
@@ -343,7 +365,7 @@ export async function runPush(
       printJson({
         from: options.from, to: options.to, dry_run: options.dryRun ?? false,
         deployment_id: deploymentId, created: [], updated: [], skipped: [], failed: [],
-        credential_map: [], tag_warnings: [], credential_errors: [],
+        credential_map: [], tag_warnings: [], credential_errors: [], target_drifted: [],
       });
     }
     return;
@@ -440,6 +462,16 @@ export async function runPush(
 
     return { workflow: wf, resolvedName, action: 'would-update', targetActive: targetMatch.active, forceReactivate: false };
   });
+
+  // ── Target drift detection ──────────────────────────────────────────────
+  // Must run before changeset counts so --skip-drifted reclassification is
+  // reflected in toCreate/toUpdate/toSkip, credential map, and all warnings.
+  const driftedClassifications = collectTargetDrift(classified, targetByName, fingerprints.envs[options.to]);
+  const driftedNames = driftedClassifications.map((c) => c.resolvedName);
+  const driftedNameSet = new Set(driftedNames);
+  if (options.skipDrifted) {
+    for (const c of driftedClassifications) c.action = 'skipped';
+  }
 
   // ── Credential map ────────────────────────────────────────────────────────
   // Aggregate all nodes across in-scope (non-skipped) workflows
@@ -579,6 +611,7 @@ export async function runPush(
       table_warnings: allTableWarnings,
       url_substitutions: allUrlSubstitutions,
       url_warnings: allUrlWarnings,
+      target_drifted: driftedNames,
     });
     if (credentialErrors.length > 0) throw new ControlledExit(1);
     return;
@@ -650,6 +683,7 @@ export async function runPush(
         table_warnings: allTableWarnings,
         url_substitutions: allUrlSubstitutions,
         url_warnings: allUrlWarnings,
+        target_drifted: driftedNames,
       });
     } else {
       const hint = credentialErrors.map((e) => {
@@ -684,9 +718,10 @@ export async function runPush(
       );
     }
     for (const c of toSkip) {
-      console.log(
-        `  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim('(already up to date - skipped)')}`,
-      );
+      const note = options.skipDrifted && driftedNameSet.has(c.resolvedName)
+        ? `(skipped — edited directly in ${options.to}, use --skip-drifted)`
+        : '(already up to date - skipped)';
+      console.log(`  ${chalk.dim('─')} ${c.resolvedName}  ${chalk.dim(note)}`);
     }
 
     // Tag warnings
@@ -725,6 +760,37 @@ export async function runPush(
           chalk.dim(`     → Run: chiral url map add ${uw.suggestedKey} ${options.from}=${uw.value} ${options.to}=<value>`),
         );
       }
+    }
+  }
+
+  // ── Target drift: warn, prompt, or hard-error ────────────────────────────
+  // When --skip-drifted is set the drifted entries are already reclassified to
+  // skipped above, so this block is suppressed.
+  if (driftedNames.length > 0 && !options.skipDrifted) {
+    if (outputMode === 'human') {
+      console.log();
+      console.log(
+        `  ${chalk.yellow('⚠')}  ${plural(driftedNames.length, 'workflow')} ${driftedNames.length === 1 ? 'was' : 'were'} edited directly in ${chalk.cyan(options.to)} since the last push:`,
+      );
+      for (const name of driftedNames) console.log(`       ${chalk.dim('•')} ${name}`);
+      console.log(
+        `     Run ${chalk.dim(`'chiral diff --from ${options.to} --to ${options.from}'`)} to inspect changes.`,
+      );
+      console.log();
+    }
+
+    // Dry-run: warning only, no prompt, no error regardless of --yes.
+    if (!options.dryRun) {
+      if (options.yes) {
+        // --yes alone is a hard safety error so CI fails loudly rather than
+        // silently overwriting out-of-band edits.
+        throw new UserError(
+          `Target drift detected in ${options.to} — ${plural(driftedNames.length, 'workflow')} edited outside chiral: ${driftedNames.join(', ')}.`,
+          `  Use --skip-drifted to push remaining workflows, or run 'chiral pull ${options.to}' to sync first.`,
+        );
+      }
+      const proceed = await confirm({ message: 'Push anyway?', default: false });
+      if (!proceed) throw new ControlledExit(0);
     }
   }
 
@@ -773,6 +839,7 @@ export async function runPush(
         table_warnings: allTableWarnings,
         url_substitutions: allUrlSubstitutions,
         url_warnings: allUrlWarnings,
+        target_drifted: driftedNames,
       });
     } else {
       console.log();
@@ -786,7 +853,7 @@ export async function runPush(
   if (!options.yes) {
     const auditLog = readAuditLog(chiralDir);
     const lastPullFromTarget = auditLog
-      .filter((e) => e.action === 'pull' && e.source_env === options.to)
+      .filter((e) => e.action === 'pull' && e.target_env === options.to)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
 
     const lastPushToTarget = auditLog
@@ -1128,6 +1195,7 @@ export async function runPush(
       table_warnings: allTableWarnings,
       url_substitutions: allUrlSubstitutions,
       url_warnings: allUrlWarnings,
+      target_drifted: driftedNames,
     });
   } else {
     console.log();
@@ -1182,6 +1250,7 @@ export const pushCommand = new Command('push')
   .addOption(new Option('--yes', 'Skip all confirmation prompts - for CI/scripted use').conflicts('dryRun'))
   .addOption(new Option('--no-activate', 'Do not reactivate workflows after push (leave them inactive)').conflicts('dryRun'))
   .option('--json', 'Output machine-readable JSON instead of human output')
+  .option('--skip-drifted', 'Skip workflows edited directly in the target since the last push, and push the rest')
   .option('--check', 'Perform lock check and exit 0 (clear) or 1 (blocked) - no push executed')
   .option('--stale-lock-after <hours>', 'Hours after which a lock is considered stale (default: 24)', (v) => {
     const n = parseInt(v, 10);
