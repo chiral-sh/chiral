@@ -116,6 +116,14 @@ try {
     process.exit(130);
   }
   if (err instanceof ControlledExit) {
+    if (err.userMessage) {
+      if (isJsonFlagActive()) {
+        printJsonError('not_found', err.userMessage, false);
+      } else {
+        const sep = didPrintOutput ? '' : '\n';
+        console.error(`${sep}  ${chalk.red('✗')}  ${err.userMessage}\n`);
+      }
+    }
     process.exit(err.code);
   }
   if (err instanceof CommanderError) {
