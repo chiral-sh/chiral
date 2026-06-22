@@ -38,19 +38,19 @@ const MULTI_MEMBER_TEAM: Team = {
 beforeEach(() => vol.reset());
 
 describe('readTeam', () => {
-  it('throws UserError when team.json does not exist', () => {
+  it('does throw UserError when team.json does not exist', () => {
     vol.fromJSON({ '/project/.chiral/': null });
     expect(() => readTeam('/project/.chiral')).toThrow(UserError);
     expect(() => readTeam('/project/.chiral')).toThrow('team.json');
   });
 
-  it('throws UserError when team.json is invalid JSON', () => {
+  it('does throw UserError when team.json contains invalid JSON', () => {
     vol.fromJSON({ '/project/.chiral/team.json': 'not json {{{' });
     expect(() => readTeam('/project/.chiral')).toThrow(UserError);
     expect(() => readTeam('/project/.chiral')).toThrow('valid JSON');
   });
 
-  it('throws UserError when version field is wrong', () => {
+  it('does throw UserError when version field is wrong', () => {
     vol.fromJSON({
       '/project/.chiral/team.json': JSON.stringify({ version: 2, members: {} }),
     });
@@ -58,7 +58,7 @@ describe('readTeam', () => {
     expect(() => readTeam('/project/.chiral')).toThrow('Invalid team.json');
   });
 
-  it('throws UserError when a member key is not a valid email', () => {
+  it('does throw UserError when a member key is not a valid email', () => {
     const invalid = {
       version: 1,
       members: {
@@ -70,7 +70,7 @@ describe('readTeam', () => {
     expect(() => readTeam('/project/.chiral')).toThrow('Invalid team.json');
   });
 
-  it('throws UserError when a member has an unknown role', () => {
+  it('does throw UserError when a member has an unknown role', () => {
     const invalid = {
       version: 1,
       members: {
@@ -82,14 +82,14 @@ describe('readTeam', () => {
     expect(() => readTeam('/project/.chiral')).toThrow('Invalid team.json');
   });
 
-  it('loads a valid single-member team', () => {
+  it('does return team with version 1 and correct role when team.json has single member', () => {
     vol.fromJSON({ '/project/.chiral/team.json': JSON.stringify(SAMPLE_TEAM) });
     const result = readTeam('/project/.chiral');
     expect(result.version).toBe(1);
     expect(result.members['alice@acme.com'].role).toBe('owner');
   });
 
-  it('loads a valid multi-member team', () => {
+  it('does return all members when team.json has multiple members', () => {
     vol.fromJSON({ '/project/.chiral/team.json': JSON.stringify(MULTI_MEMBER_TEAM) });
     const result = readTeam('/project/.chiral');
     expect(Object.keys(result.members)).toHaveLength(2);
@@ -98,21 +98,27 @@ describe('readTeam', () => {
 });
 
 describe('ensureTeam', () => {
-  it('returns null when team.json does not exist', () => {
+  it('does return null when team.json does not exist', () => {
     vol.fromJSON({ '/project/.chiral/': null });
     expect(ensureTeam('/project/.chiral')).toBeNull();
   });
 
-  it('returns the team when team.json exists', () => {
+  it('does return team when team.json exists and is valid', () => {
     vol.fromJSON({ '/project/.chiral/team.json': JSON.stringify(SAMPLE_TEAM) });
     const result = ensureTeam('/project/.chiral');
     expect(result).not.toBeNull();
     expect(result!.members['alice@acme.com'].role).toBe('owner');
   });
+
+  it('does throw UserError when team.json exists but contains invalid JSON', () => {
+    vol.fromJSON({ '/project/.chiral/team.json': 'not json {{{' });
+    expect(() => ensureTeam('/project/.chiral')).toThrow(UserError);
+    expect(() => ensureTeam('/project/.chiral')).toThrow('valid JSON');
+  });
 });
 
 describe('writeTeam', () => {
-  it('writes team as formatted JSON', () => {
+  it('does write parseable JSON when writing team', () => {
     vol.fromJSON({ '/project/.chiral/': null });
     writeTeam('/project/.chiral', SAMPLE_TEAM);
     const raw = vol.readFileSync('/project/.chiral/team.json', 'utf-8') as string;
@@ -120,21 +126,21 @@ describe('writeTeam', () => {
     expect(parsed).toEqual(SAMPLE_TEAM);
   });
 
-  it('writes with two-space indentation', () => {
+  it('does write with two-space indentation', () => {
     vol.fromJSON({ '/project/.chiral/': null });
     writeTeam('/project/.chiral', SAMPLE_TEAM);
     const raw = vol.readFileSync('/project/.chiral/team.json', 'utf-8') as string;
     expect(raw).toMatch(/^  "/m);
   });
 
-  it('round-trips correctly through readTeam', () => {
+  it('does round-trip correctly when writing then reading', () => {
     vol.fromJSON({ '/project/.chiral/': null });
     writeTeam('/project/.chiral', MULTI_MEMBER_TEAM);
     const result = readTeam('/project/.chiral');
     expect(result).toEqual(MULTI_MEMBER_TEAM);
   });
 
-  it('throws UserError when directory does not exist', () => {
+  it('does throw UserError when directory does not exist', () => {
     vol.fromJSON({});
     expect(() => writeTeam('/nonexistent/.chiral', SAMPLE_TEAM)).toThrow(UserError);
   });

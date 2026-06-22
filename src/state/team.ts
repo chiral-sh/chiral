@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
@@ -42,6 +42,7 @@ export function readTeam(chiralDir: string): Team {
   return result.data;
 }
 
+// Returns null when team.json does not exist; throws UserError if the file exists but is corrupt.
 export function ensureTeam(chiralDir: string): Team | null {
   const teamPath = join(chiralDir, 'team.json');
   if (!existsSync(teamPath)) return null;
@@ -50,8 +51,10 @@ export function ensureTeam(chiralDir: string): Team | null {
 
 export function writeTeam(chiralDir: string, team: Team): void {
   const teamPath = join(chiralDir, 'team.json');
+  const tmpPath = teamPath + '.tmp';
   try {
-    writeFileSync(teamPath, JSON.stringify(team, null, 2) + '\n', 'utf-8');
+    writeFileSync(tmpPath, JSON.stringify(team, null, 2) + '\n', 'utf-8');
+    renameSync(tmpPath, teamPath);
   } catch {
     throw new UserError(`Could not write to ${teamPath}`);
   }
