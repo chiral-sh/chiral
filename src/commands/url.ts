@@ -3,9 +3,9 @@ import { Command } from 'commander';
 import { input, confirm } from '@inquirer/prompts';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-sync.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight, getChiralVersion } from '../lib/cli.js';
+import { padRight, getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadUrlMap,
@@ -63,6 +63,14 @@ function parseUrlMapArgs(
   return { logicalName, perEnvValues };
 }
 
+function validateLogicalName(name: string): void {
+  if (!/^[a-z0-9-]+$/.test(name)) {
+    throw new UserError(
+      `Invalid logical name "${name}" — use lowercase letters, numbers, and hyphens only`,
+    );
+  }
+}
+
 // ── url map ───────────────────────────────────────────────────────────────────
 
 export async function runUrlMap(
@@ -79,6 +87,11 @@ export async function runUrlMap(
   const isNonInteractive = Object.keys(perEnvValues).length > 0;
 
   if (!isNonInteractive) {
+    if (!process.stdin.isTTY) {
+      throw new UserError(
+        'Interactive mode requires a TTY — pass env=url pairs directly: chiral url map <logical> <env>=<url>',
+      );
+    }
     // ── Interactive discovery mode ──────────────────────────────────────────────
     let configResult: ReturnType<typeof loadConfigAndDir>;
     try {
@@ -192,7 +205,7 @@ export async function runUrlMap(
               envValues[env] = normalizeUrlValue(value);
             } catch (err) {
               if (err instanceof UserError) {
-                console.log(chalk.yellow(`  ⚠ ${err.message} — skipping ${env}`));
+                console.error(chalk.yellow(`  ⚠ ${err.message} — skipping ${env}`));
               } else throw err;
             }
           }
@@ -207,7 +220,7 @@ export async function runUrlMap(
               envValues[env] = normalizeUrlValue(value);
             } catch (err) {
               if (err instanceof UserError) {
-                console.log(chalk.yellow(`  ⚠ ${err.message} — skipping ${env}`));
+                console.error(chalk.yellow(`  ⚠ ${err.message} — skipping ${env}`));
               } else throw err;
             }
           }
@@ -280,6 +293,7 @@ export async function runUrlMap(
   if (!logicalName) {
     throw new UserError('Logical name is required: chiral url map <logical> <env>=<url> ...');
   }
+  validateLogicalName(logicalName);
 
   // Validate and normalize all values before any write
   for (const [env, value] of Object.entries(perEnvValues)) {
@@ -307,9 +321,7 @@ export async function runUrlMap(
     urlMap.urls[logicalName] = { values: {} };
   }
   Object.assign(urlMap.urls[logicalName].values, perEnvValues);
-  if (options.exact) {
-    urlMap.urls[logicalName].exact = true;
-  }
+  urlMap.urls[logicalName].exact = options.exact ?? false;
   writeUrlMap(chiralDir, urlMap);
 
   writeAuditEntry(chiralDir, {
@@ -403,6 +415,7 @@ export async function runUrlList(options: { env?: string; json?: boolean }): Pro
   let entries = Object.entries(urlMapData.urls);
   if (options.env) {
     entries = entries.filter(([, entry]) => options.env! in entry.values);
+    envList = [options.env];
   }
 
   if (options.json) {
@@ -420,39 +433,16 @@ export async function runUrlList(options: { env?: string; json?: boolean }): Pro
     Math.max(env.length, ...entries.map(([, e]) => (e.values[env] ?? '(not set)').length)),
   );
   const widths = [C_LOGICAL, ...C_ENVS];
-  const pad = padRight;
 
-  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-  const headerRow =
-    '  │ ' +
-    [
-      pad(chalk.dim('LOGICAL NAME'), C_LOGICAL),
-      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i])),
-    ].join(' │ ') +
-    ' │';
-
-  console.log();
-  console.log(top);
-  console.log(headerRow);
-  console.log(sep);
-
-  for (const [logical, entry] of entries) {
-    const hasGap = envList.some((env) => !(env in entry.values));
-    const logicalStr = hasGap ? chalk.yellow(logical) : logical;
-    const cells = [
-      pad(logicalStr, C_LOGICAL),
-      ...envList.map((env, i) => {
-        const url = entry.values[env];
-        return pad(url ?? chalk.dim('(not set)'), C_ENVS[i]);
-      }),
-    ];
-    console.log('  │ ' + cells.join(' │ ') + ' │');
-  }
-
-  console.log(bot);
-  console.log();
+  renderBoxTable(
+    widths,
+    [chalk.dim('LOGICAL NAME'), ...envList.map((env) => chalk.cyan(env))],
+    entries.map(([logical, entry]) => ({
+      label: logical,
+      hasGap: envList.some((env) => !(env in entry.values)),
+      cells: envList.map((env) => entry.values[env] ?? chalk.dim('(not set)')),
+    })),
+  );
 }
 
 // ── url unmap ─────────────────────────────────────────────────────────────────
@@ -470,7 +460,8 @@ export async function runUrlUnmap(
   const urlMapData = loadUrlMap(chiralDir);
 
   if (!(logicalName in urlMapData.urls)) {
-    throw new UserError(
+    throw new ControlledExit(
+      4,
       `URL mapping "${logicalName}" not found. Run 'chiral url list' to see registered mappings.`,
     );
   }
