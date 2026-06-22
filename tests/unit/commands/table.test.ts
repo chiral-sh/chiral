@@ -87,7 +87,7 @@ function setupBase(tablesContent = EMPTY_TABLES) {
 // ── table map ─────────────────────────────────────────────────────────────────
 
 describe('runTableMap', () => {
-  it('upserts tables.json with correct { id, name } entries (name defaults to logical name)', async () => {
+  it('does write correct { id, name } entries when name defaults to logical name', async () => {
     setupBase();
     await runTableMap(['contacts', 'dev=z1HfH', 'prod=abc123'], {});
 
@@ -100,7 +100,7 @@ describe('runTableMap', () => {
     });
   });
 
-  it('upserts existing entry without overwriting other envs', async () => {
+  it('does upsert existing entry without overwriting other envs', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await runTableMap(['contacts', 'dev=newid'], {});
 
@@ -114,7 +114,7 @@ describe('runTableMap', () => {
     });
   });
 
-  it('emits JSON envelope in --json mode', async () => {
+  it('does emit JSON envelope when --json flag is set', async () => {
     setupBase();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableMap(['contacts', 'dev=z1HfH', 'prod=abc123'], { json: true });
@@ -127,7 +127,7 @@ describe('runTableMap', () => {
     spy.mockRestore();
   });
 
-  it('does not write in --dry-run mode', async () => {
+  it('does not write to disk when --dry-run is set', async () => {
     setupBase();
     await runTableMap(['contacts', 'dev=z1HfH', 'prod=abc123'], { dryRun: true });
 
@@ -137,7 +137,7 @@ describe('runTableMap', () => {
     expect(written.tables).toEqual({});
   });
 
-  it('prints dry-run summary without saving', async () => {
+  it('does print dry-run summary without saving when --dry-run is set', async () => {
     setupBase();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableMap(['contacts', 'dev=z1HfH', 'prod=abc123'], { dryRun: true });
@@ -147,7 +147,7 @@ describe('runTableMap', () => {
     spy.mockRestore();
   });
 
-  it('emits --dry-run --json without saving', async () => {
+  it('does emit JSON without saving when --dry-run and --json are both set', async () => {
     setupBase();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableMap(['contacts', 'dev=z1HfH'], { dryRun: true, json: true });
@@ -158,27 +158,27 @@ describe('runTableMap', () => {
     spy.mockRestore();
   });
 
-  it('throws UserError when --json passed with no env=id args (interactive mode conflict)', async () => {
+  it('does throw UserError when --json is passed without env=id args', async () => {
     setupBase();
     await expect(runTableMap([], { json: true })).rejects.toThrow(UserError);
   });
 
-  it('throws UserError when logical name contains invalid characters', async () => {
+  it('does throw UserError when logical name contains invalid characters', async () => {
     setupBase();
     await expect(runTableMap(['my/table', 'dev=z1HfH'], {})).rejects.toThrow(UserError);
   });
 
-  it('throws UserError when env= has empty value', async () => {
+  it('does throw UserError when env= value is empty', async () => {
     setupBase();
     await expect(runTableMap(['contacts', 'dev='], {})).rejects.toThrow(/Missing ID/);
   });
 
-  it('throws UserError for extra positional argument', async () => {
+  it('does throw UserError when extra positional argument is given', async () => {
     setupBase();
     await expect(runTableMap(['contacts', 'extra', 'dev=id'], {})).rejects.toThrow(/Unexpected argument/);
   });
 
-  it('writes an audit entry with resource=table on success', async () => {
+  it('does write audit entry with resource=table when map succeeds', async () => {
     setupBase();
     await runTableMap(['contacts', 'dev=z1HfH', 'prod=abc123'], {});
 
@@ -193,7 +193,7 @@ describe('runTableMap', () => {
 // ── table list ────────────────────────────────────────────────────────────────
 
 describe('runTableList', () => {
-  it('prints dim message when no mappings exist', async () => {
+  it('does print dim message when no mappings exist', async () => {
     setupBase();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableList({});
@@ -202,7 +202,7 @@ describe('runTableList', () => {
     spy.mockRestore();
   });
 
-  it('prints table with all entries', async () => {
+  it('does print table with all entries when mappings are present', async () => {
     setupBase(TABLES_WITH_ENTRY);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableList({});
@@ -212,7 +212,7 @@ describe('runTableList', () => {
     spy.mockRestore();
   });
 
-  it('emits JSON envelope in --json mode', async () => {
+  it('does emit JSON envelope when --json flag is set', async () => {
     setupBase(TABLES_WITH_ENTRY);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableList({ json: true });
@@ -224,7 +224,7 @@ describe('runTableList', () => {
     spy.mockRestore();
   });
 
-  it('filters by --env', async () => {
+  it('does filter entries when --env is set', async () => {
     const tablesWithGap = JSON.stringify({
       version: 1,
       tables: {
@@ -241,12 +241,12 @@ describe('runTableList', () => {
     spy.mockRestore();
   });
 
-  it('throws UserError for unknown --env value', async () => {
+  it('does throw UserError when --env value is unknown', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await expect(runTableList({ env: 'staging' })).rejects.toThrow(UserError);
   });
 
-  it('emits filtered JSON for --env --json', async () => {
+  it('does emit filtered JSON when --env and --json are both set', async () => {
     const multiEnvTables = JSON.stringify({
       version: 1,
       tables: {
@@ -268,12 +268,12 @@ describe('runTableList', () => {
 
   // ── --uncovered flag ──────────────────────────────────────────────────────
 
-  it('throws UserError for --uncovered when no snapshots exist', async () => {
+  it('does throw UserError when --uncovered is used with no snapshots', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await expect(runTableList({ uncovered: true })).rejects.toThrow(/No snapshots found/);
   });
 
-  it('shows uncovered table IDs from snapshots', async () => {
+  it('does show uncovered table IDs when snapshots contain unmapped IDs', async () => {
     const DEP_ID = '20240101T120000Z-a3f2b9c1';
     const workflow = {
       id: 'wf-1',
@@ -314,7 +314,7 @@ describe('runTableList', () => {
     spy.mockRestore();
   });
 
-  it('emits --uncovered --json with uncovered array', async () => {
+  it('does emit uncovered array when --uncovered and --json are set', async () => {
     const DEP_ID = '20240101T120000Z-b4c3d2e1';
     const workflow = {
       id: 'wf-2',
@@ -353,7 +353,7 @@ describe('runTableList', () => {
     spy.mockRestore();
   });
 
-  it('emits empty uncovered array when all snapshot table IDs are mapped', async () => {
+  it('does emit empty uncovered array when all snapshot IDs are already mapped', async () => {
     const DEP_ID = '20240101T120000Z-c5d4e3f2';
     const workflow = {
       id: 'wf-3',
@@ -399,28 +399,28 @@ describe('runTableList', () => {
 // ── table unmap ───────────────────────────────────────────────────────────────
 
 describe('runTableUnmap', () => {
-  it('exits with code 4 when logical name not found', async () => {
+  it('does exit with code 4 when logical name is not found', async () => {
     setupBase(TABLES_WITH_ENTRY);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(runTableUnmap('nonexistent', {})).rejects.toMatchObject({ code: 4 });
     spy.mockRestore();
   });
 
-  it('exits with code 4 (ControlledExit) — not UserError', async () => {
+  it('does throw ControlledExit not UserError when logical name is not found', async () => {
     setupBase(TABLES_WITH_ENTRY);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(runTableUnmap('nonexistent', {})).rejects.toBeInstanceOf(ControlledExit);
     spy.mockRestore();
   });
 
-  it('prompts for confirmation when ≥1 env mapped and no --yes', async () => {
+  it('does prompt for confirmation when entries exist and --yes is not set', async () => {
     setupBase(TABLES_WITH_ENTRY);
     vi.mocked(confirm).mockResolvedValueOnce(true);
     await runTableUnmap('contacts', {});
     expect(confirm).toHaveBeenCalledOnce();
   });
 
-  it('removes entry when user confirms', async () => {
+  it('does remove entry when user confirms', async () => {
     setupBase(TABLES_WITH_ENTRY);
     vi.mocked(confirm).mockResolvedValueOnce(true);
     await runTableUnmap('contacts', {});
@@ -442,7 +442,7 @@ describe('runTableUnmap', () => {
     expect(written.tables['contacts']).toBeDefined();
   });
 
-  it('skips confirmation prompt when --yes is set', async () => {
+  it('does skip confirmation when --yes is set', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await runTableUnmap('contacts', { yes: true });
     expect(confirm).not.toHaveBeenCalled();
@@ -453,7 +453,7 @@ describe('runTableUnmap', () => {
     expect(written.tables['contacts']).toBeUndefined();
   });
 
-  it('removes only the specified --env entry, leaves others intact', async () => {
+  it('does remove only the specified env entry when --env is given', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await runTableUnmap('contacts', { env: 'dev' });
 
@@ -467,14 +467,14 @@ describe('runTableUnmap', () => {
     });
   });
 
-  it('throws UserError when --env mapping not found for logical name', async () => {
+  it('does throw UserError when --env mapping is not found for logical name', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await expect(runTableUnmap('contacts', { env: 'staging' })).rejects.toThrow(
       /No mapping for/,
     );
   });
 
-  it('removes entire entry when last env mapping is removed with --env', async () => {
+  it('does remove entire entry when last env mapping is removed with --env', async () => {
     const singleEnvTables = JSON.stringify({
       version: 1,
       tables: {
@@ -490,7 +490,7 @@ describe('runTableUnmap', () => {
     expect(written.tables['contacts']).toBeUndefined();
   });
 
-  it('writes an audit entry with action unmap and resource=table', async () => {
+  it('does write audit entry with action unmap and resource=table when unmap succeeds', async () => {
     setupBase(TABLES_WITH_ENTRY);
     await runTableUnmap('contacts', { yes: true });
 
@@ -501,7 +501,7 @@ describe('runTableUnmap', () => {
     expect(entry.resource).toBe('table');
   });
 
-  it('throws UserError when git actor not configured', async () => {
+  it('does throw UserError when git actor is not configured', async () => {
     setupBase(TABLES_WITH_ENTRY);
     mockExecSync.mockImplementation(() => {
       throw new Error('no email');
@@ -509,7 +509,7 @@ describe('runTableUnmap', () => {
     await expect(runTableUnmap('contacts', { yes: true })).rejects.toThrow(UserError);
   });
 
-  it('emits JSON envelope in --json mode', async () => {
+  it('does emit JSON envelope when --json flag is set', async () => {
     setupBase(TABLES_WITH_ENTRY);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runTableUnmap('contacts', { yes: true, json: true });

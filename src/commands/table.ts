@@ -13,6 +13,7 @@ import {
   writeTableMap,
   upsertTableEnvEntry,
   removeTableEnvEntry,
+  collectDataTableRefs,
   type TablesMap,
   type TableEntry,
 } from '../state/tables.js';
@@ -46,7 +47,7 @@ function parseTableMapArgs(args: string[]): ParsedTableArgs {
 
   for (const arg of args) {
     const eqIdx = arg.indexOf('=');
-    if (eqIdx > 0) {
+    if (eqIdx >= 0) {
       const env = arg.slice(0, eqIdx);
       const id = arg.slice(eqIdx + 1);
       if (!id) throw new UserError(`Missing ID for env "${env}" — use: ${env}=<id>`);
@@ -67,27 +68,23 @@ interface FoundTableRef {
   workflows: string[];
 }
 
+interface DiscoveredTableId {
+  id: string;
+  cachedName: string;
+  env: string;
+  workflows: string[];
+}
+
 function extractTableIds(workflows: SnapshotWorkflow[]): Map<string, FoundTableRef> {
   const found = new Map<string, FoundTableRef>();
   for (const wf of workflows) {
-    const nodes = (wf as unknown as { nodes?: unknown[] }).nodes;
-    if (!Array.isArray(nodes)) continue;
-    for (const node of nodes) {
-      if (typeof node !== 'object' || node === null) continue;
-      const n = node as Record<string, unknown>;
-      if (n['type'] !== 'n8n-nodes-base.dataTable') continue;
-      const params = n['parameters'] as Record<string, unknown> | undefined;
-      const dtId = params?.['dataTableId'] as Record<string, unknown> | undefined;
-      if (!dtId || dtId['__rl'] !== true) continue;
-      const id = dtId['value'];
-      if (typeof id !== 'string' || !id) continue;
-      const cachedName =
-        typeof dtId['cachedResultName'] === 'string' ? dtId['cachedResultName'] : '';
+    const refs = collectDataTableRefs([wf as { nodes?: unknown }]);
+    for (const [id, cachedName] of refs) {
       const existing = found.get(id);
       if (existing) {
         if (!existing.workflows.includes(wf.name)) existing.workflows.push(wf.name);
       } else {
-        found.set(id, { id, cachedName, workflows: [wf.name] });
+        found.set(id, { id, cachedName: cachedName ?? '', workflows: [wf.name] });
       }
     }
   }
@@ -96,6 +93,26 @@ function extractTableIds(workflows: SnapshotWorkflow[]): Map<string, FoundTableR
 
 function isTableIdMapped(map: TablesMap, env: string, id: string): boolean {
   return Object.values(map.tables).some((envMap) => envMap[env]?.id === id);
+}
+
+function makeTableMapAudit(actor: string, project: string, envEntries: Record<string, TableEntry>) {
+  return {
+    event_id: crypto.randomUUID(),
+    event_schema_version: 1 as const,
+    timestamp: new Date().toISOString(),
+    actor,
+    action: 'map' as const,
+    project,
+    source_env: null,
+    target_env: Object.keys(envEntries)[0] ?? '',
+    workflow_ids: [],
+    result: 'success' as const,
+    error: null,
+    chiral_version: getChiralVersion(),
+    match_method: 'manual' as const,
+    match_score: null,
+    resource: 'table' as const,
+  };
 }
 
 // ── table map ─────────────────────────────────────────────────────────────────
@@ -202,23 +219,7 @@ export async function runTableMap(
     }
     writeTableMap(chiralDir, map);
 
-    writeAuditEntry(chiralDir, {
-      event_id: crypto.randomUUID(),
-      event_schema_version: 1,
-      timestamp: new Date().toISOString(),
-      actor,
-      action: 'map',
-      project: configResult?.config.project ?? 'unknown',
-      source_env: null,
-      target_env: Object.keys(envEntries)[0] ?? '',
-      workflow_ids: [],
-      result: 'success',
-      error: null,
-      chiral_version: getChiralVersion(),
-      match_method: 'manual',
-      match_score: null,
-      resource: 'table',
-    });
+    writeAuditEntry(chiralDir, makeTableMapAudit(actor, configResult?.config.project ?? 'unknown', envEntries));
 
     if (options.json) {
       printJson({ logical_name: logicalName, env_entries: envEntries });
@@ -233,18 +234,16 @@ export async function runTableMap(
       console.log();
     }
 
-    const syncResult = await syncToRemote(
-      chiralDir,
-      configResult?.config ?? ({ version: 1, project: 'unknown', environments: {} } as never),
-      `chore(chiral): table map ${logicalName}`,
-    );
-    if (!syncResult.skipped && !syncResult.nothingToCommit) {
-      if (syncResult.success) {
-        console.log(formatSyncSuccess(syncResult));
-      } else {
-        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+    if (configResult) {
+      const syncResult = await syncToRemote(chiralDir, configResult.config, `chore(chiral): table map ${logicalName}`);
+      if (!syncResult.skipped && !syncResult.nothingToCommit) {
+        if (syncResult.success) {
+          console.log(formatSyncSuccess(syncResult));
+        } else {
+          for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        }
+        console.log();
       }
-      console.log();
     }
     return;
   }
@@ -264,13 +263,6 @@ export async function runTableMap(
 
   const config = configResult.config;
   const envs = Object.keys(config.environments);
-
-  interface DiscoveredTableId {
-    id: string;
-    cachedName: string;
-    env: string;
-    workflows: string[];
-  }
 
   const discovered: DiscoveredTableId[] = [];
   const hasAnySnapshots = listDeployments(chiralDir).length > 0;
@@ -311,6 +303,8 @@ export async function runTableMap(
   const jsonResults: Array<{ logical_name: string; env_entries: Record<string, TableEntry> }> = [];
 
   for (const { id: tableId, cachedName, env: sourceEnv, workflows: usedIn } of discovered) {
+    // ponytail: re-check required — upsertTableEnvEntry mutates `map` mid-loop, so an earlier
+    // iteration may have already mapped this ID; the pre-built `discovered` slice is stale.
     if (isTableIdMapped(map, sourceEnv, tableId)) continue;
 
     console.log(
@@ -361,23 +355,7 @@ export async function runTableMap(
       upsertTableEnvEntry(map, finalLogical, env, entry);
     }
     writeTableMap(chiralDir, map);
-    writeAuditEntry(chiralDir, {
-      event_id: crypto.randomUUID(),
-      event_schema_version: 1,
-      timestamp: new Date().toISOString(),
-      actor,
-      action: 'map',
-      project: config.project,
-      source_env: null,
-      target_env: Object.keys(envEntries)[0] ?? '',
-      workflow_ids: [],
-      result: 'success',
-      error: null,
-      chiral_version: getChiralVersion(),
-      match_method: 'manual',
-      match_score: null,
-      resource: 'table',
-    });
+    writeAuditEntry(chiralDir, makeTableMapAudit(actor, config.project, envEntries));
 
     if (options.json) {
       jsonResults.push({ logical_name: finalLogical, env_entries: envEntries });
@@ -576,8 +554,7 @@ export async function runTableUnmap(
   const map = loadTableMap(chiralDir);
 
   if (!(logicalName in map.tables)) {
-    console.error(`\n  ${chalk.red('✗')}  Table mapping "${logicalName}" not found in tables.json\n`);
-    throw new ControlledExit(4);
+    throw new ControlledExit(4, `Table mapping "${logicalName}" not found in tables.json`);
   }
 
   let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
@@ -654,18 +631,16 @@ export async function runTableUnmap(
     }
   }
 
-  const syncResult = await syncToRemote(
-    chiralDir,
-    configResult?.config ?? ({ version: 1, project: 'unknown', environments: {} } as never),
-    `chore(chiral): table unmap ${logicalName}`,
-  );
-  if (!syncResult.skipped && !syncResult.nothingToCommit) {
-    if (syncResult.success) {
-      console.log(formatSyncSuccess(syncResult));
-    } else {
-      for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+  if (configResult) {
+    const syncResult = await syncToRemote(chiralDir, configResult.config, `chore(chiral): table unmap ${logicalName}`);
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+      }
+      console.log();
     }
-    console.log();
   }
 }
 
