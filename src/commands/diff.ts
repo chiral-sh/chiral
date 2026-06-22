@@ -3,7 +3,7 @@ import ora from 'ora';
 import { Command, Option } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
-import { ControlledExit } from '../lib/errors.js';
+import { ControlledExit, UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob, formatAge, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
@@ -35,15 +35,10 @@ function loadCredentialsOrEmpty(chiralDir: string): Credentials {
   }
 }
 
-function formatLockBadgeAge(timestamp: string): { label: string; stale: boolean } {
-  const ageSeconds = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
-  return { label: formatAge(ageSeconds, 'short'), stale: ageSeconds > 24 * 3600 };
-}
-
 function renderLockBadge(lock: LockFile): string {
-  const { label, stale } = formatLockBadgeAge(lock.timestamp);
-  const icon = stale ? ' ⚠' : '';
-  return chalk.yellow(`[LOCKED${icon} by ${lock.actor}, ${label}]`);
+  const ageSeconds = Math.floor((Date.now() - new Date(lock.timestamp).getTime()) / 1000);
+  const icon = ageSeconds > 24 * 3600 ? ' ⚠' : '';
+  return chalk.yellow(`[LOCKED${icon} by ${lock.actor}, ${formatAge(ageSeconds, 'short')}]`);
 }
 
 interface AddedEntry {
@@ -135,9 +130,10 @@ async function classifyChange(
   }
 
   // Fallback: fetch full content for whichever side is missing, compute + cache hashes
+  // Fetch both sides: both are needed to build a complete credential map.
   const [srcFull, tgtFull] = await Promise.all([
-    srcEntry ? Promise.resolve(null) : ctx.sourceClient.getWorkflow(src.id),
-    tgtEntry ? Promise.resolve(null) : ctx.targetClient.getWorkflow(tgt.id),
+    ctx.sourceClient.getWorkflow(src.id),
+    ctx.targetClient.getWorkflow(tgt.id),
   ]);
 
   // Normalize credential names to the target env before hashing, so mapped/
@@ -150,13 +146,13 @@ async function classifyChange(
     targetEnv,
     credentials,
   );
-  const srcRemapped = srcFull ? applyCredentialMap(srcFull, credMap) : null;
-  const tgtRemapped = tgtFull ? applyCredentialMap(tgtFull, credMap) : null;
+  const srcRemapped = applyCredentialMap(srcFull, credMap);
+  const tgtRemapped = applyCredentialMap(tgtFull, credMap);
 
-  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcRemapped as Record<string, unknown>);
-  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtRemapped as Record<string, unknown>);
-  const srcStructureHash = srcEntry?.structureHash ?? computeStructureHash(srcFull as Record<string, unknown>);
-  const tgtStructureHash = tgtEntry?.structureHash ?? computeStructureHash(tgtFull as Record<string, unknown>);
+  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcRemapped);
+  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtRemapped);
+  const srcStructureHash = srcEntry?.structureHash ?? computeStructureHash(srcFull);
+  const tgtStructureHash = tgtEntry?.structureHash ?? computeStructureHash(tgtFull);
   const now = new Date().toISOString();
 
   if (!ctx.fingerprints.envs[sourceEnv]) ctx.fingerprints.envs[sourceEnv] = {};
@@ -300,11 +296,9 @@ export async function runDiff(
       .filter(Boolean)
       .join(', ');
 
-    const spinnerText = filterLabel
-      ? `  Fetching workflows [${filterLabel}]…`
-      : '  Fetching workflows…';
-
-    const spinner = outputMode === 'human' ? ora({ text: spinnerText, color: 'cyan' }).start() : null;
+    const spinner = outputMode === 'human'
+      ? ora({ text: filterLabel ? `  Fetching workflows [${filterLabel}]…` : '  Fetching workflows…', color: 'cyan' }).start()
+      : null;
 
     let sourceSummaries: WorkflowSummary[];
     let targetSummaries: WorkflowSummary[];
@@ -347,25 +341,30 @@ export async function runDiff(
     // Fetch full content and compute node-level diffs for every modified workflow.
     if (diff.modified.length > 0) {
       const credentials = loadCredentialsOrEmpty(chiralDir);
-      await Promise.all(
-        diff.modified.map(async (entry) => {
-          const [srcFull, tgtFull] = await Promise.all([
-            sourceClient.getWorkflow(entry.sourceId),
-            targetClient.getWorkflow(entry.targetId),
-          ]);
-          // Normalize credential names to the target env so a mapped/passthrough
-          // credential pair doesn't show up as a spurious 'credentials' change.
-          const credMap = buildCredentialMap(
-            [...toNodes(srcFull), ...toNodes(tgtFull)],
-            options.from,
-            options.to,
-            credentials,
-          );
-          const srcRemapped = applyCredentialMap(srcFull, credMap);
-          const tgtRemapped = applyCredentialMap(tgtFull, credMap);
-          entry.nodes = diffWorkflowNodes(tgtRemapped, srcRemapped);
-        }),
-      );
+      try {
+        await Promise.all(
+          diff.modified.map(async (entry) => {
+            const [srcFull, tgtFull] = await Promise.all([
+              sourceClient.getWorkflow(entry.sourceId),
+              targetClient.getWorkflow(entry.targetId),
+            ]);
+            // Normalize credential names to the target env so a mapped/passthrough
+            // credential pair doesn't show up as a spurious 'credentials' change.
+            const credMap = buildCredentialMap(
+              [...toNodes(srcFull), ...toNodes(tgtFull)],
+              options.from,
+              options.to,
+              credentials,
+            );
+            const srcRemapped = applyCredentialMap(srcFull, credMap);
+            const tgtRemapped = applyCredentialMap(tgtFull, credMap);
+            entry.nodes = diffWorkflowNodes(tgtRemapped, srcRemapped);
+          }),
+        );
+      } catch (err) {
+        if (err instanceof UserError) throw err;
+        throw new UserError(`Failed to fetch workflow details: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     // Load active locks for the target env (treat any error as no locks)
@@ -465,6 +464,7 @@ export async function runDiff(
             newNodeCount: w.nodes?.newNodeCount ?? 0,
             changeKind: w.changeKind,
           }));
+          const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
           if (!options.verbose) {
             for (const { name, line } of renderStatRows(statRows)) {
               const modTargetId = targetIdByName.get(name);
@@ -473,7 +473,6 @@ export async function runDiff(
               console.log(`  ${line}${modBadge}`);
             }
           } else {
-            const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
             const sections: string[] = [];
             for (const { name, line } of renderStatRows(statRows)) {
               const w = nodesByName.get(name);

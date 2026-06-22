@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-s
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight, getChiralVersion } from '../lib/cli.js';
+import { padRight, getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadTableMap,
@@ -463,38 +463,16 @@ function renderTableListHuman(
     Math.max(env.length, ...entries.map(([, m]) => cellText(m[env]).length)),
   );
   const widths = [C_LOGICAL, ...C_ENVS];
-
-  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-  const headerRow =
-    '  │ ' +
-    [
-      padRight(chalk.dim('LOGICAL NAME'), C_LOGICAL),
-      ...envList.map((env, i) => padRight(chalk.cyan(env), C_ENVS[i])),
-    ].join(' │ ') +
-    ' │';
-
-  console.log();
-  console.log(top);
-  console.log(headerRow);
-  console.log(sep);
-
-  for (const [logical, envMap] of entries) {
-    const hasGap = envList.some((env) => !(env in envMap));
-    const logicalStr = hasGap ? chalk.yellow(logical) : logical;
-    const cells = [
-      padRight(logicalStr, C_LOGICAL),
-      ...envList.map((env, i) => {
-        const entry = envMap[env];
-        return padRight(entry ? cellText(entry) : chalk.dim('(not set)'), C_ENVS[i]);
-      }),
-    ];
-    console.log('  │ ' + cells.join(' │ ') + ' │');
-  }
-
-  console.log(bot);
-  console.log();
+  const headers = [chalk.dim('LOGICAL NAME'), ...envList.map((env) => chalk.cyan(env))];
+  const rows = entries.map(([logical, envMap]) => ({
+    label: logical,
+    hasGap: envList.some((env) => !(env in envMap)),
+    cells: envList.map((env) => {
+      const entry = envMap[env];
+      return entry ? cellText(entry) : chalk.dim('(not set)');
+    }),
+  }));
+  renderBoxTable(widths, headers, rows);
 }
 
 export async function runTableList(

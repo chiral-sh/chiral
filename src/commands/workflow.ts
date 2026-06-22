@@ -6,7 +6,7 @@ import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sy
 import { N8nClient } from '../lib/n8n-client.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight, plural, getChiralVersion } from '../lib/cli.js';
+import { padRight, plural, getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadWorkflowMapRequired,
@@ -648,48 +648,18 @@ function renderMappedHuman(
     return;
   }
 
-  // Compute column widths using ANSI-stripped lengths
-  const C_LOGICAL = Math.max(
-    'LOGICAL NAME'.length,
-    ...entries.map(([l]) => l.length),
-  );
+  const C_LOGICAL = Math.max('LOGICAL NAME'.length, ...entries.map(([l]) => l.length));
   const C_ENVS = envList.map((env) =>
     Math.max(env.length, ...entries.map(([, m]) => (m[env]?.name ?? '(not set)').length)),
   );
   const widths = [C_LOGICAL, ...C_ENVS];
-  const pad = padRight;
-
-  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-  const headerRow =
-    '  │ ' +
-    [
-      pad(chalk.dim('LOGICAL NAME'), C_LOGICAL),
-      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i])),
-    ].join(' │ ') +
-    ' │';
-
-  console.log();
-  console.log(top);
-  console.log(headerRow);
-  console.log(sep);
-
-  for (const [logical, envMap] of entries) {
-    const hasGap = envList.some((env) => !(env in envMap));
-    const logicalStr = hasGap ? chalk.yellow(logical) : logical;
-    const cells = [
-      pad(logicalStr, C_LOGICAL),
-      ...envList.map((env, i) => {
-        const name = envMap[env]?.name;
-        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]);
-      }),
-    ];
-    console.log('  │ ' + cells.join(' │ ') + ' │');
-  }
-
-  console.log(bot);
-  console.log();
+  const headers = [chalk.dim('LOGICAL NAME'), ...envList.map((env) => chalk.cyan(env))];
+  const rows = entries.map(([logical, envMap]) => ({
+    label: logical,
+    hasGap: envList.some((env) => !(env in envMap)),
+    cells: envList.map((env) => envMap[env]?.name ?? chalk.dim('(not set)')),
+  }));
+  renderBoxTable(widths, headers, rows);
 }
 
 function renderUnmappedHuman(results: UnmappedResult[], envList: string[]): void {

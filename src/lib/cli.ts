@@ -62,6 +62,51 @@ export function formatAge(ageSeconds: number, style: 'short' | 'long' = 'short')
   return `${days} day${days !== 1 ? 's' : ''}`;
 }
 
+export function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+export function normalizedSimilarity(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshtein(a, b) / maxLen;
+}
+
+export function renderBoxTable(
+  widths: number[],
+  headerCells: string[],
+  rows: Array<{ label: string; hasGap: boolean; cells: string[] }>,
+): void {
+  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
+  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
+  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
+  const headerRow = '  │ ' + headerCells.map((h, i) => padRight(h, widths[i])).join(' │ ') + ' │';
+  console.log();
+  console.log(top);
+  console.log(headerRow);
+  console.log(sep);
+  for (const { label, hasGap, cells } of rows) {
+    const labelStr = hasGap ? chalk.yellow(label) : label;
+    const allCells = [padRight(labelStr, widths[0]), ...cells.map((c, i) => padRight(c, widths[i + 1]))];
+    console.log('  │ ' + allCells.join(' │ ') + ' │');
+  }
+  console.log(bot);
+  console.log();
+}
+
 const BUILTIN_ENV_NAMES = ['dev', 'staging', 'prod', 'stg', 'test', 'qa', 'uat'];
 
 export function detectsEnvMarker(name: string, configuredEnvNames: string[]): boolean {
