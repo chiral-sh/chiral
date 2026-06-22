@@ -66,7 +66,7 @@ export function validateUrlValue(value: string): void {
 
 export function normalizeUrlValue(value: string): string {
   validateUrlValue(value);
-  return value.endsWith('/') && new URL(value).pathname === '/' ? value.slice(0, -1) : value;
+  return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
 export interface UrlSubstitution {
@@ -85,7 +85,7 @@ export interface UrlWarning {
 
 export function deriveUrlLogicalName(value: string): string {
   try {
-    return new URL(value).hostname.replace(/\./g, '_');
+    return new URL(value).hostname.replace(/\./g, '-');
   } catch {
     return value.replace(/[^a-z0-9]/gi, '_').toLowerCase();
   }
@@ -189,9 +189,9 @@ function deepRewriteParameters(obj: unknown, substitutions: UrlSubstitution[]): 
     for (const sub of substitutions) {
       if (matchesEntry(obj, sub.sourceValue, sub.exact)) {
         if (sub.exact) return sub.targetValue;
-        const srcOrigin = new URL(sub.sourceValue).origin;
         const dstOrigin = new URL(sub.targetValue).origin;
-        return dstOrigin + obj.slice(srcOrigin.length);
+        const parsed = new URL(obj);
+        return dstOrigin + parsed.pathname + parsed.search + parsed.hash;
       }
     }
     return obj;
@@ -233,7 +233,7 @@ export interface DiscoveredUrl {
 
 function collectHttpUrls(obj: unknown, found: Set<string>): void {
   if (typeof obj === 'string') {
-    if (isHttpUrl(obj)) found.add(obj.endsWith('/') && new URL(obj).pathname === '/' ? obj.slice(0, -1) : obj);
+    if (isHttpUrl(obj)) found.add(obj.endsWith('/') ? obj.slice(0, -1) : obj);
     return;
   }
   if (Array.isArray(obj)) {

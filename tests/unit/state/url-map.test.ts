@@ -102,12 +102,12 @@ describe('writeUrlMap + loadUrlMap round-trip', () => {
 });
 
 describe('deriveUrlLogicalName', () => {
-  it('converts hostname dots to underscores', () => {
-    expect(deriveUrlLogicalName('https://api.dev.example.com/v1')).toBe('api_dev_example_com');
+  it('converts hostname dots to hyphens', () => {
+    expect(deriveUrlLogicalName('https://api.dev.example.com/v1')).toBe('api-dev-example-com');
   });
 
   it('handles simple hostname', () => {
-    expect(deriveUrlLogicalName('https://example.com')).toBe('example_com');
+    expect(deriveUrlLogicalName('https://example.com')).toBe('example-com');
   });
 });
 
@@ -188,7 +188,7 @@ describe('buildUrlMap', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]?.value).toBe('https://unmapped.example.com/v1');
     expect(warnings[0]?.affectedNodes).toEqual(['Node A', 'Node B']);
-    expect(warnings[0]?.suggestedKey).toBe('unmapped_example_com');
+    expect(warnings[0]?.suggestedKey).toBe('unmapped-example-com');
   });
 
   it('non-URL strings produce no substitutions or warnings', () => {
