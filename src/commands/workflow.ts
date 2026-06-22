@@ -70,6 +70,9 @@ function parseWorkflowMapArgs(args: string[]): ParsedArgs {
 
   for (const arg of args) {
     const eqIdx = arg.indexOf('=');
+    if (eqIdx === 0) {
+      throw new UserError(`Invalid argument "${arg}" — environment name cannot be empty before '='`);
+    }
     if (eqIdx > 0) {
       perEnvNames[arg.slice(0, eqIdx)] = arg.slice(eqIdx + 1);
     } else {
@@ -204,6 +207,12 @@ export async function runWorkflowMap(
       }
     }
 
+    if (Object.keys(envNames).length === 0) {
+      throw new UserError(
+        'No environments resolved. Provide per-env names (env=name) or run inside a chiral project with config.json.',
+      );
+    }
+
     // Conflict check
     for (const [env, entry] of Object.entries(envNames)) {
       checkNameConflict(map, logicalName, env, entry.name);
@@ -228,16 +237,16 @@ export async function runWorkflowMap(
             envNames[env] = { name: entry.name, id: found.id };
             console.log(`    ${padRight(chalk.cyan(env), envPad)} "${entry.name}"    ${chalk.green('✓ found')}`);
           } else {
-            console.log(`    ${padRight(chalk.cyan(env), envPad)} "${entry.name}"    ${chalk.red('✗ not found in ' + env)}`);
+            console.error(`    ${padRight(chalk.cyan(env), envPad)} "${entry.name}"    ${chalk.red('✗ not found in ' + env)}`);
             hasError = true;
           }
         } catch {
-          console.log(`    ${padRight(chalk.cyan(env), envPad)} "${entry.name}"    ${chalk.red('✗ could not connect to ' + env)}`);
+          console.error(`    ${padRight(chalk.cyan(env), envPad)} "${entry.name}"    ${chalk.red('✗ could not connect to ' + env)}`);
           hasError = true;
         }
       }
       if (hasError) {
-        console.log(`\n  ${chalk.red('✗')} Cannot save - 1 workflow not found. Create it first, or check the name.\n`);
+        console.error(`\n  ${chalk.red('✗')} Cannot save - 1 workflow not found. Create it first, or check the name.\n`);
         throw new UserError('Validation failed - aborting without writing.');
       }
     }
@@ -266,6 +275,12 @@ export async function runWorkflowMap(
     if (!map.workflows[logicalName]) map.workflows[logicalName] = {};
     for (const [env, newEntry] of Object.entries(envNames)) {
       upsertEnvEntry(map, logicalName, env, newEntry);
+    }
+    const writtenEnvs = Object.keys(envNames);
+    for (let i = 0; i < writtenEnvs.length; i++) {
+      for (let j = i + 1; j < writtenEnvs.length; j++) {
+        validateNoDuplicateTargets(map, writtenEnvs[i], writtenEnvs[j]);
+      }
     }
     writeWorkflowMap(chiralDir, map);
 
@@ -296,18 +311,20 @@ export async function runWorkflowMap(
     }
 
     // Sync
-    const syncResult = await syncToRemote(
-      chiralDir,
-      configResult?.config ?? { version: 1, project: 'unknown', environments: {} } as never,
-      `chore(chiral): workflow map ${logicalName}`,
-    );
-    if (!syncResult.skipped && !syncResult.nothingToCommit) {
-      if (syncResult.success) {
-        console.log(formatSyncSuccess(syncResult));
-      } else {
-        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+    if (configResult) {
+      const syncResult = await syncToRemote(
+        chiralDir,
+        configResult.config,
+        `chore(chiral): workflow map ${logicalName}`,
+      );
+      if (!syncResult.skipped && !syncResult.nothingToCommit) {
+        if (syncResult.success) {
+          console.log(formatSyncSuccess(syncResult));
+        } else {
+          for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        }
+        console.log();
       }
-      console.log();
     }
     return;
   }
@@ -439,7 +456,6 @@ export async function runWorkflowMap(
         for (const [env, entry] of Object.entries(envNames)) {
           upsertEnvEntry(map, targetLogical, env, entry);
         }
-        writeWorkflowMap(chiralDir, map);
         writeAuditEntry(chiralDir, {
           event_id: crypto.randomUUID(),
           event_schema_version: 1,
@@ -477,6 +493,7 @@ export async function runWorkflowMap(
   }
 
   if (mappedCount > 0 && !options.dryRun) {
+    writeWorkflowMap(chiralDir, map);
     const syncResult = await syncToRemote(
       chiralDir,
       config,
@@ -510,12 +527,20 @@ async function runWorkflowPrune(
 
   const stale: StaleEntry[] = [];
 
+  const deploymentNames = new Map<string, Set<string>>();
+  const allMappedEnvs = new Set(Object.values(map.workflows).flatMap((e) => Object.keys(e)));
+  for (const env of allMappedEnvs) {
+    const dId = findLatestDeploymentForEnv(chiralDir, env);
+    if (!dId) continue;
+    const { workflows } = readAllWorkflowsInDeployment(chiralDir, dId);
+    deploymentNames.set(env, new Set(workflows.map((w) => w.name)));
+  }
+
   for (const [logical, envMap] of Object.entries(map.workflows)) {
     for (const [env, entry] of Object.entries(envMap)) {
-      const deploymentId = findLatestDeploymentForEnv(chiralDir, env);
-      if (!deploymentId) continue;
-      const { workflows } = readAllWorkflowsInDeployment(chiralDir, deploymentId);
-      if (!workflows.some((w) => w.name === entry.name)) {
+      const names = deploymentNames.get(env);
+      if (!names) continue;
+      if (!names.has(entry.name)) {
         stale.push({ logical, env, name: entry.name });
       }
     }
@@ -547,8 +572,9 @@ async function runWorkflowPrune(
       });
     }
     if (doRemove) {
+      if (!map.workflows[logical]) continue;
       delete map.workflows[logical][env];
-      if (Object.keys(map.workflows[logical] ?? {}).length === 0) {
+      if (Object.keys(map.workflows[logical]).length === 0) {
         delete map.workflows[logical];
       }
       writeWorkflowMap(chiralDir, map);
@@ -882,18 +908,20 @@ export async function runWorkflowUnmap(
     );
   }
 
-  const syncResult = await syncToRemote(
-    chiralDir,
-    configResult?.config ?? { version: 1, project: 'unknown', environments: {} } as never,
-    `chore(chiral): workflow unmap ${logicalName}`,
-  );
-  if (!syncResult.skipped && !syncResult.nothingToCommit) {
-    if (syncResult.success) {
-      console.log(formatSyncSuccess(syncResult));
-    } else {
-      for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+  if (configResult) {
+    const syncResult = await syncToRemote(
+      chiralDir,
+      configResult.config,
+      `chore(chiral): workflow unmap ${logicalName}`,
+    );
+    if (!syncResult.skipped && !syncResult.nothingToCommit) {
+      if (syncResult.success) {
+        console.log(formatSyncSuccess(syncResult));
+      } else {
+        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+      }
+      console.log();
     }
-    console.log();
   }
 }
 
@@ -1023,13 +1051,17 @@ export async function runWorkflowMatch(
   // ── Apply + validate before any output, so a validation failure can't follow
   // a printed "✓ Wrote" success message ───────────────────────────────────
   if (shouldWrite) {
+    const mapDraft = JSON.parse(JSON.stringify(map)) as WorkflowMap;
+    for (const r of reserved) {
+      upsertEnvEntry(mapDraft, r.logicalName, from, { name: r.sourceName });
+      upsertEnvEntry(mapDraft, r.logicalName, to, { name: r.targetName });
+    }
+    validateNoDuplicateTargets(mapDraft, from, to);
+    validateNoCircularMapping(mapDraft, from, to);
     for (const r of reserved) {
       upsertEnvEntry(map, r.logicalName, from, { name: r.sourceName });
       upsertEnvEntry(map, r.logicalName, to, { name: r.targetName });
     }
-
-    validateNoDuplicateTargets(map, from, to);
-    validateNoCircularMapping(map, from, to);
   }
 
   // Names already reserved for Pass-1 matches, so manual-resolution hints for

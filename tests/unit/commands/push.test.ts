@@ -2692,7 +2692,7 @@ describe('runPush - URL map substitution', () => {
     const joined = output.join('\n');
     const warningCount = (joined.match(/Unmapped URL:/g) ?? []).length;
     expect(warningCount).toBe(1);
-    expect(joined).toContain('unmapped_dev_example_com');
+    expect(joined).toContain('unmapped-dev-example-com');
     expect(joined).toContain('chiral url map add');
   });
 
@@ -2750,7 +2750,7 @@ describe('runPush - URL map substitution', () => {
     expect(parsed.data.url_warnings).toEqual([
       {
         value: 'https://unmapped.example.com/items',
-        suggestedKey: 'unmapped_example_com',
+        suggestedKey: 'unmapped-example-com',
         affectedNodes: ['Node B'],
       },
     ]);
