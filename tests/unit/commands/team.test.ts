@@ -89,14 +89,14 @@ function setupBase(teamContent = TEAM_WITH_TWO) {
 // ── team list ─────────────────────────────────────────────────────────────────
 
 describe('runTeamList', () => {
-  it('throws UserError when no active project', async () => {
+  it('does throw UserError when no active project', async () => {
     vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: JSON.stringify({ version: 1, projects: {} }) });
     delete process.env['CHIRAL_PROJECT'];
     await expect(runTeamList({})).rejects.toThrow(UserError);
     await expect(runTeamList({})).rejects.toThrow("No active project");
   });
 
-  it('throws UserError when team.json is missing', async () => {
+  it('does throw UserError when team.json is missing', async () => {
     vol.fromJSON({
       [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
       [`${PROJECT_DIR}/.chiral/config.json`]: '{}',
@@ -105,7 +105,7 @@ describe('runTeamList', () => {
     await expect(runTeamList({})).rejects.toThrow("No team.json found");
   });
 
-  it('renders one row per member in table format', async () => {
+  it('does render one row per member when listing in table format', async () => {
     setupBase();
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -122,7 +122,7 @@ describe('runTeamList', () => {
     expect(output).toContain('member');
   });
 
-  it('emits valid JSON envelope with owner and members array on --json', async () => {
+  it('does emit JSON envelope with owner and members when --json is set', async () => {
     setupBase();
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -153,21 +153,21 @@ describe('runTeamList', () => {
 // ── team whoami ───────────────────────────────────────────────────────────────
 
 describe('runTeamWhoami', () => {
-  it('throws UserError when no active project', async () => {
+  it('does throw UserError when no active project', async () => {
     vol.fromJSON({ [`${GLOBAL_DIR}/projects/index.json`]: JSON.stringify({ version: 1, projects: {} }) });
     delete process.env['CHIRAL_PROJECT'];
     await expect(runTeamWhoami({})).rejects.toThrow(UserError);
     await expect(runTeamWhoami({})).rejects.toThrow("No active project");
   });
 
-  it('throws UserError when git config user.email is unset', async () => {
+  it('does throw UserError when git config user.email is unset', async () => {
     setupBase();
     mockExecSync.mockImplementation(() => { throw new Error('exit 1'); });
     await expect(runTeamWhoami({})).rejects.toThrow(UserError);
     await expect(runTeamWhoami({})).rejects.toThrow("git config user.email is not set");
   });
 
-  it('throws UserError when team.json is missing', async () => {
+  it('does throw UserError when team.json is missing', async () => {
     vol.fromJSON({
       [`${GLOBAL_DIR}/projects/index.json`]: INDEX,
       [`${PROJECT_DIR}/.chiral/config.json`]: '{}',
@@ -176,7 +176,7 @@ describe('runTeamWhoami', () => {
     await expect(runTeamWhoami({})).rejects.toThrow("No team.json found");
   });
 
-  it('prints role when actor is in the roster', async () => {
+  it('does print role when actor is in the roster', async () => {
     setupBase();
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -191,7 +191,7 @@ describe('runTeamWhoami', () => {
     expect(output).toContain('owner');
   });
 
-  it('prints not-in-roster advisory when actor is absent from team.json', async () => {
+  it('does print not-in-roster advisory when actor is absent from team.json', async () => {
     mockExecSync.mockReturnValue('unknown@acme.com\n' as never);
     setupBase();
     const lines: string[] = [];
@@ -208,7 +208,7 @@ describe('runTeamWhoami', () => {
     expect(output).toContain('chiral team add unknown@acme.com');
   });
 
-  it('emits JSON envelope with role and isOwner when actor is in roster', async () => {
+  it('does emit JSON envelope with role and isOwner when actor is in roster', async () => {
     setupBase();
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -225,7 +225,7 @@ describe('runTeamWhoami', () => {
     expect(parsed.data.isOwner).toBe(true);
   });
 
-  it('emits JSON envelope with role null and isOwner false when not in roster', async () => {
+  it('does emit JSON envelope with role null and isOwner false when not in roster', async () => {
     mockExecSync.mockReturnValue('unknown@acme.com\n' as never);
     setupBase();
     const lines: string[] = [];
@@ -243,7 +243,7 @@ describe('runTeamWhoami', () => {
     expect(parsed.data.isOwner).toBe(false);
   });
 
-  it('shows bob as member with isOwner false', async () => {
+  it('does show member role and isOwner false when actor is not the owner', async () => {
     mockExecSync.mockReturnValue('bob@acme.com\n' as never);
     setupBase();
     const lines: string[] = [];
@@ -263,7 +263,7 @@ describe('runTeamWhoami', () => {
 // ── team add ──────────────────────────────────────────────────────────────────
 
 describe('runTeamAdd', () => {
-  it('upserts a new member with default role member', async () => {
+  it('does add member with default role member when no role is specified', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await runTeamAdd('bob@acme.com', {});
     const team = JSON.parse(
@@ -274,16 +274,27 @@ describe('runTeamAdd', () => {
     expect(team.members['bob@acme.com'].addedBy).toBe('alice@acme.com');
   });
 
-  it('upserts a member with explicit owner role', async () => {
+  it('does add member with owner role when role owner is specified', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await runTeamAdd('charlie@acme.com', { role: 'owner' });
     const team = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/team.json`, 'utf-8') as string,
     );
     expect(team.members['charlie@acme.com'].role).toBe('owner');
+    expect(team.members['alice@acme.com'].role).toBe('member');
   });
 
-  it('emits JSON envelope with added: true for a new member', async () => {
+  it('does demote existing owner to member when adding new member with role owner', async () => {
+    setupBase(TEAM_WITH_TWO);
+    await runTeamAdd('charlie@acme.com', { role: 'owner' });
+    const team = JSON.parse(
+      vol.readFileSync(`${PROJECT_DIR}/.chiral/team.json`, 'utf-8') as string,
+    );
+    expect(team.members['charlie@acme.com'].role).toBe('owner');
+    expect(team.members['alice@acme.com'].role).toBe('member');
+  });
+
+  it('does emit JSON with added: true when member is new', async () => {
     setupBase(TEAM_ALICE_ONLY);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -298,7 +309,7 @@ describe('runTeamAdd', () => {
     expect(parsed.data.added).toBe(true);
   });
 
-  it('emits JSON envelope with added: false when member already exists', async () => {
+  it('does emit JSON with added: false when member already exists', async () => {
     setupBase(TEAM_WITH_TWO);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -310,19 +321,26 @@ describe('runTeamAdd', () => {
     expect(parsed.data.added).toBe(false);
   });
 
-  it('throws UserError for invalid email', async () => {
+  it('does throw UserError when email is invalid', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await expect(runTeamAdd('not-an-email', {})).rejects.toThrow(UserError);
     await expect(runTeamAdd('not-an-email', {})).rejects.toThrow('Invalid email');
   });
 
-  it('throws UserError for unknown role', async () => {
+  it('does throw UserError when role is unknown', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await expect(runTeamAdd('bob@acme.com', { role: 'superadmin' })).rejects.toThrow(UserError);
     await expect(runTeamAdd('bob@acme.com', { role: 'superadmin' })).rejects.toThrow('Invalid role');
   });
 
-  it('dry-run prints without writing team.json', async () => {
+  it('does throw UserError when git config user.email is not a valid email', async () => {
+    setupBase(TEAM_ALICE_ONLY);
+    mockExecSync.mockReturnValue('notanemail\n' as never);
+    await expect(runTeamAdd('bob@acme.com', {})).rejects.toThrow(UserError);
+    await expect(runTeamAdd('bob@acme.com', {})).rejects.toThrow('git config user.email');
+  });
+
+  it('does print without writing team.json when --dry-run is passed', async () => {
     setupBase(TEAM_ALICE_ONLY);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -337,13 +355,13 @@ describe('runTeamAdd', () => {
     expect(lines.join('\n')).toContain('Would');
   });
 
-  it('dry-run does not call syncToRemote', async () => {
+  it('does not call syncToRemote when --dry-run is passed', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await runTeamAdd('bob@acme.com', { dryRun: true });
     expect(mockSyncToRemote).not.toHaveBeenCalled();
   });
 
-  it('calls syncToRemote after successful write', async () => {
+  it('does call syncToRemote after successful write', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await runTeamAdd('bob@acme.com', {});
     expect(mockSyncToRemote).toHaveBeenCalledOnce();
@@ -353,25 +371,25 @@ describe('runTeamAdd', () => {
 // ── team remove ───────────────────────────────────────────────────────────────
 
 describe('runTeamRemove', () => {
-  it('throws UserError when removing the owner', async () => {
+  it('does throw UserError when removing the owner', async () => {
     setupBase(TEAM_WITH_TWO);
     await expect(runTeamRemove('alice@acme.com', { yes: true })).rejects.toThrow(UserError);
     await expect(runTeamRemove('alice@acme.com', { yes: true })).rejects.toThrow('Cannot remove');
   });
 
-  it('throws UserError when email is not in the roster', async () => {
+  it('does throw UserError when email is not in the roster', async () => {
     setupBase(TEAM_ALICE_ONLY);
     await expect(runTeamRemove('unknown@acme.com', { yes: true })).rejects.toThrow(UserError);
     await expect(runTeamRemove('unknown@acme.com', { yes: true })).rejects.toThrow('not in the team roster');
   });
 
-  it('throws UserError when --yes and --dry-run are combined', async () => {
+  it('does throw UserError when --yes and --dry-run are combined', async () => {
     setupBase(TEAM_WITH_TWO);
     await expect(runTeamRemove('bob@acme.com', { yes: true, dryRun: true })).rejects.toThrow(UserError);
     await expect(runTeamRemove('bob@acme.com', { yes: true, dryRun: true })).rejects.toThrow('--yes and --dry-run');
   });
 
-  it('removes member when --yes is passed (skips prompt)', async () => {
+  it('does remove member without prompt when --yes is passed', async () => {
     setupBase(TEAM_WITH_TWO);
     await runTeamRemove('bob@acme.com', { yes: true });
     expect(mockConfirm).not.toHaveBeenCalled();
@@ -381,7 +399,7 @@ describe('runTeamRemove', () => {
     expect(team.members['bob@acme.com']).toBeUndefined();
   });
 
-  it('emits JSON envelope with removed: true', async () => {
+  it('does emit JSON envelope with removed: true when member is removed', async () => {
     setupBase(TEAM_WITH_TWO);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -395,9 +413,14 @@ describe('runTeamRemove', () => {
     expect(parsed.data.removed).toBe(true);
   });
 
-  it('dry-run prints without writing team.json', async () => {
+  it('does not prompt for confirmation when --dry-run is passed', async () => {
     setupBase(TEAM_WITH_TWO);
-    mockConfirm.mockResolvedValue(true as never);
+    await runTeamRemove('bob@acme.com', { dryRun: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('does print without writing team.json when --dry-run is passed', async () => {
+    setupBase(TEAM_WITH_TWO);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
       lines.push(args.join(' '));
@@ -411,15 +434,14 @@ describe('runTeamRemove', () => {
     expect(lines.join('\n')).toContain('Would');
   });
 
-  it('calls syncToRemote after successful removal', async () => {
+  it('does call syncToRemote after successful removal', async () => {
     setupBase(TEAM_WITH_TWO);
     await runTeamRemove('bob@acme.com', { yes: true });
     expect(mockSyncToRemote).toHaveBeenCalledOnce();
   });
 
-  it('does not call syncToRemote on dry-run', async () => {
+  it('does not call syncToRemote when --dry-run is passed', async () => {
     setupBase(TEAM_WITH_TWO);
-    mockConfirm.mockResolvedValue(true as never);
     await runTeamRemove('bob@acme.com', { dryRun: true });
     expect(mockSyncToRemote).not.toHaveBeenCalled();
   });
@@ -428,7 +450,7 @@ describe('runTeamRemove', () => {
 // ── team set-role ─────────────────────────────────────────────────────────────
 
 describe('runTeamSetRole', () => {
-  it('promotes target to owner and demotes previous owner to member atomically', async () => {
+  it('does demote previous owner to member when promoting target to owner', async () => {
     setupBase(TEAM_WITH_TWO);
     await runTeamSetRole('bob@acme.com', 'owner', {});
     const team = JSON.parse(
@@ -438,7 +460,7 @@ describe('runTeamSetRole', () => {
     expect(team.members['alice@acme.com'].role).toBe('member');
   });
 
-  it('emits JSON envelope with previousOwner on ownership transfer', async () => {
+  it('does emit JSON with previousOwner when transferring ownership', async () => {
     setupBase(TEAM_WITH_TWO);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -453,18 +475,18 @@ describe('runTeamSetRole', () => {
     expect(parsed.data.previousOwner).toBe('alice@acme.com');
   });
 
-  it('throws UserError when demoting the current owner to member', async () => {
+  it('does throw UserError when demoting current owner to member', async () => {
     setupBase(TEAM_WITH_TWO);
     await expect(runTeamSetRole('alice@acme.com', 'member', {})).rejects.toThrow(UserError);
     await expect(runTeamSetRole('alice@acme.com', 'member', {})).rejects.toThrow('Cannot demote');
   });
 
-  it('throws UserError for unknown role', async () => {
+  it('does throw UserError when role is unknown', async () => {
     setupBase(TEAM_WITH_TWO);
     await expect(runTeamSetRole('bob@acme.com', 'superadmin', {})).rejects.toThrow(UserError);
   });
 
-  it('dry-run prints transfer plan without writing', async () => {
+  it('does print transfer plan without writing when --dry-run is passed', async () => {
     setupBase(TEAM_WITH_TWO);
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
@@ -479,13 +501,13 @@ describe('runTeamSetRole', () => {
     expect(lines.join('\n')).toContain('Would');
   });
 
-  it('calls syncToRemote after successful role change', async () => {
+  it('does call syncToRemote after successful role change', async () => {
     setupBase(TEAM_WITH_TWO);
     await runTeamSetRole('bob@acme.com', 'owner', {});
     expect(mockSyncToRemote).toHaveBeenCalledOnce();
   });
 
-  it('does not call syncToRemote on dry-run', async () => {
+  it('does not call syncToRemote when --dry-run is passed', async () => {
     setupBase(TEAM_WITH_TWO);
     await runTeamSetRole('bob@acme.com', 'owner', { dryRun: true });
     expect(mockSyncToRemote).not.toHaveBeenCalled();
