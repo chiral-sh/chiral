@@ -17,6 +17,7 @@ export interface SyncResult {
 export const STAGED_RELATIVE: string[] = [
   'credentials.json',
   'tables.json',
+  'url-map.json',
   'workflows.json',
   'fingerprints.json',
   'audit.jsonl',

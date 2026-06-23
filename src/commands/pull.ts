@@ -28,6 +28,8 @@ import {
 import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 import { loadTableMap, writeTableMap, collectDataTableRefs } from '../state/tables.js';
+import { loadCredentials, type Credentials } from '../state/credentials.js';
+import { loadUrlMap, deriveUrlLogicalName, type UrlMap } from '../state/url-map.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 import type { PinDataMode } from '../lib/workflow-normalize.js';
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
@@ -129,15 +131,15 @@ function buildNextHint(
 
   if (hasChanges && !isFirstPull) {
     const parts = [
-      `--source ${env}`,
-      `--target ${target}`,
+      `--from ${env}`,
+      `--to ${target}`,
       filters.tag ? `--tag ${filters.tag}` : '',
       filters.pattern ? `--pattern "${filters.pattern}"` : '',
       '--dry-run',
     ].filter(Boolean);
     return `chiral push ${parts.join(' ')}`;
   }
-  return `chiral diff --source ${env} --target ${target}`;
+  return `chiral diff --from ${env} --to ${target}`;
 }
 
 function checkStaleness(chiralDir: string, env: string): void {
@@ -182,7 +184,7 @@ function warnIfEnvSpecificNames(
     `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
   );
   console.log(chalk.dim(`     If they exist under different names in other environments, run:`));
-  console.log(chalk.dim(`     chiral workflow match --source ${env} --target ${targetHint}`));
+  console.log(chalk.dim(`     chiral workflow match --from ${env} --to ${targetHint}`));
 }
 
 /**
@@ -230,6 +232,79 @@ function printUnmappedTablesHint(unmapped: string[], env: string): void {
   console.log(`\n  ${chalk.yellow('⚠')}  ${plural(unmapped.length, 'Data Table ID')} found in workflows but not mapped:`);
   for (const id of unmapped) {
     console.log(chalk.dim(`     chiral table map <name> ${env}=${id}`));
+  }
+}
+
+function collectUnmappedCredentials(workflows: WorkflowFull[], env: string, credentials: Credentials): string[] {
+  const mappedNames = new Set(
+    Object.values(credentials.credentials).map((m) => m[env]).filter(Boolean),
+  );
+  const unmapped = new Set<string>();
+  for (const wf of workflows) {
+    for (const node of ((wf as Record<string, unknown>).nodes as Record<string, unknown>[] ?? [])) {
+      const creds = node['credentials'];
+      if (typeof creds !== 'object' || creds === null) continue;
+      for (const cv of Object.values(creds as Record<string, unknown>)) {
+        if (typeof cv !== 'object' || cv === null) continue;
+        const name = (cv as Record<string, unknown>)['name'];
+        if (typeof name === 'string' && !mappedNames.has(name)) unmapped.add(name);
+      }
+    }
+  }
+  return [...unmapped];
+}
+
+function collectUnmappedUrls(workflows: WorkflowFull[], env: string, urlMap: UrlMap): string[] {
+  const mappedOrigins = new Set(
+    Object.values(urlMap.urls)
+      .map((entry) => entry.values[env])
+      .filter(Boolean)
+      .map((u) => { try { return new URL(u).origin; } catch { return null; } })
+      .filter((o): o is string => o !== null),
+  );
+  const unmapped = new Set<string>();
+  function walk(obj: unknown): void {
+    if (typeof obj === 'string') {
+      let parsed: URL;
+      try { parsed = new URL(obj); } catch { return; }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+      if (!mappedOrigins.has(parsed.origin)) unmapped.add(obj);
+      return;
+    }
+    if (Array.isArray(obj)) { for (const item of obj) walk(item); return; }
+    if (typeof obj === 'object' && obj !== null) {
+      for (const val of Object.values(obj as Record<string, unknown>)) walk(val);
+    }
+  }
+  for (const wf of workflows) {
+    for (const node of ((wf as Record<string, unknown>).nodes as Record<string, unknown>[] ?? [])) {
+      walk(node['parameters']);
+    }
+  }
+  return [...unmapped];
+}
+
+function printDiscoveryHints(workflows: WorkflowFull[], env: string, chiralDir: string): void {
+  try {
+    const credentials = loadCredentials(chiralDir);
+    const unmappedCreds = collectUnmappedCredentials(workflows, env, credentials);
+    if (unmappedCreds.length > 0) {
+      console.log(`\n  ${chalk.yellow('⚠')}  ${plural(unmappedCreds.length, 'credential')} found in pulled workflows but not mapped:`);
+      for (const name of unmappedCreds) {
+        const logical = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'my_credential';
+        console.log(chalk.dim(`     chiral credential map ${logical} ${env}="${name}"`));
+      }
+    }
+  } catch {
+    // no credentials.json yet
+  }
+  const urlMap = loadUrlMap(chiralDir);
+  const unmappedUrls = collectUnmappedUrls(workflows, env, urlMap);
+  if (unmappedUrls.length > 0) {
+    console.log(`\n  ${chalk.yellow('⚠')}  ${plural(unmappedUrls.length, 'URL')} found in pulled workflows but not mapped:`);
+    for (const url of unmappedUrls) {
+      console.log(chalk.dim(`     chiral url map ${deriveUrlLogicalName(url)} ${env}=${url}`));
+    }
   }
 }
 
@@ -363,6 +438,7 @@ export async function runPull(
         console.log(chalk.dim(`\n  Snapshot saved → .chiral/snapshots/${deploymentId}/`));
         if (pinDataStripped) printPinDataWarnings([workflow.name]);
         printUnmappedTablesHint(unmappedTables, options.env);
+        if (hasChanges) printDiscoveryHints([workflow], options.env, chiralDir);
         console.log();
       }
 
@@ -642,7 +718,11 @@ export async function runPull(
 
     // Auto-heal: update tables.json names from cachedResultName, collect unmapped table IDs
     const unmappedTables = healTableNames(chiralDir, options.env, workflows);
-    if (outputMode === 'human') printUnmappedTablesHint(unmappedTables, options.env);
+    if (outputMode === 'human') {
+      printUnmappedTablesHint(unmappedTables, options.env);
+      const changedWorkflows = delta ? [...delta.added, ...delta.updated] : workflows;
+      if (changedWorkflows.length > 0) printDiscoveryHints(changedWorkflows, options.env, chiralDir);
+    }
 
     // Batch-update fingerprints for every pulled workflow - runs for both the
     // "no changes" and "first pull / changes found" branches.
@@ -706,7 +786,7 @@ export async function runPull(
 
 export const pullCommand = new Command('pull')
   .description('Sync workflow snapshots from an n8n environment')
-  .requiredOption('--env <env>', 'Environment to pull from')
+  .argument('<env>', 'Environment to pull from')
   .addOption(new Option('--tag <tag>', 'Only pull workflows with this tag name').conflicts('id'))
   .addOption(new Option('--pattern <glob>', 'Only pull workflows whose name matches this glob (e.g. "Customer *")').conflicts('id'))
   .option('--verbose', 'Expand updated workflows\' named node changes, grouped by risk, routed through pager')
@@ -723,15 +803,15 @@ export const pullCommand = new Command('pull')
     `
 Examples:
   Pull all workflows from dev:
-    chiral pull --env dev
+    chiral pull dev
 
   Pull only workflows tagged "production":
-    chiral pull --env dev --tag production
+    chiral pull dev --tag production
 
   Exit 1 if changes detected (for CI scripts):
-    chiral pull --env dev --exit-code
+    chiral pull dev --exit-code
 `,
   )
-  .action(async (options: Omit<PullOptions, 'noPager' | 'noPinData'> & { pager?: boolean; pinData?: boolean }) => {
-    await runPull({ ...options, noPager: options.pager === false, noPinData: options.pinData === false });
+  .action(async (env: string, options: Omit<PullOptions, 'noPager' | 'noPinData' | 'env'> & { pager?: boolean; pinData?: boolean }) => {
+    await runPull({ ...options, env, noPager: options.pager === false, noPinData: options.pinData === false });
   });

@@ -28,6 +28,7 @@ import { statusCommand } from './commands/status.js';
 import { completionCommand, internalCompleteEnvsCommand, internalCompleteWorkflowsCommand } from './commands/completion.js';
 import { lockCommand, unlockCommand } from './commands/lock.js';
 import { logCommand } from './commands/log.js';
+import { doctorCommand } from './commands/doctor.js';
 
 // Track whether any stdout output was written before an error fires.
 // The error handler uses this to add a leading blank line only when needed:
@@ -68,6 +69,7 @@ program.addCommand(workflowCommand);
 program.addCommand(lockCommand);
 program.addCommand(unlockCommand);
 program.addCommand(logCommand);
+program.addCommand(doctorCommand);
 program.addCommand(credentialCommand);
 program.addCommand(tableCommand);
 program.addCommand(urlCommand);
@@ -114,6 +116,14 @@ try {
     process.exit(130);
   }
   if (err instanceof ControlledExit) {
+    if (err.userMessage) {
+      if (isJsonFlagActive()) {
+        printJsonError('not_found', err.userMessage, false);
+      } else {
+        const sep = didPrintOutput ? '' : '\n';
+        console.error(`${sep}  ${chalk.red('✗')}  ${err.userMessage}\n`);
+      }
+    }
     process.exit(err.code);
   }
   if (err instanceof CommanderError) {

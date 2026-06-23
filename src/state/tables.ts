@@ -87,7 +87,7 @@ export function collectDataTableRefs(workflows: { nodes?: unknown }[]): Map<stri
       if (dtObj['__rl'] !== true) continue;
 
       const value = dtObj['value'];
-      if (typeof value !== 'string') continue;
+      if (typeof value !== 'string' || !value) continue;
       const cachedResultName = typeof dtObj['cachedResultName'] === 'string' ? dtObj['cachedResultName'] : undefined;
       refs.set(value, cachedResultName);
     }
@@ -139,7 +139,8 @@ export function applyTableMap(
     if (typeof sourceId !== 'string') return node;
 
     const logicalName = findLogicalNameByTableId(tableMap, sourceEnv, sourceId);
-    const targetId = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.id : undefined;
+    const targetEntry = logicalName ? tableMap.tables[logicalName]?.[targetEnv] : undefined;
+    const targetId = targetEntry?.id;
 
     if (!targetId) {
       const nodeName = typeof nodeObj['name'] === 'string' ? nodeObj['name'] : 'unnamed node';
@@ -152,7 +153,7 @@ export function applyTableMap(
       return node;
     }
 
-    const targetName = logicalName ? tableMap.tables[logicalName]?.[targetEnv]?.name : undefined;
+    const targetName = targetEntry?.name;
 
     const newDtObj: Record<string, unknown> = { ...dtObj, value: targetId };
     delete newDtObj['cachedResultUrl'];

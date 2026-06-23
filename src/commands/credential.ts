@@ -5,7 +5,7 @@ import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight, getChiralVersion } from '../lib/cli.js';
+import { padRight, getChiralVersion, normalizedSimilarity, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
 import {
   loadCredentials,
@@ -38,6 +38,8 @@ function parseCredentialMapArgs(args: string[]): ParsedCredentialMapArgs {
     const eqIdx = arg.indexOf('=');
     if (eqIdx > 0) {
       perEnvNames[arg.slice(0, eqIdx)] = arg.slice(eqIdx + 1);
+    } else if (eqIdx === 0) {
+      throw new UserError(`Invalid argument "${arg}" - env=name format requires a non-empty env name before "="`);
     } else {
       plainCount++;
       if (plainCount === 1) logicalName = arg;
@@ -73,30 +75,6 @@ function buildExactCrossEnvFill(
   return null;
 }
 
-// ── Levenshtein distance for --smart fuzzy matching ───────────────────────────
-
-function levenshtein(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-  );
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] =
-        a[i - 1] === b[j - 1]
-          ? dp[i - 1][j - 1]
-          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
-
-function normalizedSimilarity(a: string, b: string): number {
-  const maxLen = Math.max(a.length, b.length);
-  if (maxLen === 0) return 1;
-  return 1 - levenshtein(a, b) / maxLen;
-}
 
 /**
  * Fuzzy cross-env fill using normalized edit distance.  Returns best candidate with
@@ -155,21 +133,20 @@ function computeCoverageSummary(
 
     for (const workflow of workflows) {
       const nodes = (workflow as Record<string, unknown>)['nodes'];
+      if (!Array.isArray(nodes)) continue;
 
       // Collect all credential names in this workflow
       const credNames: string[] = [];
-      if (Array.isArray(nodes)) {
-        for (const node of nodes) {
-          if (typeof node !== 'object' || node === null) continue;
-          const nodeObj = node as Record<string, unknown>;
-          const creds = nodeObj['credentials'];
-          if (typeof creds !== 'object' || creds === null) continue;
-          for (const credValue of Object.values(creds as Record<string, unknown>)) {
-            if (typeof credValue !== 'object' || credValue === null) continue;
-            const cv = credValue as Record<string, unknown>;
-            const name = cv['name'];
-            if (typeof name === 'string') credNames.push(name);
-          }
+      for (const node of nodes) {
+        if (typeof node !== 'object' || node === null) continue;
+        const nodeObj = node as Record<string, unknown>;
+        const creds = nodeObj['credentials'];
+        if (typeof creds !== 'object' || creds === null) continue;
+        for (const credValue of Object.values(creds as Record<string, unknown>)) {
+          if (typeof credValue !== 'object' || credValue === null) continue;
+          const cv = credValue as Record<string, unknown>;
+          const name = cv['name'];
+          if (typeof name === 'string') credNames.push(name);
         }
       }
 
@@ -188,6 +165,16 @@ function computeCoverageSummary(
   return { coveredWorkflows: covered, totalWorkflows: total };
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function isMapped(
+  credentials: ReturnType<typeof loadCredentials>,
+  env: string,
+  name: string,
+): boolean {
+  return Object.values(credentials.credentials).some((envMap) => envMap[env] === name);
+}
+
 // ── credential map ────────────────────────────────────────────────────────────
 
 export async function runCredentialMap(
@@ -204,32 +191,23 @@ export async function runCredentialMap(
   const { logicalName, uniformName, perEnvNames } = parseCredentialMapArgs(args);
   const isNonInteractive = uniformName !== undefined || Object.keys(perEnvNames).length > 0;
 
+  // Load config once (best-effort) for --smart check and non-interactive env resolution
+  let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
+  try {
+    configResult = loadConfigAndDir();
+  } catch { /* config not required in non-interactive mode */ }
+
   // ── --smart license check ──────────────────────────────────────────────────
-  if (options.smart) {
-    let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
-    try {
-      configResult = loadConfigAndDir();
-    } catch {
-      // will be caught below
-    }
-    if (!configResult?.config.licenseKey) {
-      throw new UserError(
-        '--smart requires a paid license. Add licenseKey to config.json.',
-      );
-    }
+  if (options.smart && !configResult?.config.licenseKey) {
+    throw new UserError(
+      '--smart requires a paid license. Add licenseKey to config.json.',
+    );
   }
 
   // ── Non-interactive modes (3 & 4) ─────────────────────────────────────────
   if (isNonInteractive) {
     if (!logicalName) {
       throw new UserError('Logical name is required in non-interactive mode');
-    }
-
-    let configResult: ReturnType<typeof loadConfigAndDir> | null = null;
-    try {
-      configResult = loadConfigAndDir();
-    } catch {
-      // config not required for non-interactive
     }
 
     const envList = configResult ? Object.keys(configResult.config.environments) : [];
@@ -242,11 +220,17 @@ export async function runCredentialMap(
       }
     }
 
+    if (Object.keys(envMap).length === 0) {
+      throw new UserError(
+        'No environments resolved. Specify env=name pairs or ensure config.json is present.',
+      );
+    }
+
     // Warn about unknown envs
     if (configResult) {
       for (const env of Object.keys(envMap)) {
         if (!(env in configResult.config.environments)) {
-          console.log(chalk.yellow(`  ⚠ "${env}" is not in config.json - written anyway.`));
+          console.error(chalk.yellow(`  ⚠ "${env}" is not in config.json - written anyway.`));
         }
       }
     }
@@ -307,7 +291,7 @@ export async function runCredentialMap(
       if (syncResult.success) {
         console.log(formatSyncSuccess(syncResult));
       } else {
-        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        for (const line of formatSyncFailure(syncResult)) console.error(chalk.yellow(line));
       }
       console.log();
     }
@@ -315,10 +299,7 @@ export async function runCredentialMap(
   }
 
   // ── Interactive modes (1 & 2) ──────────────────────────────────────────────
-  let configResult: ReturnType<typeof loadConfigAndDir>;
-  try {
-    configResult = loadConfigAndDir();
-  } catch {
+  if (!configResult) {
     throw new UserError(
       "Interactive mode requires config.json. Run 'chiral environment add <env>' first.",
     );
@@ -332,13 +313,8 @@ export async function runCredentialMap(
   const allDiscovered = extractCredentialsFromSnapshots(chiralDir, envs);
   const hasSnapshots = listDeployments(chiralDir).length > 0;
 
-  // A credential is "mapped" if credentials.json has an entry for env=name
-  function isMapped(env: string, name: string): boolean {
-    return Object.values(credentials.credentials).some((envMap) => envMap[env] === name);
-  }
-
   // Build unmapped list (filter to just the named one if mode 2)
-  let unmapped = allDiscovered.filter((d) => !isMapped(d.env, d.name));
+  let unmapped = allDiscovered.filter((d) => !isMapped(credentials, d.env, d.name));
   if (logicalName !== undefined) {
     unmapped = unmapped.filter(
       (d) => d.name === logicalName || deriveCredentialLogicalName(d.name, configuredEnvNames) === logicalName,
@@ -359,7 +335,7 @@ export async function runCredentialMap(
     console.log(
       `  No snapshots found - chiral doesn't know what credentials exist yet.\n\n` +
       `  ${chalk.dim('Run this first to discover your credentials:')}\n` +
-      `    chiral adopt --env ${firstEnv}\n\n` +
+      `    chiral adopt ${firstEnv}\n\n` +
       `  ${chalk.dim('Or map a credential manually without snapshots:')}\n` +
       `    chiral credential map <logical-name> ${firstEnv}="<name in ${firstEnv}>" ${secondEnv}="<name in ${secondEnv}>"\n`,
     );
@@ -382,13 +358,14 @@ export async function runCredentialMap(
       byEnv.set(d.env, list);
     }
     for (const [env, creds] of byEnv) {
+      const namePad = Math.max(...creds.map((c) => c.name.length));
       console.log(`  Found ${creds.length} unmapped credential${creds.length !== 1 ? 's' : ''} in your ${chalk.cyan(env)} workflows:\n`);
       for (const c of creds) {
         const wfList = c.workflowNames.slice(0, 2).join(', ');
         const extra = c.workflowNames.length > 2 ? `, +${c.workflowNames.length - 2} more` : '';
         const wfCount = c.workflowNames.length;
         const wfLabel = `used in ${wfCount} workflow${wfCount !== 1 ? 's' : ''}`;
-        console.log(`    ${padRight(chalk.bold(c.name), 30)} ${chalk.dim(`${wfLabel}  (${wfList}${extra})`)}`);
+        console.log(`    ${padRight(chalk.bold(c.name), namePad)} ${chalk.dim(`${wfLabel}  (${wfList}${extra})`)}`);
       }
       console.log();
     }
@@ -405,7 +382,7 @@ export async function runCredentialMap(
     if (processed.has(key)) continue;
 
     // Re-check: may have been covered by a previous iteration's upsert
-    if (isMapped(discovered.env, discovered.name)) {
+    if (isMapped(credentials, discovered.env, discovered.name)) {
       processed.add(key);
       continue;
     }
@@ -580,7 +557,7 @@ export async function runCredentialMap(
       if (syncResult.success) {
         console.log(formatSyncSuccess(syncResult));
       } else {
-        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        for (const line of formatSyncFailure(syncResult)) console.error(chalk.yellow(line));
       }
       console.log();
     }
@@ -629,16 +606,14 @@ export async function runCredentialList(
   // ── --uncovered mode ──────────────────────────────────────────────────────
   if (options.uncovered) {
     if (listDeployments(chiralDir).length === 0) {
-      throw new UserError("No snapshots found. Run 'chiral adopt --env <env>' first.");
+      throw new UserError("No snapshots found. Run 'chiral adopt <env>' first.");
     }
 
     const targetEnvs = options.env ? [options.env] : envList;
     const discovered = extractCredentialsFromSnapshots(chiralDir, targetEnvs);
 
     // Filter to those not already in credentials.json for their env
-    const uncovered = discovered.filter(
-      (d) => !Object.values(credentials.credentials).some((envMap) => envMap[d.env] === d.name),
-    );
+    const uncovered = discovered.filter((d) => !isMapped(credentials, d.env, d.name));
 
     if (options.json) {
       printJson(uncovered.map((d) => ({ env: d.env, name: d.name, workflows: d.workflowNames })));
@@ -659,10 +634,11 @@ export async function runCredentialList(
       byEnv.set(d.env, list);
     }
     for (const [env, creds] of byEnv) {
+      const namePad = Math.max(...creds.map((c) => c.name.length));
       console.log(`  ${chalk.cyan(env)}:`);
       for (const c of creds) {
         console.log(
-          `    ${chalk.dim('–')} ${padRight(c.name, 30)} ${chalk.dim(`(${c.workflowNames.join(', ')})`)}`
+          `    ${chalk.dim('–')} ${padRight(c.name, namePad)} ${chalk.dim(`(${c.workflowNames.join(', ')})`)}`
         );
       }
       console.log();
@@ -697,39 +673,13 @@ export async function runCredentialList(
     Math.max(env.length, ...entries.map(([, m]) => (m[env] ?? '(not set)').length)),
   );
   const widths = [C_LOGICAL, ...C_ENVS];
-  const pad = padRight;
-
-  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-  const headerRow =
-    '  │ ' +
-    [
-      pad(chalk.dim('LOGICAL NAME'), C_LOGICAL),
-      ...envList.map((env, i) => pad(chalk.cyan(env), C_ENVS[i])),
-    ].join(' │ ') +
-    ' │';
-
-  console.log();
-  console.log(top);
-  console.log(headerRow);
-  console.log(sep);
-
-  for (const [logical, envMap] of entries) {
-    const hasGap = envList.some((env) => !(env in envMap));
-    const logicalStr = hasGap ? chalk.yellow(logical) : logical;
-    const cells = [
-      pad(logicalStr, C_LOGICAL),
-      ...envList.map((env, i) => {
-        const name = envMap[env];
-        return pad(name ?? chalk.dim('(not set)'), C_ENVS[i]);
-      }),
-    ];
-    console.log('  │ ' + cells.join(' │ ') + ' │');
-  }
-
-  console.log(bot);
-  console.log();
+  const headers = [chalk.dim('LOGICAL NAME'), ...envList.map((env) => chalk.cyan(env))];
+  const rows = entries.map(([logical, envMap]) => ({
+    label: logical,
+    hasGap: envList.some((env) => !(env in envMap)),
+    cells: envList.map((env) => envMap[env] ?? chalk.dim('(not set)')),
+  }));
+  renderBoxTable(widths, headers, rows);
 }
 
 // ── credential unmap ──────────────────────────────────────────────────────────

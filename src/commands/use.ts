@@ -90,7 +90,7 @@ Examples:
     chiral use my-n8n
 
   Use CHIRAL_PROJECT env var for one-off commands (no session write):
-    CHIRAL_PROJECT=my-n8n chiral pull --env dev
+    CHIRAL_PROJECT=my-n8n chiral pull dev
 `,
   )
   .option('--json', 'Output result as JSON')

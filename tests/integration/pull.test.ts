@@ -60,7 +60,7 @@ describe('chiral pull (integration)', () => {
     const repo: RepoHandle = makeRepo({ url, apiKey, project });
     const { projectsDir, env } = registerTempProject(repo, project);
     try {
-      const first = await runCli(['pull', '--env', 'dev'], { cwd: repo.dir, env });
+      const first = await runCli(['pull', 'dev'], { cwd: repo.dir, env });
       expect(first.exitCode).toBe(0);
 
       const deploymentsAfterFirst = listDeploymentDirs(repo.chiralDir);
@@ -76,7 +76,7 @@ describe('chiral pull (integration)', () => {
       expect(pullEntry?.target_env).toBe('dev');
       expect(pullEntry?.workflow_ids).toContain(workflowId);
 
-      const second = await runCli(['pull', '--env', 'dev'], { cwd: repo.dir, env });
+      const second = await runCli(['pull', 'dev'], { cwd: repo.dir, env });
       expect(second.exitCode).toBe(0);
 
       const deploymentsAfterSecond = listDeploymentDirs(repo.chiralDir);
@@ -97,7 +97,7 @@ describe('chiral pull (integration)', () => {
     const repo: RepoHandle = makeRepo({ url, apiKey: `${apiKey}-invalid`, project });
     const { projectsDir, env } = registerTempProject(repo, project);
     try {
-      const result = await runCli(['pull', '--env', 'dev'], { cwd: repo.dir, env });
+      const result = await runCli(['pull', 'dev'], { cwd: repo.dir, env });
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toLowerCase()).toContain('invalid');

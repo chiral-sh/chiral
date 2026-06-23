@@ -8,10 +8,9 @@ export class UserError extends Error {
   }
 }
 
-// Thrown to signal a specific exit code without printing an error message.
-// Caught at the top-level boundary in index.ts.
+// Thrown to signal a specific exit code. If userMessage is set, index.ts prints it before exiting.
 export class ControlledExit extends Error {
-  constructor(public readonly code: number) {
+  constructor(public readonly code: number, public readonly userMessage?: string) {
     super(`exit ${code}`);
     this.name = 'ControlledExit';
   }

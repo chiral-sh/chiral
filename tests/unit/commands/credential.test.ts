@@ -275,12 +275,12 @@ describe('runCredentialMap - non-interactive', () => {
 
   it('warns but writes for unknown env name', async () => {
     setupBase();
-    const logs: string[] = [];
-    const orig = console.log;
-    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
     await runCredentialMap(['postgres', 'qa=qa_postgres'], {});
-    console.log = orig;
-    expect(logs.some((l) => l.includes('⚠') && l.includes('qa'))).toBe(true);
+    console.error = orig;
+    expect(errs.some((l) => l.includes('⚠') && l.includes('qa'))).toBe(true);
     const creds = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/credentials.json`, 'utf-8') as string,
     );

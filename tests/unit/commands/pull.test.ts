@@ -996,7 +996,7 @@ describe('runPull - error handling', () => {
 
     await runPull({ env: 'dev' });
 
-    expect(output.join('\n')).toContain('chiral diff --source dev --target prod');
+    expect(output.join('\n')).toContain('chiral diff --from dev --to prod');
   });
 
   it('shows diff Next hint when no changes found', async () => {
@@ -1016,7 +1016,7 @@ describe('runPull - error handling', () => {
 
     await runPull({ env: 'dev' });
 
-    expect(output.join('\n')).toContain('chiral diff --source dev --target prod');
+    expect(output.join('\n')).toContain('chiral diff --from dev --to prod');
     expect(output.join('\n')).not.toContain('push');
   });
 
@@ -1053,7 +1053,7 @@ describe('runPull - smart Next: hint', () => {
 
     await runPull({ env: 'dev' });
 
-    expect(output.join('\n')).toContain('chiral push --source dev --target prod --dry-run');
+    expect(output.join('\n')).toContain('chiral push --from dev --to prod --dry-run');
   });
 
   it('carries --tag filter forward into push hint', async () => {
@@ -2016,7 +2016,7 @@ describe('runPull - pinData flags', () => {
 
     pullCommand.exitOverride();
     await expect(
-      pullCommand.parseAsync(['--env', 'dev', '--no-pin-data', '--keep-pin-data'], { from: 'user' }),
+      pullCommand.parseAsync(['dev', '--no-pin-data', '--keep-pin-data'], { from: 'user' }),
     ).rejects.toMatchObject({ code: 'commander.conflictingOption' });
 
     exitSpy.mockRestore();

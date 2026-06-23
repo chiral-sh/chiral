@@ -5,7 +5,7 @@ import { readFileSync, existsSync, watch as fsWatch } from 'node:fs';
 import { loadConfigAndDir } from '../lib/config.js';
 import { UserError, ControlledExit } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
-import { visibleLen, padRight } from '../lib/cli.js';
+import { visibleLen, padRight, levenshtein } from '../lib/cli.js';
 import { renderLockTable, type LockListEntry } from '../lib/lock-render.js';
 import { readAuditLog, AuditEntrySchema, type AuditEntry } from '../state/audit.js';
 import { listDeployments, readSnapshotMeta, listSnapshotWorkflows, readAllWorkflowsInDeployment, type SnapshotMeta, type SnapshotWorkflow } from '../state/snapshots.js';
@@ -55,18 +55,6 @@ interface LockRow {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-  );
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
 
 function findNearestEnv(input: string, names: string[]): string | undefined {
   let best: string | undefined;
@@ -542,7 +530,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       for (const line of renderTable(envRows, noHumanize, tableCols)) console.log(line);
 
       for (const envName of zeroWorkflowEnvs) {
-        console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull --env ${envName}' to resync.`);
+        console.log(`\n  ${chalk.yellow('⚠')}  ${chalk.cyan(envName)} has 0 workflows — last pull may have failed. Run 'chiral pull ${envName}' to resync.`);
       }
 
       for (const row of envRows) {

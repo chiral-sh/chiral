@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol } from 'memfs';
-import { UserError } from '../../../src/lib/errors.js';
+import { UserError, ControlledExit } from '../../../src/lib/errors.js';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
@@ -97,14 +97,14 @@ describe('runUrlMap (non-interactive)', () => {
   it('writes both env values from positional env=url pairs', async () => {
     setupBase();
     await runUrlMap(
-      ['api_base', 'dev=https://api.dev.example.com', 'prod=https://api.example.com'],
+      ['api-base', 'dev=https://api.dev.example.com', 'prod=https://api.example.com'],
       {},
     );
 
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_base'].values).toEqual({
+    expect(written.urls['api-base'].values).toEqual({
       dev: 'https://api.dev.example.com',
       prod: 'https://api.example.com',
     });
@@ -113,24 +113,24 @@ describe('runUrlMap (non-interactive)', () => {
   it('sets exact flag when --exact passed', async () => {
     setupBase();
     await runUrlMap(
-      ['api_base', 'dev=https://api.dev.example.com', 'prod=https://api.example.com'],
+      ['api-base', 'dev=https://api.dev.example.com', 'prod=https://api.example.com'],
       { exact: true },
     );
 
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_base'].exact).toBe(true);
+    expect(written.urls['api-base'].exact).toBe(true);
   });
 
   it('does not set exact flag when --exact not passed', async () => {
     setupBase();
-    await runUrlMap(['api_base', 'dev=https://api.dev.example.com'], {});
+    await runUrlMap(['api-base', 'dev=https://api.dev.example.com'], {});
 
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_base'].exact).toBeUndefined();
+    expect(written.urls['api-base'].exact).toBe(false);
   });
 
   it('throws UserError for userinfo URL and writes nothing', async () => {
@@ -160,7 +160,7 @@ describe('runUrlMap (non-interactive)', () => {
   it('prints warning but still writes when env absent from config', async () => {
     setupBase();
     const warnSpy = vi.spyOn(console, 'log');
-    await runUrlMap(['api_base', 'staging=https://api.staging.example.com'], {});
+    await runUrlMap(['api-base', 'staging=https://api.staging.example.com'], {});
 
     const warnCalls = warnSpy.mock.calls.map((c) => String(c[0]));
     expect(warnCalls.some((m) => m.includes('"staging"') && m.includes('not in config.json'))).toBe(true);
@@ -168,14 +168,14 @@ describe('runUrlMap (non-interactive)', () => {
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_base'].values['staging']).toBe('https://api.staging.example.com');
+    expect(written.urls['api-base'].values['staging']).toBe('https://api.staging.example.com');
   });
 
   it('emits { status, data } JSON envelope with --json', async () => {
     setupBase();
     const logSpy = vi.spyOn(console, 'log');
     await runUrlMap(
-      ['api_base', 'dev=https://api.dev.example.com', 'prod=https://api.example.com'],
+      ['api-base', 'dev=https://api.dev.example.com', 'prod=https://api.example.com'],
       { json: true },
     );
 
@@ -185,7 +185,7 @@ describe('runUrlMap (non-interactive)', () => {
     expect(jsonLine).toBeDefined();
     const parsed = JSON.parse(jsonLine!);
     expect(parsed.status).toBe('ok');
-    expect(parsed.data.logical_name).toBe('api_base');
+    expect(parsed.data.logical_name).toBe('api-base');
     expect(parsed.data.values).toEqual({
       dev: 'https://api.dev.example.com',
       prod: 'https://api.example.com',
@@ -198,16 +198,16 @@ describe('runUrlMap (non-interactive)', () => {
       JSON.stringify({
         version: 1,
         urls: {
-          api_base: { values: { dev: 'https://api.dev.example.com' } },
+          'api-base': { values: { dev: 'https://api.dev.example.com' } },
         },
       }),
     );
-    await runUrlMap(['api_base', 'prod=https://api.example.com'], {});
+    await runUrlMap(['api-base', 'prod=https://api.example.com'], {});
 
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_base'].values).toEqual({
+    expect(written.urls['api-base'].values).toEqual({
       dev: 'https://api.dev.example.com',
       prod: 'https://api.example.com',
     });
@@ -227,12 +227,12 @@ describe('runUrlMap (non-interactive)', () => {
 
   it('accepts single env via --env/--value flags', async () => {
     setupBase();
-    await runUrlMap(['api_base'], { env: 'dev', value: 'https://api.dev.example.com' });
+    await runUrlMap(['api-base'], { env: 'dev', value: 'https://api.dev.example.com' });
 
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_base'].values['dev']).toBe('https://api.dev.example.com');
+    expect(written.urls['api-base'].values['dev']).toBe('https://api.dev.example.com');
   });
 
   it('throws UserError when mixing positional pairs with --env/--value flags', async () => {
@@ -247,7 +247,7 @@ describe('runUrlMap (non-interactive)', () => {
 
   it('writes an audit entry with action map', async () => {
     setupBase();
-    await runUrlMap(['api_base', 'dev=https://api.dev.example.com'], {});
+    await runUrlMap(['api-base', 'dev=https://api.dev.example.com'], {});
 
     const auditLine = (vol.readFileSync(`${PROJECT_DIR}/.chiral/audit.jsonl`, 'utf-8') as string)
       .trim()
@@ -263,6 +263,13 @@ describe('runUrlMap (non-interactive)', () => {
 // ── runUrlMap (interactive discovery) ─────────────────────────────────────────
 
 describe('runUrlMap (interactive discovery)', () => {
+  beforeEach(() => {
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true, writable: true });
+  });
+  afterEach(() => {
+    Object.defineProperty(process.stdin, 'isTTY', { value: undefined, configurable: true, writable: true });
+  });
+
   it('discovers unmapped URL and writes on confirmation', async () => {
     setupBase();
     mockExtractUrls.mockReturnValue([
@@ -300,7 +307,7 @@ describe('runUrlMap (interactive discovery)', () => {
         workflowNames: ['WF'],
       },
     ]);
-    // Empty logical name → falls back to hostname slug 'api_dev_example_com'
+    // Empty logical name → falls back to hostname slug 'api-dev-example-com'
     mockInput
       .mockResolvedValueOnce('')
       .mockResolvedValueOnce('https://api.dev.example.com/v1')
@@ -311,7 +318,7 @@ describe('runUrlMap (interactive discovery)', () => {
     const written = JSON.parse(
       vol.readFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, 'utf-8') as string,
     );
-    expect(written.urls['api_dev_example_com']).toBeDefined();
+    expect(written.urls['api-dev-example-com']).toBeDefined();
   });
 
   it('writes an audit entry after interactive mapping', async () => {
@@ -381,7 +388,7 @@ describe('runUrlMap (interactive discovery)', () => {
     const parsed = JSON.parse(jsonLine!);
     expect(parsed.status).toBe('ok');
     expect(parsed.data.candidates).toHaveLength(1);
-    expect(parsed.data.candidates[0].suggested_key).toBe('api_dev_example_com');
+    expect(parsed.data.candidates[0].suggested_key).toBe('api-dev-example-com');
   });
 
   it('skips already-mapped URLs', async () => {
@@ -553,9 +560,9 @@ describe('runUrlUnmap', () => {
     expect(written.urls['webhook']).toBeUndefined();
   });
 
-  it('throws UserError for missing logical name', async () => {
+  it('throws ControlledExit(4) for missing logical name', async () => {
     setupBase(TWO_ENV_URL_MAP);
-    await expect(runUrlUnmap('nonexistent', { yes: true })).rejects.toBeInstanceOf(UserError);
+    await expect(runUrlUnmap('nonexistent', { yes: true })).rejects.toBeInstanceOf(ControlledExit);
   });
 
   it('throws UserError for missing --env within existing entry', async () => {

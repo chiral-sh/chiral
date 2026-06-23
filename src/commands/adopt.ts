@@ -131,7 +131,7 @@ export async function runAdopt(
         chalk.dim(`     If they exist under different names in other environments, run:`),
       );
       console.log(
-        chalk.dim(`     chiral workflow match --source ${options.env} --target ${targetHint}`),
+        chalk.dim(`     chiral workflow match --from ${options.env} --to ${targetHint}`),
       );
     }
 
@@ -166,7 +166,7 @@ export async function runAdopt(
 
     const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
     if (otherEnvs.length > 0) {
-      console.log(`\n  ${chalk.dim('Next:')} chiral diff --source ${options.env} --target ${otherEnvs[0]}\n`);
+      console.log(`\n  ${chalk.dim('Next:')} chiral diff --from ${options.env} --to ${otherEnvs[0]}\n`);
     } else {
       console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
     }
@@ -201,15 +201,15 @@ export async function runAdopt(
 
 export const adoptCommand = new Command('adopt')
   .description('Import an existing n8n instance into chiral state')
-  .requiredOption('--env <env>', 'Environment name from config.json')
+  .argument('<env>', 'Environment name from config.json')
   .addHelpText(
     'after',
     `
 Examples:
   Adopt a configured environment:
-    chiral adopt --env dev
+    chiral adopt dev
 `,
   )
-  .action(async (options: AdoptOptions) => {
-    await runAdopt(options);
+  .action(async (env: string, _options: Record<string, never>) => {
+    await runAdopt({ env });
   });

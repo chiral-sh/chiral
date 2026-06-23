@@ -5,14 +5,14 @@ import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
-import { padRight, getChiralVersion } from '../lib/cli.js';
-import { readTeam, writeTeam } from '../state/team.js';
+import { getChiralVersion, renderBoxTable } from '../lib/cli.js';
+import { readTeam, writeTeam, type Team } from '../state/team.js';
 import { writeAuditEntry } from '../state/audit.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string): string {
-  return iso;
+function getOwnerEmail(team: Team): string {
+  return Object.entries(team.members).find(([, m]) => m.role === 'owner')?.[0] ?? '';
 }
 
 // ── team list ─────────────────────────────────────────────────────────────────
@@ -25,8 +25,7 @@ export async function runTeamList(options: { json?: boolean }): Promise<void> {
 
   const team = readTeam(chiralDir);
   const entries = Object.entries(team.members);
-
-  const ownerEmail = entries.find(([, m]) => m.role === 'owner')?.[0] ?? '';
+  const ownerEmail = getOwnerEmail(team);
 
   if (options.json) {
     const members = entries.map(([email, m]) => ({
@@ -49,40 +48,13 @@ export async function runTeamList(options: { json?: boolean }): Promise<void> {
   const COL_EMAIL = Math.max('EMAIL'.length, ...entries.map(([e]) => e.length));
   const COL_ROLE = Math.max('ROLE'.length, ...entries.map(([, m]) => m.role.length));
   const COL_ADDED_BY = Math.max('ADDED BY'.length, ...entries.map(([, m]) => m.addedBy.length));
-  const COL_ADDED_AT = Math.max('ADDED AT'.length, ...entries.map(([, m]) => formatDate(m.addedAt).length));
+  const COL_ADDED_AT = Math.max('ADDED AT'.length, ...entries.map(([, m]) => m.addedAt.length));
 
-  const widths = [COL_EMAIL, COL_ROLE, COL_ADDED_BY, COL_ADDED_AT];
-  const top = '  ┌' + widths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-  const sep = '  ├' + widths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-  const bot = '  └' + widths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-
-  const headerRow =
-    '  │ ' +
-    [
-      padRight('EMAIL', COL_EMAIL),
-      padRight('ROLE', COL_ROLE),
-      padRight('ADDED BY', COL_ADDED_BY),
-      padRight('ADDED AT', COL_ADDED_AT),
-    ].join(' │ ') +
-    ' │';
-
-  console.log();
-  console.log(top);
-  console.log(headerRow);
-  console.log(sep);
-
-  for (const [email, member] of entries) {
-    const cells = [
-      padRight(email, COL_EMAIL),
-      padRight(member.role, COL_ROLE),
-      padRight(member.addedBy, COL_ADDED_BY),
-      padRight(formatDate(member.addedAt), COL_ADDED_AT),
-    ];
-    console.log('  │ ' + cells.join(' │ ') + ' │');
-  }
-
-  console.log(bot);
-  console.log();
+  renderBoxTable(
+    [COL_EMAIL, COL_ROLE, COL_ADDED_BY, COL_ADDED_AT],
+    ['EMAIL', 'ROLE', 'ADDED BY', 'ADDED AT'],
+    entries.map(([email, m]) => ({ label: email, hasGap: false, cells: [m.role, m.addedBy, m.addedAt] })),
+  );
 }
 
 // ── team whoami ───────────────────────────────────────────────────────────────
@@ -97,7 +69,7 @@ export async function runTeamWhoami(options: { json?: boolean }): Promise<void> 
   const team = readTeam(chiralDir);
 
   const entry = team.members[actor];
-  const ownerEmail = Object.entries(team.members).find(([, m]) => m.role === 'owner')?.[0] ?? '';
+  const ownerEmail = getOwnerEmail(team);
   const isOwner = actor === ownerEmail;
 
   if (options.json) {
@@ -144,6 +116,10 @@ export async function runTeamAdd(
   const role: 'owner' | 'member' = roleInput;
 
   const actor = getGitActor();
+  if (!z.email().safeParse(actor).success) {
+    throw new UserError(`git config user.email "${actor}" is not a valid email address. Fix it with: git config user.email you@example.com`);
+  }
+
   const team = readTeam(chiralDir);
   const isNew = !(email in team.members);
 
@@ -158,6 +134,13 @@ export async function runTeamAdd(
     return;
   }
 
+  if (role === 'owner') {
+    const currentOwner = getOwnerEmail(team);
+    if (currentOwner && currentOwner !== email) {
+      team.members[currentOwner].role = 'member';
+    }
+  }
+
   team.members[email] = { role, addedBy: actor, addedAt: new Date().toISOString() };
   writeTeam(chiralDir, team);
 
@@ -169,7 +152,7 @@ export async function runTeamAdd(
     event_schema_version: 1,
     timestamp: new Date().toISOString(),
     actor,
-    action: 'map',
+    action: 'team.add',
     project: configResult?.config.project ?? 'unknown',
     source_env: null,
     target_env: '',
@@ -177,8 +160,6 @@ export async function runTeamAdd(
     result: 'success',
     error: null,
     chiral_version: getChiralVersion(),
-    match_method: 'manual',
-    match_score: null,
   });
 
   if (options.json) {
@@ -228,11 +209,20 @@ export async function runTeamRemove(
     throw new UserError(`"${email}" is not in the team roster`);
   }
 
-  const ownerEmail = Object.entries(team.members).find(([, m]) => m.role === 'owner')?.[0];
+  const ownerEmail = getOwnerEmail(team);
   if (email === ownerEmail) {
     throw new UserError(
       `Cannot remove the project owner (${email}). Transfer ownership first: chiral team set-role <new-owner> owner`,
     );
+  }
+
+  if (options.dryRun) {
+    if (options.json) {
+      console.log(JSON.stringify({ status: 'ok', data: { email, removed: true, dry_run: true } }));
+    } else {
+      console.log(`\n  Would remove ${email} from the team roster\n`);
+    }
+    return;
   }
 
   if (!options.yes) {
@@ -246,15 +236,6 @@ export async function runTeamRemove(
     }
   }
 
-  if (options.dryRun) {
-    if (options.json) {
-      console.log(JSON.stringify({ status: 'ok', data: { email, removed: true, dry_run: true } }));
-    } else {
-      console.log(`\n  Would remove ${email} from the team roster\n`);
-    }
-    return;
-  }
-
   delete team.members[email];
   writeTeam(chiralDir, team);
 
@@ -266,7 +247,7 @@ export async function runTeamRemove(
     event_schema_version: 1,
     timestamp: new Date().toISOString(),
     actor,
-    action: 'unmap',
+    action: 'team.remove',
     project: configResult?.config.project ?? 'unknown',
     source_env: null,
     target_env: '',
@@ -325,7 +306,7 @@ export async function runTeamSetRole(
     throw new UserError(`"${email}" is not in the team roster`);
   }
 
-  const currentOwnerEmail = Object.entries(team.members).find(([, m]) => m.role === 'owner')?.[0];
+  const currentOwnerEmail = getOwnerEmail(team);
 
   if (newRole === 'member' && email === currentOwnerEmail) {
     throw new UserError(
@@ -368,7 +349,7 @@ export async function runTeamSetRole(
     event_schema_version: 1,
     timestamp: new Date().toISOString(),
     actor,
-    action: 'map',
+    action: 'team.set-role',
     project: configResult?.config.project ?? 'unknown',
     source_env: null,
     target_env: '',
@@ -376,8 +357,6 @@ export async function runTeamSetRole(
     result: 'success',
     error: null,
     chiral_version: getChiralVersion(),
-    match_method: 'manual',
-    match_score: null,
   });
 
   if (options.json) {

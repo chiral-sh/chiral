@@ -3,7 +3,7 @@ import ora from 'ora';
 import { Command, Option } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { N8nClient, type WorkflowSummary } from '../lib/n8n-client.js';
-import { ControlledExit } from '../lib/errors.js';
+import { ControlledExit, UserError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { failSpinner, plural, matchesGlob, formatAge, getChiralVersion } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
@@ -35,15 +35,10 @@ function loadCredentialsOrEmpty(chiralDir: string): Credentials {
   }
 }
 
-function formatLockBadgeAge(timestamp: string): { label: string; stale: boolean } {
-  const ageSeconds = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
-  return { label: formatAge(ageSeconds, 'short'), stale: ageSeconds > 24 * 3600 };
-}
-
 function renderLockBadge(lock: LockFile): string {
-  const { label, stale } = formatLockBadgeAge(lock.timestamp);
-  const icon = stale ? ' ⚠' : '';
-  return chalk.yellow(`[LOCKED${icon} by ${lock.actor}, ${label}]`);
+  const ageSeconds = Math.floor((Date.now() - new Date(lock.timestamp).getTime()) / 1000);
+  const icon = ageSeconds > 24 * 3600 ? ' ⚠' : '';
+  return chalk.yellow(`[LOCKED${icon} by ${lock.actor}, ${formatAge(ageSeconds, 'short')}]`);
 }
 
 interface AddedEntry {
@@ -135,9 +130,10 @@ async function classifyChange(
   }
 
   // Fallback: fetch full content for whichever side is missing, compute + cache hashes
+  // Fetch both sides: both are needed to build a complete credential map.
   const [srcFull, tgtFull] = await Promise.all([
-    srcEntry ? Promise.resolve(null) : ctx.sourceClient.getWorkflow(src.id),
-    tgtEntry ? Promise.resolve(null) : ctx.targetClient.getWorkflow(tgt.id),
+    ctx.sourceClient.getWorkflow(src.id),
+    ctx.targetClient.getWorkflow(tgt.id),
   ]);
 
   // Normalize credential names to the target env before hashing, so mapped/
@@ -150,13 +146,13 @@ async function classifyChange(
     targetEnv,
     credentials,
   );
-  const srcRemapped = srcFull ? applyCredentialMap(srcFull, credMap) : null;
-  const tgtRemapped = tgtFull ? applyCredentialMap(tgtFull, credMap) : null;
+  const srcRemapped = applyCredentialMap(srcFull, credMap);
+  const tgtRemapped = applyCredentialMap(tgtFull, credMap);
 
-  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcRemapped as Record<string, unknown>);
-  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtRemapped as Record<string, unknown>);
-  const srcStructureHash = srcEntry?.structureHash ?? computeStructureHash(srcFull as Record<string, unknown>);
-  const tgtStructureHash = tgtEntry?.structureHash ?? computeStructureHash(tgtFull as Record<string, unknown>);
+  const srcContentHash = srcEntry?.contentHash ?? computeContentHash(srcRemapped);
+  const tgtContentHash = tgtEntry?.contentHash ?? computeContentHash(tgtRemapped);
+  const srcStructureHash = srcEntry?.structureHash ?? computeStructureHash(srcFull);
+  const tgtStructureHash = tgtEntry?.structureHash ?? computeStructureHash(tgtFull);
   const now = new Date().toISOString();
 
   if (!ctx.fingerprints.envs[sourceEnv]) ctx.fingerprints.envs[sourceEnv] = {};
@@ -239,8 +235,8 @@ async function computeDiff(
 }
 
 export interface DiffOptions {
-  source: string;
-  target: string;
+  from: string;
+  to: string;
   tag?: string;
   pattern?: string;
   showUnchanged?: boolean;
@@ -265,11 +261,11 @@ export async function runDiff(
 ): Promise<void> {
   const actor = getGitActor();
   const { config, chiralDir } = loadConfigAndDir();
-  const sourceEnvObj = resolveEnv(config, options.source);
-  const targetEnvObj = resolveEnv(config, options.target);
+  const sourceEnvObj = resolveEnv(config, options.from);
+  const targetEnvObj = resolveEnv(config, options.to);
 
-  const sourceClient = new N8nClient(sourceEnvObj, options.source);
-  const targetClient = new N8nClient(targetEnvObj, options.target);
+  const sourceClient = new N8nClient(sourceEnvObj, options.from);
+  const targetClient = new N8nClient(targetEnvObj, options.to);
   sourceClient.warnIfExpiringSoon();
   targetClient.warnIfExpiringSoon();
 
@@ -280,8 +276,8 @@ export async function runDiff(
     actor,
     action: 'diff' as const,
     project: config.project,
-    source_env: options.source,
-    target_env: options.target,
+    source_env: options.from,
+    target_env: options.to,
     workflow_ids: [] as string[],
     chiral_version: getChiralVersion(),
   };
@@ -289,7 +285,7 @@ export async function runDiff(
   const outputMode = resolveOutputMode(options);
   if (outputMode === 'human') {
     console.log();
-    console.log(`  Comparing ${chalk.cyan(options.source)} → ${chalk.cyan(options.target)}`);
+    console.log(`  Comparing ${chalk.cyan(options.from)} → ${chalk.cyan(options.to)}`);
   }
 
   try {
@@ -300,11 +296,9 @@ export async function runDiff(
       .filter(Boolean)
       .join(', ');
 
-    const spinnerText = filterLabel
-      ? `  Fetching workflows [${filterLabel}]…`
-      : '  Fetching workflows…';
-
-    const spinner = outputMode === 'human' ? ora({ text: spinnerText, color: 'cyan' }).start() : null;
+    const spinner = outputMode === 'human'
+      ? ora({ text: filterLabel ? `  Fetching workflows [${filterLabel}]…` : '  Fetching workflows…', color: 'cyan' }).start()
+      : null;
 
     let sourceSummaries: WorkflowSummary[];
     let targetSummaries: WorkflowSummary[];
@@ -333,8 +327,8 @@ export async function runDiff(
     if (spinner) {
       spinner.succeed(
         chalk.green(
-          `  Fetched ${plural(sourceFiltered.length, 'workflow')} from ${options.source}, ` +
-          `${plural(targetFiltered.length, 'workflow')} from ${options.target}`,
+          `  Fetched ${plural(sourceFiltered.length, 'workflow')} from ${options.from}, ` +
+          `${plural(targetFiltered.length, 'workflow')} from ${options.to}`,
         ),
       );
     }
@@ -342,36 +336,41 @@ export async function runDiff(
     const fingerprints = loadFingerprints(chiralDir);
     const ctx: FingerprintContext = { fingerprints, sourceClient, targetClient, chiralDir };
     const workflowMap = loadWorkflowMap(chiralDir);
-    const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.source, options.target, ctx);
+    const diff = await computeDiff(sourceFiltered, targetFiltered, workflowMap, options.from, options.to, ctx);
 
     // Fetch full content and compute node-level diffs for every modified workflow.
     if (diff.modified.length > 0) {
       const credentials = loadCredentialsOrEmpty(chiralDir);
-      await Promise.all(
-        diff.modified.map(async (entry) => {
-          const [srcFull, tgtFull] = await Promise.all([
-            sourceClient.getWorkflow(entry.sourceId),
-            targetClient.getWorkflow(entry.targetId),
-          ]);
-          // Normalize credential names to the target env so a mapped/passthrough
-          // credential pair doesn't show up as a spurious 'credentials' change.
-          const credMap = buildCredentialMap(
-            [...toNodes(srcFull), ...toNodes(tgtFull)],
-            options.source,
-            options.target,
-            credentials,
-          );
-          const srcRemapped = applyCredentialMap(srcFull, credMap);
-          const tgtRemapped = applyCredentialMap(tgtFull, credMap);
-          entry.nodes = diffWorkflowNodes(tgtRemapped, srcRemapped);
-        }),
-      );
+      try {
+        await Promise.all(
+          diff.modified.map(async (entry) => {
+            const [srcFull, tgtFull] = await Promise.all([
+              sourceClient.getWorkflow(entry.sourceId),
+              targetClient.getWorkflow(entry.targetId),
+            ]);
+            // Normalize credential names to the target env so a mapped/passthrough
+            // credential pair doesn't show up as a spurious 'credentials' change.
+            const credMap = buildCredentialMap(
+              [...toNodes(srcFull), ...toNodes(tgtFull)],
+              options.from,
+              options.to,
+              credentials,
+            );
+            const srcRemapped = applyCredentialMap(srcFull, credMap);
+            const tgtRemapped = applyCredentialMap(tgtFull, credMap);
+            entry.nodes = diffWorkflowNodes(tgtRemapped, srcRemapped);
+          }),
+        );
+      } catch (err) {
+        if (err instanceof UserError) throw err;
+        throw new UserError(`Failed to fetch workflow details: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     // Load active locks for the target env (treat any error as no locks)
     const locksByWorkflowId = new Map<string, LockFile>();
     try {
-      const targetEnvId = peekEnvId(chiralDir, options.target);
+      const targetEnvId = peekEnvId(chiralDir, options.to);
       if (targetEnvId) {
         for (const { workflowId, lock } of listLocksByEnv(chiralDir, targetEnvId)) {
           locksByWorkflowId.set(workflowId, lock);
@@ -385,7 +384,7 @@ export async function runDiff(
     const targetIdByName = new Map(diff.modified.map((w) => [w.targetName, w.targetId]));
 
     const hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.modified.length > 0;
-    const urlDiffs = computeUrlDiffs(chiralDir, options.source, options.target);
+    const urlDiffs = computeUrlDiffs(chiralDir, options.from, options.to);
 
     if (outputMode === 'name-only') {
       for (const w of diff.added) console.log(w.name);
@@ -393,8 +392,8 @@ export async function runDiff(
       for (const w of diff.modified) console.log(w.targetName);
     } else if (outputMode === 'json') {
       printJson({
-        source: options.source,
-        target: options.target,
+        from: options.from,
+        to: options.to,
         added: diff.added.map(({ name, sourceName, hint }) => ({ name, sourceName, hint, lock: null })),
         removed: diff.removed.map(({ name, targetId }) => {
           const lock = locksByWorkflowId.get(targetId);
@@ -434,7 +433,7 @@ export async function runDiff(
         );
       } else if (!hasDiff) {
         console.log(
-          `  ${chalk.green('✓')} ${chalk.cyan(options.source)} and ${chalk.cyan(options.target)} are identical - no differences found`,
+          `  ${chalk.green('✓')} ${chalk.cyan(options.from)} and ${chalk.cyan(options.to)} are identical - no differences found`,
         );
         if (options.showUnchanged) {
           for (const w of diff.unchanged) {
@@ -454,7 +453,7 @@ export async function runDiff(
           const removedLock = locksByWorkflowId.get(w.targetId);
           const removedBadge = removedLock ? `  ${renderLockBadge(removedLock)}` : '';
           console.log(
-            `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.target}, not in ${options.source})`)}${removedBadge}`,
+            `  ${chalk.red('-')} ${w.name}    ${chalk.dim(`(in ${options.to}, not in ${options.from})`)}${removedBadge}`,
           );
         }
         if (diff.modified.length > 0) {
@@ -465,6 +464,7 @@ export async function runDiff(
             newNodeCount: w.nodes?.newNodeCount ?? 0,
             changeKind: w.changeKind,
           }));
+          const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
           if (!options.verbose) {
             for (const { name, line } of renderStatRows(statRows)) {
               const modTargetId = targetIdByName.get(name);
@@ -473,7 +473,6 @@ export async function runDiff(
               console.log(`  ${line}${modBadge}`);
             }
           } else {
-            const nodesByName = new Map(diff.modified.map((w) => [w.targetName, w]));
             const sections: string[] = [];
             for (const { name, line } of renderStatRows(statRows)) {
               const w = nodesByName.get(name);
@@ -523,8 +522,8 @@ export async function runDiff(
         if (diff.removed.length > 0) parts.push(plural(diff.removed.length, 'removed', 'removed'));
 
         const pushParts = [
-          `--source ${options.source}`,
-          `--target ${options.target}`,
+          `--from ${options.from}`,
+          `--to ${options.to}`,
           options.tag ? `--tag ${options.tag}` : '',
           options.pattern ? `--pattern "${options.pattern}"` : '',
           '--dry-run',
@@ -538,7 +537,7 @@ export async function runDiff(
       }
       if (urlDiffs.length > 0 && (hasDiff || diff.unchanged.length > 0)) {
         console.log();
-        console.log(`  URL map (${options.source} → ${options.target}):`);
+        console.log(`  URL map (${options.from} → ${options.to}):`);
         for (const d of urlDiffs) {
           const srcStr = d.sourceValue ?? chalk.dim('(not set)');
           const tgtStr = d.targetValue ?? chalk.dim('(not set)');
@@ -565,8 +564,8 @@ export async function runDiff(
 
 export const diffCommand = new Command('diff')
   .description('Compare workflows between two n8n environments')
-  .requiredOption('--source <env>', 'Source environment')
-  .requiredOption('--target <env>', 'Target environment')
+  .requiredOption('--from <env>', 'Source environment')
+  .requiredOption('--to <env>', 'Target environment')
   .option('--tag <tag>', 'Filter to workflows with this tag (applied to both environments)')
   .option('--pattern <glob>', 'Glob pattern matched against source workflow names (e.g. "Customer *")')
   .option('--show-unchanged', 'Include identical workflows in output')
@@ -581,13 +580,13 @@ export const diffCommand = new Command('diff')
     `
 Examples:
   Compare dev and prod:
-    chiral diff --source dev --target prod
+    chiral diff --from dev --to prod
 
   Filter to a tag:
-    chiral diff --source dev --target prod --tag production
+    chiral diff --from dev --to prod --tag production
 
   Exit 1 if differences found (for CI):
-    chiral diff --source dev --target prod --exit-code
+    chiral diff --from dev --to prod --exit-code
 `,
   )
   .action(async (options: Omit<DiffOptions, 'noPager'> & { pager?: boolean }) => {

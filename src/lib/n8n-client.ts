@@ -90,6 +90,7 @@ export class N8nClient {
       method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
       body?: string;
       on404?: string;
+      captureHeaders?: { n8nVersion?: string };
     } = {},
   ): Promise<T> {
     const expiry = N8nClient.parseJwtExpiry(this.apiKey);
@@ -145,6 +146,11 @@ export class N8nClient {
       );
     }
 
+    if (options.captureHeaders) {
+      const v = response.headers?.get?.('x-n8n-version');
+      if (v) options.captureHeaders.n8nVersion = v;
+    }
+
     // 204 No Content - return empty object
     if (response.status === 204) return {} as T;
 
@@ -192,18 +198,19 @@ export class N8nClient {
     return this.listAll<TagSummary>('/tags', 'tag:list');
   }
 
-  async testConnection(timeoutMs = 10_000): Promise<{ workflowCount: number }> {
+  async testConnection(timeoutMs = 10_000): Promise<{ workflowCount: number; n8nVersion?: string }> {
     this.warnIfExpiringSoon();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const captureHeaders: { n8nVersion?: string } = {};
     try {
       const workflows = await this.request<{ data: unknown[] }>(
         '/workflows?limit=100&excludePinnedData=true',
-        { signal: controller.signal, scope: 'workflow:list' },
+        { signal: controller.signal, scope: 'workflow:list', captureHeaders },
       );
       await this.request('/credentials?limit=1', { signal: controller.signal, scope: 'credential:list' });
       await this.request('/tags?limit=1', { signal: controller.signal, scope: 'tag:list' });
-      return { workflowCount: workflows.data.length };
+      return { workflowCount: workflows.data.length, n8nVersion: captureHeaders.n8nVersion };
     } finally {
       clearTimeout(timeoutId);
     }

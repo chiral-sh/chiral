@@ -17,6 +17,7 @@ import {
 } from '../../src/state/snapshots.js';
 import { writeCredentials } from '../../src/state/credentials.js';
 import { writeTableMap } from '../../src/state/tables.js';
+import { writeUrlMap } from '../../src/state/url-map.js';
 import { RUN_ID_PREFIX } from './constants.js';
 
 // resolveActiveProject() reads the global project registry, not cwd - register
@@ -151,7 +152,7 @@ describe('chiral push (integration)', () => {
         } as unknown as SnapshotWorkflow,
       ]);
 
-      const result = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+      const result = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
         cwd: repo.dir,
         env,
       });
@@ -291,7 +292,7 @@ describe('chiral push (integration)', () => {
         } as unknown as SnapshotWorkflow,
       ]);
 
-      const run1 = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+      const run1 = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
         cwd: repo.dir,
         env,
       });
@@ -315,7 +316,7 @@ describe('chiral push (integration)', () => {
 
       const versionAfterRun1 = afterRun1.versionId;
 
-      const run2 = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+      const run2 = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
         cwd: repo.dir,
         env,
       });
@@ -350,7 +351,7 @@ describe('chiral push (integration)', () => {
         } as unknown as SnapshotWorkflow,
       ]);
 
-      const run3 = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+      const run3 = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
         cwd: repo.dir,
         env,
       });
@@ -367,6 +368,90 @@ describe('chiral push (integration)', () => {
       if (targetWorkflowId) await deleteWorkflow(url, apiKey, targetWorkflowId);
       if (targetCred) await deleteCredential(url, apiKey, targetCred.id);
       if (rotatedCred) await deleteCredential(url, apiKey, rotatedCred.id);
+      repo.cleanup();
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('url-mapped workflow is rewritten on first push and skipped on second (idempotency)', async () => {
+    const project = `${RUN_ID_PREFIX}-push-url`;
+    const repo: RepoHandle = makeRepo({ url, apiKey, envName: 'dev', project });
+    const { projectsDir, env } = registerTempProject(repo, project);
+    const wfName = `${RUN_ID_PREFIX}-push-url-wf`;
+
+    let targetWorkflowId: string | undefined;
+
+    try {
+      const { config, chiralDir } = loadConfigAndDir(repo.dir);
+      config.environments['target'] = { url, apiKey };
+      writeConfig(chiralDir, config);
+
+      writeUrlMap(chiralDir, {
+        version: 1,
+        urls: {
+          api_base: {
+            values: {
+              dev: 'https://api.dev.example.com',
+              target: 'https://api.example.com',
+            },
+          },
+        },
+      });
+
+      writeSourceSnapshot(chiralDir, 'dev', [
+        {
+          id: `${RUN_ID_PREFIX}-push-url-fixture`,
+          name: wfName,
+          nodes: [
+            {
+              id: '1',
+              name: 'HTTP',
+              type: 'n8n-nodes-base.httpRequest',
+              typeVersion: 4.2,
+              position: [0, 0] as [number, number],
+              parameters: { url: 'https://api.dev.example.com/v1/orders' },
+            },
+          ],
+          connections: {},
+          settings: {},
+        } as unknown as SnapshotWorkflow,
+      ]);
+
+      const run1 = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
+        cwd: repo.dir,
+        env,
+      });
+      expect(run1.exitCode).toBe(0);
+      expect(run1.stdout).toContain('Created');
+
+      const targetWorkflows = await client.listWorkflows();
+      const created = targetWorkflows.find((w) => w.name === wfName);
+      expect(created).toBeDefined();
+      targetWorkflowId = created!.id;
+
+      const createdFull = await client.getWorkflow(targetWorkflowId!);
+      const httpNode = (createdFull.nodes as Array<Record<string, unknown>>).find(
+        (n) => n['type'] === 'n8n-nodes-base.httpRequest',
+      )!;
+      expect((httpNode['parameters'] as Record<string, unknown>)['url']).toBe(
+        'https://api.example.com/v1/orders',
+      );
+
+      const versionAfterRun1 = createdFull.versionId;
+
+      const run2 = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
+        cwd: repo.dir,
+        env,
+      });
+      expect(run2.exitCode).toBe(0);
+      expect(run2.stdout.toLowerCase()).toContain('skipped');
+      expect(run2.stdout).not.toContain('Updated');
+      expect(run2.stdout).not.toContain('Created');
+
+      const afterRun2 = await client.getWorkflow(targetWorkflowId!);
+      expect(afterRun2.versionId).toBe(versionAfterRun1);
+    } finally {
+      if (targetWorkflowId) await deleteWorkflow(url, apiKey, targetWorkflowId);
       repo.cleanup();
       rmSync(projectsDir, { recursive: true, force: true });
     }
@@ -408,7 +493,7 @@ describe('chiral push (integration)', () => {
       const badSnapshotPath = join(chiralDir, 'snapshots', deploymentId, `${badId}.json`);
       writeFileSync(badSnapshotPath, '{"id": "truncated', 'utf-8');
 
-      const result = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+      const result = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
         cwd: repo.dir,
         env,
       });
@@ -416,7 +501,7 @@ describe('chiral push (integration)', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain('1 snapshot file');
       expect(result.stderr).toContain('corrupted');
-      expect(result.stderr).toContain(`chiral pull --env dev`);
+      expect(result.stderr).toContain(`chiral pull dev`);
 
       const targetWorkflows = await client.listWorkflows();
       const okSummary = targetWorkflows.find((w) => w.name === okName);
@@ -451,7 +536,7 @@ describe('chiral push (integration)', () => {
       ]);
 
       const result = await assertNoMutation(client, () =>
-        runCli(['push', '--source', 'dev', '--target', 'target', '--dry-run'], {
+        runCli(['push', '--from', 'dev', '--to', 'target', '--dry-run'], {
           cwd: repo.dir,
           env,
         }),
@@ -487,7 +572,7 @@ describe('chiral push (integration)', () => {
         } as unknown as SnapshotWorkflow,
       ]);
 
-      const result = await runCli(['push', '--source', 'dev', '--target', 'target', '--yes'], {
+      const result = await runCli(['push', '--from', 'dev', '--to', 'target', '--yes'], {
         cwd: repo.dir,
         env,
       });

@@ -14,6 +14,9 @@ export const AuditActionSchema = z.enum([
   'init',
   'map',
   'unmap',
+  'team.add',
+  'team.remove',
+  'team.set-role',
 ]);
 
 export const AuditEntrySchema = z.object({

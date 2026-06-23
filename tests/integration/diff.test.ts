@@ -129,7 +129,7 @@ describe('chiral diff (integration)', () => {
       config.environments['prod'] = { url: prod.url, apiKey: prod.apiKey };
       writeConfig(chiralDir, config);
 
-      const result = await runCli(['diff', '--source', 'dev', '--target', 'prod', '--json', '--exit-code'], {
+      const result = await runCli(['diff', '--from', 'dev', '--to', 'prod', '--json', '--exit-code'], {
         cwd: repo.dir,
         env,
       });
@@ -164,7 +164,7 @@ describe('chiral diff (integration)', () => {
       config.environments['dev2'] = { url: dev.url, apiKey: dev.apiKey };
       writeConfig(chiralDir, config);
 
-      const result = await runCli(['diff', '--source', 'dev', '--target', 'dev2', '--exit-code'], {
+      const result = await runCli(['diff', '--from', 'dev', '--to', 'dev2', '--exit-code'], {
         cwd: repo.dir,
         env,
       });
@@ -185,7 +185,7 @@ describe('chiral diff (integration)', () => {
       config.environments['prod'] = { url: prod.url, apiKey: `${prod.apiKey}-invalid` };
       writeConfig(chiralDir, config);
 
-      const result = await runCli(['diff', '--source', 'dev', '--target', 'prod'], { cwd: repo.dir, env });
+      const result = await runCli(['diff', '--from', 'dev', '--to', 'prod'], { cwd: repo.dir, env });
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toLowerCase()).toContain('invalid');
