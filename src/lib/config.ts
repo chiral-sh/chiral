@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from './errors.js';
@@ -187,6 +187,24 @@ export function readProjectNameFromExample(chiralDir: string): string {
     return typeof raw.project === 'string' && raw.project ? raw.project : 'my-project';
   } catch {
     return 'my-project';
+  }
+}
+
+export function updateExampleGitSync(chiralDir: string, gitSync: GitSync | undefined): void {
+  const examplePath = join(chiralDir, 'config.example.json');
+  if (!existsSync(examplePath)) return;
+  try {
+    const raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
+    if (gitSync) {
+      raw['gitSync'] = gitSync;
+    } else {
+      delete raw['gitSync'];
+    }
+    const tmp = examplePath + '.tmp';
+    writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+    renameSync(tmp, examplePath);
+  } catch {
+    // best-effort
   }
 }
 

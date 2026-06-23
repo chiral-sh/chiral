@@ -1,6 +1,6 @@
 import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import {
@@ -8,9 +8,11 @@ import {
   writeConfig,
   loadConfigAndDir,
   readProjectNameFromExample,
+  updateExampleGitSync,
   type Config,
   type GitSync,
 } from '../lib/config.js';
+import { formatAge } from '../lib/cli.js';
 import { readAuditLog } from '../state/audit.js';
 import { UserError } from '../lib/errors.js';
 import { simpleGit } from 'simple-git';
@@ -42,8 +44,10 @@ function loadRemoteState(): RemoteState {
         licenseKey: config.licenseKey,
         gitSync: config.gitSync,
       };
-    } catch {
-      // invalid config - fall through
+    } catch (err) {
+      throw new UserError(
+        `config.json is invalid and cannot be read: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -56,27 +60,13 @@ function saveRemoteState(state: RemoteState): void {
     version: 1,
     project: state.project,
     environments: state.environments,
-    ...(state.licenseKey ? { licenseKey: state.licenseKey } : {}),
+    ...(state.licenseKey !== undefined ? { licenseKey: state.licenseKey } : {}),
     ...(state.gitSync ? { gitSync: state.gitSync } : {}),
   };
   writeConfig(state.chiralDir, config);
 
   // Mirror gitSync into config.example.json so cloners see the remote
-  const examplePath = join(state.chiralDir, 'config.example.json');
-  if (existsSync(examplePath)) {
-    try {
-      const raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
-      if (state.gitSync) {
-        raw['gitSync'] = state.gitSync;
-      } else {
-        delete raw['gitSync'];
-      }
-      writeFileSync(examplePath + '.tmp', JSON.stringify(raw, null, 2) + '\n', 'utf-8');
-      renameSync(examplePath + '.tmp', examplePath);
-    } catch {
-      // best-effort
-    }
-  }
+  updateExampleGitSync(state.chiralDir, state.gitSync);
 }
 
 function getLastSync(chiralDir: string): string {
@@ -84,14 +74,9 @@ function getLastSync(chiralDir: string): string {
     const entries = readAuditLog(chiralDir);
     const last = entries.filter((e) => e.result === 'success').at(-1);
     if (!last) return 'never';
-    const diff = Date.now() - new Date(last.timestamp).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days} day${days === 1 ? '' : 's'} ago`;
+    const ageSeconds = (Date.now() - new Date(last.timestamp).getTime()) / 1000;
+    if (ageSeconds < 60) return 'just now';
+    return formatAge(ageSeconds, 'long');
   } catch {
     return 'unknown';
   }
@@ -128,9 +113,10 @@ export async function runRemoteSet(options: { url?: string; branch?: string }): 
   let remote = options.url;
   let branch = options.branch;
 
+  const git = simpleGit(resolve(state.chiralDir, '..'));
+
   let currentBranch = 'main';
   try {
-    const git = simpleGit(resolve(state.chiralDir, '..'));
     const branches = await git.branchLocal();
     if (branches.current) {
       currentBranch = branches.current;
@@ -150,11 +136,16 @@ export async function runRemoteSet(options: { url?: string; branch?: string }): 
     });
   }
 
+  if (!remote && !isInteractive && !existing?.remote) {
+    throw new UserError(
+      "No remote configured. Pass --url to set one, or run 'chiral remote set' for interactive setup.",
+    );
+  }
+
   // If we have a remote but no branch, try to detect the remote's default branch
   if (remote && !branch) {
     let detectedBranch = currentBranch;
     try {
-      const git = simpleGit(resolve(state.chiralDir, '..'));
       const remoteInfo = await git.listRemote(['--symref', remote.trim(), 'HEAD']);
       const match = remoteInfo.match(/ref: refs\/heads\/([^\s]+)\s+HEAD/);
       if (match) {
@@ -231,14 +222,10 @@ export async function runRemoteRemove(options: { yes?: boolean }): Promise<void>
   }
 
   if (!options.yes) {
-    const confirmed = await input({
+    await input({
       message: 'Type "remove" to confirm:',
       validate: (v) => v === 'remove' || 'Type exactly "remove" to confirm',
     });
-    if (confirmed !== 'remove') {
-      console.log('\n  Cancelled.\n');
-      return;
-    }
   }
 
   delete state.gitSync;
