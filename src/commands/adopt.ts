@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { confirm } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
@@ -116,13 +117,13 @@ export async function runAdopt(
     );
 
     // ── env-specific name detection ───────────────────────────────────────────
+    const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
     const wfMap = loadWorkflowMap(chiralDir);
     const envSpecific = workflows.filter(
       (wf) => detectsEnvMarker(wf.name, Object.keys(config.environments)) && !findLogicalByEnvAndName(wfMap, options.env, wf.name),
     );
     if (envSpecific.length > 0) {
       const example = envSpecific[0].name;
-      const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
       const targetHint = otherEnvs[0] ?? '<other-env>';
       console.log(
         `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
@@ -149,10 +150,10 @@ export async function runAdopt(
     });
     const uniqueHostnames = new Set(safeUrls.map((d) => d.hostname));
     if (uniqueHostnames.size > 0) {
-      const uniqueWorkflowNames = new Set(safeUrls.flatMap((d) => d.workflowNames));
+      const uniqueWorkflowNameCount = new Set(safeUrls.flatMap((d) => d.workflowNames)).size;
       const domainLabel = uniqueHostnames.size === 1 ? 'domain' : 'domains';
-      const wfLabel = uniqueWorkflowNames.size === 1 ? 'workflow' : 'workflows';
-      const msg = `Found ${uniqueHostnames.size} unique ${domainLabel} across ${uniqueWorkflowNames.size} ${wfLabel}`;
+      const wfLabel = uniqueWorkflowNameCount === 1 ? 'workflow' : 'workflows';
+      const msg = `Found ${uniqueHostnames.size} unique ${domainLabel} across ${uniqueWorkflowNameCount} ${wfLabel}`;
       if (process.stdout.isTTY) {
         console.log(`\n  ${msg}.`);
         const shouldRegister = await confirm({ message: '  Register them as URL mappings?' });
@@ -164,29 +165,28 @@ export async function runAdopt(
       }
     }
 
-    const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
     if (otherEnvs.length > 0) {
       console.log(`\n  ${chalk.dim('Next:')} chiral diff --from ${options.env} --to ${otherEnvs[0]}\n`);
     } else {
       console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
     }
 
-    // Fix B1: record actual workflow IDs in the audit entry
-    baseEntry.workflow_ids = workflows.map((w) => w.id);
-    writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
-
     const syncResult = await syncToRemote(
       chiralDir, config, `chore(chiral): adopt ${options.env}`,
     );
+    // STATE_SPEC line 328: workflow_ids must be [] for adopt
+    writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
         console.log(formatSyncSuccess(syncResult));
       } else {
-        for (const line of formatSyncFailure(syncResult)) console.log(chalk.yellow(line));
+        for (const line of formatSyncFailure(syncResult)) console.error(chalk.yellow(line));
       }
       console.log();
     }
   } catch (err) {
+    // User cancellation — don't pollute audit log with intentional Ctrl+C
+    if (err instanceof ExitPromptError) throw err;
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
