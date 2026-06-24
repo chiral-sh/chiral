@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import { writeJsonAtomic } from '../../../src/state/atomic.js';
 import { UserError } from '../../../src/lib/errors.js';
 
+
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
   return { ...fs };
@@ -26,17 +27,59 @@ describe('writeJsonAtomic', () => {
     expect(vol.existsSync('/repo/data.json.tmp')).toBe(false);
   });
 
-  it('leaves previous file contents intact when the write throws', () => {
+  it('leaves previous file contents intact when renameSync throws', () => {
     vol.fromJSON({ '/repo/data.json': JSON.stringify({ existing: true }, null, 2) + '\n' }, '/');
 
     const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
       throw new Error('disk full');
     });
 
-    expect(() => writeJsonAtomic('/repo/data.json', { existing: false })).toThrow(UserError);
+    expect(() => writeJsonAtomic('/repo/data.json', { existing: false })).toThrow(Error);
     expect(JSON.parse(vol.readFileSync('/repo/data.json', 'utf-8') as string)).toEqual({
       existing: true,
     });
+
+    renameSpy.mockRestore();
+  });
+
+  it('throws plain Error (not UserError) when writeFileSync throws', () => {
+    vol.mkdirSync('/repo', { recursive: true });
+
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC: no space left on device');
+    });
+
+    let thrown: unknown;
+    try {
+      writeJsonAtomic('/repo/data.json', { x: 1 });
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(UserError);
+    writeSpy.mockRestore();
+  });
+
+  it('throws plain Error (not UserError) when renameSync throws, and cleans up tmp', () => {
+    vol.mkdirSync('/repo', { recursive: true });
+
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+
+    let thrown: unknown;
+    try {
+      writeJsonAtomic('/repo/data.json', { x: 1 });
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(UserError);
+
+    const entries = vol.readdirSync('/repo') as string[];
+    expect(entries.every((name) => !name.endsWith('.tmp'))).toBe(true);
 
     renameSpy.mockRestore();
   });

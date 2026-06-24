@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { vol } from 'memfs';
+import * as nodeFs from 'node:fs';
 import {
   readLock,
   readLockWithExpiry,
@@ -162,11 +163,84 @@ describe('writeLock', () => {
     expect(lock!.resolved).toBe(false);
   });
 
-  it('writes via atomic temp-file-plus-rename (no .tmp file left behind)', () => {
+  it('writes via linkSync promotion (no .tmp file left behind)', () => {
     vol.fromJSON({ '/fd/': null });
     writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
-    expect(vol.existsSync('/fd/locks/prod/wf-1.lock.tmp')).toBe(false);
+    const dir = vol.readdirSync('/fd/locks/prod') as string[];
+    expect(dir.some((f) => f.endsWith('.tmp'))).toBe(false);
     expect(vol.existsSync('/fd/locks/prod/wf-1.lock')).toBe(true);
+  });
+
+  it('tmp path includes process.pid and random hex (not fixed .tmp suffix)', () => {
+    vol.fromJSON({ '/fd/': null });
+    const linkSpy = vi.spyOn(nodeFs, 'linkSync');
+    writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
+    expect(linkSpy).toHaveBeenCalledOnce();
+    const tmpArg = linkSpy.mock.calls[0][0] as string;
+    expect(tmpArg).not.toBe('/fd/locks/prod/wf-1.lock.tmp');
+    expect(tmpArg).toMatch(new RegExp(`\\.${process.pid}\\.[0-9a-f]+\\.tmp$`));
+    linkSpy.mockRestore();
+  });
+
+  it('cleans up tmp file after successful linkSync', () => {
+    vol.fromJSON({ '/fd/': null });
+    const unlinkSpy = vi.spyOn(nodeFs, 'unlinkSync');
+    writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
+    const tmpCalls = unlinkSpy.mock.calls.filter(
+      ([p]) => typeof p === 'string' && (p as string).endsWith('.tmp'),
+    );
+    expect(tmpCalls).toHaveLength(1);
+    unlinkSpy.mockRestore();
+  });
+
+  it('throws UserError with holder info when linkSync throws EEXIST (TOCTOU race)', () => {
+    vol.fromJSON({ '/fd/': null });
+    const existingLock = {
+      version: 1,
+      actor: 'other@example.com',
+      timestamp: '2024-01-01T12:00:00.000Z',
+      hostname: 'linux',
+    };
+    vi.spyOn(nodeFs, 'linkSync').mockImplementationOnce(() => {
+      vol.mkdirSync('/fd/locks/prod', { recursive: true });
+      vol.writeFileSync('/fd/locks/prod/wf-1.lock', JSON.stringify(existingLock));
+      const err = Object.assign(new Error('file exists'), { code: 'EEXIST' });
+      throw err;
+    });
+    let thrown: unknown;
+    try {
+      writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(UserError);
+    expect((thrown as Error).message).toContain('locked by other@example.com');
+  });
+
+  it('propagates plain Error (not UserError) when writeFileSync throws', () => {
+    vol.fromJSON({ '/fd/': null });
+    const err = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    vi.spyOn(nodeFs, 'writeFileSync').mockImplementationOnce(() => { throw err; });
+    expect(() => writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac')).toThrow(Error);
+    expect(() => {
+      vi.spyOn(nodeFs, 'writeFileSync').mockImplementationOnce(() => { throw err; });
+      writeLock('/fd', 'prod', 'wf-2', 'purvesh@example.com', 'mac');
+    }).not.toThrow(UserError);
+  });
+
+  it('propagates plain Error containing OS error when linkSync throws EXDEV', () => {
+    vol.fromJSON({ '/fd/': null });
+    const err = Object.assign(new Error('cross-device link'), { code: 'EXDEV' });
+    vi.spyOn(nodeFs, 'linkSync').mockImplementationOnce(() => { throw err; });
+    let thrown: unknown;
+    try {
+      writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(UserError);
+    expect((thrown as Error).message).toContain('cross-device link');
   });
 });
 
@@ -189,6 +263,22 @@ describe('releaseLock', () => {
     writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
     releaseLock('/fd', 'prod', 'wf-1');
     expect(() => writeLock('/fd', 'prod', 'wf-1', 'other@example.com', 'other')).not.toThrow();
+  });
+
+  it('propagates plain Error (not UserError) when unlinkSync throws', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
+    const err = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    vi.spyOn(nodeFs, 'unlinkSync').mockImplementationOnce(() => { throw err; });
+    let thrown: unknown;
+    try {
+      releaseLock('/fd', 'prod', 'wf-1');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(UserError);
+    expect((thrown as Error).message).toContain('Could not release lock');
   });
 });
 
@@ -227,6 +317,24 @@ describe('listLocksByEnv', () => {
       '/fd/locks/prod/README.md': '',
     });
     expect(listLocksByEnv('/fd', 'prod')).toHaveLength(1);
+  });
+
+  it('skips file deleted between readdirSync and read (ENOENT race)', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeLock('/fd', 'prod', 'wf-1', 'purvesh@example.com', 'mac');
+    writeLock('/fd', 'prod', 'wf-2', 'other@example.com', 'linux');
+    let intercepted = false;
+    vi.spyOn(nodeFs, 'readFileSync').mockImplementation((p, ...rest) => {
+      if (typeof p === 'string' && p.endsWith('wf-2.lock') && !intercepted) {
+        intercepted = true;
+        throw Object.assign(new Error('no such file'), { code: 'ENOENT' });
+      }
+      return vol.readFileSync(p as string, ...(rest as [BufferEncoding]));
+    });
+    const result = listLocksByEnv('/fd', 'prod');
+    expect(result).toHaveLength(1);
+    expect(result[0].workflowId).toBe('wf-1');
+    vi.restoreAllMocks();
   });
 });
 
