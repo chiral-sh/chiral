@@ -28,7 +28,7 @@ jobs:
         node: [22, 24]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # pnpm must be set up before setup-node so that `cache: pnpm` can resolve
       # the store path. Version is read from the packageManager field in
