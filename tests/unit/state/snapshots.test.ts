@@ -249,6 +249,16 @@ describe('writeSnapshotMeta / readSnapshotMeta', () => {
     expect(files).toEqual(['meta.json']);
   });
 
+  it('propagates error when the underlying write fails (no silent swallow)', async () => {
+    vol.fromJSON({ '/fd/': null });
+    const fs = await import('node:fs');
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    expect(() => writeSnapshotMeta('/fd', DEPLOYMENT_A, BASE_META)).toThrow('Could not write to');
+    spy.mockRestore();
+  });
+
   it('parses a meta.json written before normalizationVersion existed via the schema default', () => {
     // BASE_META has no normalizationVersion field, simulating a pre-change meta.json
     vol.fromJSON({

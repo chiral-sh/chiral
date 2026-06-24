@@ -140,8 +140,18 @@ describe('writeTeam', () => {
     expect(result).toEqual(MULTI_MEMBER_TEAM);
   });
 
-  it('does throw UserError when directory does not exist', () => {
+  it('does throw Error when directory does not exist', () => {
     vol.fromJSON({});
-    expect(() => writeTeam('/nonexistent/.chiral', SAMPLE_TEAM)).toThrow(UserError);
+    const err = () => writeTeam('/nonexistent/.chiral', SAMPLE_TEAM);
+    expect(err).toThrow(Error);
+    expect(err).not.toThrow(UserError);
+  });
+
+  it('does call writeJsonAtomic not writeFileSync directly', () => {
+    vol.fromJSON({ '/project/.chiral/': null });
+    writeTeam('/project/.chiral', SAMPLE_TEAM);
+    // tmp file must not linger — writeJsonAtomic cleans up on success
+    const files = Object.keys(vol.toJSON());
+    expect(files.some(f => f.endsWith('.tmp'))).toBe(false);
   });
 });

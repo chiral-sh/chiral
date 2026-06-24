@@ -1,12 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { vol } from 'memfs';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
   return { ...fs };
 });
-
-import { vi } from 'vitest';
 import {
   computeContentHash,
   computeStructureHash,
@@ -625,5 +623,26 @@ describe('upsertFingerprintEntry', () => {
     upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-1', entry);
     const result = loadFingerprints(CHIRAL_DIR);
     expect(result.envs['dev']?.['wf-99']?.versionId).toBe('v-other');
+  });
+
+  it('calls writeFingerprints once per invocation (loop misuse causes O(N) writes)', () => {
+    vol.fromJSON({ [`${CHIRAL_DIR}/fingerprints.json`]: JSON.stringify({ version: 1, envs: {} }) });
+    const spy = vi.spyOn({ writeFingerprints }, 'writeFingerprints');
+    // Two separate calls simulate loop misuse — each triggers a full read+write cycle
+    upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-1', entry);
+    upsertFingerprintEntry(CHIRAL_DIR, 'dev', 'wf-2', entry);
+    // Both entries must be present; if writeFingerprints overwrote rather than merged, wf-1 would be lost
+    const result = loadFingerprints(CHIRAL_DIR);
+    expect(result.envs['dev']?.['wf-1']).toBeDefined();
+    expect(result.envs['dev']?.['wf-2']).toBeDefined();
+    spy.mockRestore();
+  });
+});
+
+describe('upsertFingerprintEntry - warning comment', () => {
+  it('has a JSDoc warning against loop misuse', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const source = await readFile(new URL('../../../src/state/fingerprints.ts', import.meta.url), 'utf-8');
+    expect(source).toContain('Do not call inside a per-workflow loop');
   });
 });

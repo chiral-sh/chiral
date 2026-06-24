@@ -27,10 +27,16 @@ vi.mock('../../../src/state/url-map.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../../../src/state/fingerprints.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../src/state/fingerprints.js')>();
+  return { ...mod };
+});
+
 import { execSync } from 'node:child_process';
 import { confirm } from '@inquirer/prompts';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
 import * as urlMapState from '../../../src/state/url-map.js';
+import * as fingerprintsState from '../../../src/state/fingerprints.js';
 import { runAdopt } from '../../../src/commands/adopt.js';
 
 const mockExecSync = vi.mocked(execSync);
@@ -181,7 +187,7 @@ describe('runAdopt', () => {
     expect(entry.result).toBe('success');
     expect(entry.target_env).toBe('dev');
     expect(entry.source_env).toBeNull();
-    expect(entry.workflow_ids).toEqual(['wf-1']);
+    expect(entry.workflow_ids).toEqual([]);
     expect(entry.actor).toBe('actor@example.com');
     expect(entry.project).toBe('test-project');
   });
@@ -321,7 +327,7 @@ describe('runAdopt', () => {
 });
 
 describe('runAdopt - audit workflow_ids', () => {
-  it('records adopted workflow IDs in the audit entry', async () => {
+  it('records empty workflow_ids array in audit entry (per STATE_SPEC line 328)', async () => {
     setupChiralDir();
     const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
     const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
@@ -338,9 +344,7 @@ describe('runAdopt - audit workflow_ids', () => {
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
-    expect(entry.workflow_ids).toContain('wf-1');
-    expect(entry.workflow_ids).toContain('wf-2');
-    expect(entry.workflow_ids).toHaveLength(2);
+    expect(entry.workflow_ids).toEqual([]);
   });
 
   it('records empty array when no workflows are adopted', async () => {
@@ -530,5 +534,28 @@ describe('runAdopt - URL discovery hint', () => {
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(output.join('\n')).toContain('1 unique domain');
     expect(output.join('\n')).toContain('chiral url map');
+  });
+});
+
+describe('runAdopt - fingerprint batch write', () => {
+  it('calls writeFingerprints exactly once for a multi-workflow adopt', async () => {
+    setupChiralDir();
+    const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
+    const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, wf2Summary]),
+        getWorkflow: vi.fn()
+          .mockResolvedValueOnce(WORKFLOW_FULL)
+          .mockResolvedValueOnce(wf2Full),
+      }) as never;
+    });
+
+    const spy = vi.spyOn(fingerprintsState, 'writeFingerprints');
+
+    await runAdopt({ env: 'dev' });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });
