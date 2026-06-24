@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitSync } from '../lib/config.js';
+import { writeJsonAtomic } from './atomic.js';
 import { writeTeam } from './team.js';
 import { writeTableMap } from './tables.js';
 import { writeUrlMap } from './url-map.js';
@@ -50,16 +51,8 @@ export function createChiralDirectory(
   );
   writeFileSync(join(chiralDir, '.gitignore'), 'config.json\n', 'utf-8');
   writeFileSync(join(chiralDir, 'audit.jsonl'), '', 'utf-8');
-  writeFileSync(
-    join(chiralDir, 'credentials.json'),
-    JSON.stringify(CREDENTIALS_TEMPLATE, null, 2) + '\n',
-    'utf-8',
-  );
-  writeFileSync(
-    join(chiralDir, 'workflows.json'),
-    JSON.stringify(WORKFLOWS_TEMPLATE, null, 2) + '\n',
-    'utf-8',
-  );
+  writeJsonAtomic(join(chiralDir, 'credentials.json'), CREDENTIALS_TEMPLATE);
+  writeJsonAtomic(join(chiralDir, 'workflows.json'), WORKFLOWS_TEMPLATE);
 
   if (!existsSync(join(chiralDir, 'tables.json'))) {
     writeTableMap(chiralDir, { version: 1, tables: {} });

@@ -129,12 +129,8 @@ export function writeSnapshotMeta(
 ): void {
   const dir = join(chiralDir, 'snapshots', deploymentId);
   const fullMeta: SnapshotMeta = { ...meta, normalizationVersion: NORMALIZATION_VERSION };
-  try {
-    mkdirSync(dir, { recursive: true });
-    writeJsonAtomic(join(dir, 'meta.json'), fullMeta);
-  } catch {
-    // best-effort - don't block the command if meta write fails
-  }
+  mkdirSync(dir, { recursive: true });
+  writeJsonAtomic(join(dir, 'meta.json'), fullMeta);
 }
 
 export function readSnapshotMeta(
