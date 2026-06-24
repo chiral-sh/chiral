@@ -1,7 +1,5 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { confirm } from '@inquirer/prompts';
-import { ExitPromptError } from '@inquirer/core';
 import { Command } from 'commander';
 import { loadConfigAndDir, resolveEnv } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
@@ -12,12 +10,21 @@ import { generateDeploymentId, writeSnapshot, writeSnapshotMeta, computeSnapshot
 import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
-import { extractUrlsFromSnapshots, validateUrlValue } from '../state/url-map.js';
+import { loadUrlMap, collectUnmappedUrls, deriveUrlLogicalName } from '../state/url-map.js';
+import { printJson } from '../lib/output.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type OutputMode = 'human' | 'json';
+
+function resolveOutputMode(options: { json?: boolean }): OutputMode {
+  if (options.json || !process.stdout.isTTY) return 'json';
+  return 'human';
+}
+
 interface AdoptOptions {
   env: string;
+  json?: boolean;
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -32,6 +39,7 @@ export async function runAdopt(
 ): Promise<void> {
   validateOptions(options);
 
+  const outputMode = resolveOutputMode(options);
   const actor = getGitActor();
   const { config, chiralDir } = loadConfigAndDir();
   const env = resolveEnv(config, options.env);
@@ -51,11 +59,11 @@ export async function runAdopt(
     chiral_version: getChiralVersion(),
   };
 
-  console.log();
+  if (outputMode === 'human') console.log();
 
   try {
     // ── discover ──────────────────────────────────────────────────────────────
-    const spinner1 = ora({ text: `  Connecting to ${chalk.cyan(options.env)}…`, color: 'cyan' }).start();
+    const spinner1 = ora({ text: `  Connecting to ${chalk.cyan(options.env)}…`, color: 'cyan', isSilent: outputMode === 'json' }).start();
     const [summaries, credentials, tags] = await Promise.all([
       client.listWorkflows(),
       client.listCredentials(),
@@ -69,7 +77,7 @@ export async function runAdopt(
     );
 
     // ── fetch definitions ─────────────────────────────────────────────────────
-    const spinner2 = ora({ text: '  Fetching workflow definitions…', color: 'cyan' }).start();
+    const spinner2 = ora({ text: '  Fetching workflow definitions…', color: 'cyan', isSilent: outputMode === 'json' }).start();
     const workflows = await Promise.all(summaries.map((s) => client.getWorkflow(s.id))).catch(
       (err) => failSpinner(spinner2, err),
     );
@@ -78,7 +86,7 @@ export async function runAdopt(
     );
 
     // ── snapshot + fingerprints ───────────────────────────────────────────────
-    const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan' }).start();
+    const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan', isSilent: outputMode === 'json' }).start();
     const deploymentId = generateDeploymentId();
     const snapshotTimestamp = new Date().toISOString();
     for (const workflow of workflows) {
@@ -111,10 +119,12 @@ export async function runAdopt(
       chalk.green('  Snapshot saved') +
       chalk.dim(` → .chiral/snapshots/${deploymentId}/`),
     );
-    console.log(
-      `${chalk.green('✔   Fingerprints saved')}` +
-      chalk.dim(` → .chiral/fingerprints.json  (${plural(workflows.length, 'workflow')})`),
-    );
+    if (outputMode === 'human') {
+      console.log(
+        `${chalk.green('✔   Fingerprints saved')}` +
+        chalk.dim(` → .chiral/fingerprints.json  (${plural(workflows.length, 'workflow')})`),
+      );
+    }
 
     // ── env-specific name detection ───────────────────────────────────────────
     const otherEnvs = Object.keys(config.environments).filter((e) => e !== options.env);
@@ -122,53 +132,42 @@ export async function runAdopt(
     const envSpecific = workflows.filter(
       (wf) => detectsEnvMarker(wf.name, Object.keys(config.environments)) && !findLogicalByEnvAndName(wfMap, options.env, wf.name),
     );
-    if (envSpecific.length > 0) {
-      const example = envSpecific[0].name;
-      const targetHint = otherEnvs[0] ?? '<other-env>';
-      console.log(
-        `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
-      );
-      console.log(
-        chalk.dim(`     If they exist under different names in other environments, run:`),
-      );
-      console.log(
-        chalk.dim(`     chiral workflow match --from ${options.env} --to ${targetHint}`),
-      );
-    }
-
-    // ── workflow list ─────────────────────────────────────────────────────────
-    console.log(`\n  ${chalk.bold('Workflows')}`);
-    for (const wf of workflows) {
-      const badge = wf.active ? chalk.green('active') : chalk.dim('inactive');
-      console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
-    }
-
-    // ── URL discovery hint ────────────────────────────────────────────────────
-    const discoveredUrls = extractUrlsFromSnapshots(chiralDir, [options.env]);
-    const safeUrls = discoveredUrls.filter((d) => {
-      try { validateUrlValue(d.value); return true; } catch { return false; }
-    });
-    const uniqueHostnames = new Set(safeUrls.map((d) => d.hostname));
-    if (uniqueHostnames.size > 0) {
-      const uniqueWorkflowNameCount = new Set(safeUrls.flatMap((d) => d.workflowNames)).size;
-      const domainLabel = uniqueHostnames.size === 1 ? 'domain' : 'domains';
-      const wfLabel = uniqueWorkflowNameCount === 1 ? 'workflow' : 'workflows';
-      const msg = `Found ${uniqueHostnames.size} unique ${domainLabel} across ${uniqueWorkflowNameCount} ${wfLabel}`;
-      if (process.stdout.isTTY) {
-        console.log(`\n  ${msg}.`);
-        const shouldRegister = await confirm({ message: '  Register them as URL mappings?' });
-        if (shouldRegister) {
-          console.log(chalk.dim(`     Run: chiral url map`));
-        }
-      } else {
-        console.log(`\n  ${chalk.dim(`${msg} — run chiral url map to register them.`)}`);
+    const unmappedUrls = collectUnmappedUrls(workflows, options.env, loadUrlMap(chiralDir));
+    if (outputMode === 'human') {
+      if (envSpecific.length > 0) {
+        const example = envSpecific[0].name;
+        const targetHint = otherEnvs[0] ?? '<other-env>';
+        console.log(
+          `\n  ${chalk.yellow('⚠')}  Some workflow names look environment-specific (e.g., "${example}").`,
+        );
+        console.log(
+          chalk.dim(`     If they exist under different names in other environments, run:`),
+        );
+        console.log(
+          chalk.dim(`     chiral workflow match --from ${options.env} --to ${targetHint}`),
+        );
       }
-    }
 
-    if (otherEnvs.length > 0) {
-      console.log(`\n  ${chalk.dim('Next:')} chiral diff --from ${options.env} --to ${otherEnvs[0]}\n`);
-    } else {
-      console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
+      // ── workflow list ───────────────────────────────────────────────────────
+      console.log(`\n  ${chalk.bold('Workflows')}`);
+      for (const wf of workflows) {
+        const badge = wf.active ? chalk.green('active') : chalk.dim('inactive');
+        console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
+      }
+
+      // ── URL discovery hint ──────────────────────────────────────────────────
+      if (unmappedUrls.length > 0) {
+        console.log(`\n  ${chalk.yellow('⚠')}  ${unmappedUrls.length} URL(s) found in workflows but not mapped:`);
+        for (const url of unmappedUrls) {
+          console.log(chalk.dim(`     chiral url map ${deriveUrlLogicalName(url)} ${options.env}=${url}`));
+        }
+      }
+
+      if (otherEnvs.length > 0) {
+        console.log(`\n  ${chalk.dim('Next:')} chiral diff --from ${options.env} --to ${otherEnvs[0]}\n`);
+      } else {
+        console.log(`\n  ${chalk.dim('Next:')} chiral environment add  ${chalk.dim('# connect another environment to enable push/diff')}\n`);
+      }
     }
 
     const syncResult = await syncToRemote(
@@ -178,15 +177,22 @@ export async function runAdopt(
     writeAuditEntry(chiralDir, { ...baseEntry, result: 'success', error: null });
     if (!syncResult.skipped && !syncResult.nothingToCommit) {
       if (syncResult.success) {
-        console.log(formatSyncSuccess(syncResult));
+        if (outputMode === 'human') console.log(formatSyncSuccess(syncResult));
       } else {
         for (const line of formatSyncFailure(syncResult)) console.error(chalk.yellow(line));
       }
-      console.log();
+      if (outputMode === 'human') console.log();
+    }
+
+    if (outputMode === 'json') {
+      printJson({
+        workflows_fetched: workflows.length,
+        credentials_fetched: credentials.length,
+        tags: tags.map((t) => t.name),
+        unmapped_urls: unmappedUrls,
+      });
     }
   } catch (err) {
-    // User cancellation — don't pollute audit log with intentional Ctrl+C
-    if (err instanceof ExitPromptError) throw err;
     const errorMsg = err instanceof Error ? err.message : String(err);
     try {
       writeAuditEntry(chiralDir, { ...baseEntry, result: 'failure', error: errorMsg });
@@ -202,14 +208,18 @@ export async function runAdopt(
 export const adoptCommand = new Command('adopt')
   .description('Import an existing n8n instance into chiral state')
   .argument('<env>', 'Environment name from config.json')
+  .option('--json', 'Output as JSON')
   .addHelpText(
     'after',
     `
 Examples:
   Adopt a configured environment:
     chiral adopt dev
+
+  Headless (for agents/CI):
+    chiral adopt prod --json
 `,
   )
-  .action(async (env: string, _options: Record<string, never>) => {
-    await runAdopt({ env });
+  .action(async (env: string, options: { json?: boolean }) => {
+    await runAdopt({ env, ...options });
   });

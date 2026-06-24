@@ -16,6 +16,14 @@ import { formatAge } from '../lib/cli.js';
 import { readAuditLog } from '../state/audit.js';
 import { UserError } from '../lib/errors.js';
 import { simpleGit } from 'simple-git';
+import { printJson } from '../lib/output.js';
+
+type OutputMode = 'human' | 'json';
+
+function resolveOutputMode(options: { json?: boolean }): OutputMode {
+  if (options.json || !process.stdout.isTTY) return 'json';
+  return 'human';
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -84,9 +92,19 @@ function getLastSync(chiralDir: string): string {
 
 // ── remote (no subcommand) ─────────────────────────────────────────────────────
 
-export async function runRemoteStatus(): Promise<void> {
+export async function runRemoteStatus(options: { json?: boolean } = {}): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadRemoteState();
   const gs = state.gitSync;
+
+  if (outputMode === 'json') {
+    printJson({
+      url: gs?.remote ?? null,
+      branch: gs?.branch ?? null,
+      enabled: gs?.enabled ?? false,
+    });
+    return;
+  }
 
   console.log(`\n  ${chalk.bold('Git sync')}\n`);
 
@@ -106,7 +124,8 @@ export async function runRemoteStatus(): Promise<void> {
 
 // ── remote set ─────────────────────────────────────────────────────────────────
 
-export async function runRemoteSet(options: { url?: string; branch?: string }): Promise<void> {
+export async function runRemoteSet(options: { url?: string; branch?: string; json?: boolean }): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadRemoteState();
   const existing = state.gitSync;
 
@@ -173,6 +192,11 @@ export async function runRemoteSet(options: { url?: string; branch?: string }): 
   };
   saveRemoteState(state);
 
+  if (outputMode === 'json') {
+    printJson({ url: state.gitSync.remote, branch: state.gitSync.branch });
+    return;
+  }
+
   console.log(
     `\n  ${chalk.green('✓')}  Git sync configured → ${chalk.cyan(state.gitSync.remote)} ${chalk.dim(`[${state.gitSync.branch}]`)}\n`,
   );
@@ -180,7 +204,8 @@ export async function runRemoteSet(options: { url?: string; branch?: string }): 
 
 // ── remote enable ──────────────────────────────────────────────────────────────
 
-export async function runRemoteEnable(): Promise<void> {
+export async function runRemoteEnable(options: { json?: boolean } = {}): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadRemoteState();
 
   if (!state.gitSync) {
@@ -190,6 +215,11 @@ export async function runRemoteEnable(): Promise<void> {
   state.gitSync = { ...state.gitSync, enabled: true };
   saveRemoteState(state);
 
+  if (outputMode === 'json') {
+    printJson({ enabled: true });
+    return;
+  }
+
   console.log(
     `\n  ${chalk.green('✓')}  Git sync enabled → ${chalk.cyan(state.gitSync.remote)} ${chalk.dim(`[${state.gitSync.branch}]`)}\n`,
   );
@@ -197,7 +227,8 @@ export async function runRemoteEnable(): Promise<void> {
 
 // ── remote disable ─────────────────────────────────────────────────────────────
 
-export async function runRemoteDisable(): Promise<void> {
+export async function runRemoteDisable(options: { json?: boolean } = {}): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadRemoteState();
 
   if (!state.gitSync) {
@@ -207,6 +238,11 @@ export async function runRemoteDisable(): Promise<void> {
   state.gitSync = { ...state.gitSync, enabled: false };
   saveRemoteState(state);
 
+  if (outputMode === 'json') {
+    printJson({ enabled: false });
+    return;
+  }
+
   console.log(
     `\n  ${chalk.yellow('⚠')}  Git sync disabled. Run 'chiral remote enable' to resume.\n`,
   );
@@ -214,14 +250,15 @@ export async function runRemoteDisable(): Promise<void> {
 
 // ── remote remove ──────────────────────────────────────────────────────────────
 
-export async function runRemoteRemove(options: { yes?: boolean }): Promise<void> {
+export async function runRemoteRemove(options: { yes?: boolean; json?: boolean }): Promise<void> {
+  const outputMode = resolveOutputMode(options);
   const state = loadRemoteState();
 
   if (!state.gitSync) {
     throw new UserError("No remote configured. Nothing to remove.");
   }
 
-  if (!options.yes) {
+  if (!options.yes && outputMode === 'human') {
     await input({
       message: 'Type "remove" to confirm:',
       validate: (v) => v === 'remove' || 'Type exactly "remove" to confirm',
@@ -230,6 +267,11 @@ export async function runRemoteRemove(options: { yes?: boolean }): Promise<void>
 
   delete state.gitSync;
   saveRemoteState(state);
+
+  if (outputMode === 'json') {
+    printJson({ removed: true });
+    return;
+  }
 
   console.log(
     `\n  ${chalk.green('✓')}  Git sync removed. Run 'chiral remote set' to configure a new remote.\n`,
@@ -240,8 +282,9 @@ export async function runRemoteRemove(options: { yes?: boolean }): Promise<void>
 
 export const remoteCommand = new Command('remote')
   .description('Manage git sync configuration for the active project')
-  .action(async () => {
-    await runRemoteStatus();
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    await runRemoteStatus(options);
   });
 
 remoteCommand
@@ -249,6 +292,7 @@ remoteCommand
   .description('Set or update the git remote and/or branch')
   .option('--url <url>', 'Git remote URL or name')
   .option('--branch <branch>', 'Branch to sync to')
+  .option('--json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
   Interactive setup:
@@ -259,39 +303,45 @@ Examples:
 
   Set branch only:
     chiral remote set --branch develop
+
+  Headless (for agents/CI):
+    chiral remote set --url https://github.com/org/repo.git --branch main --json
 `)
-  .action(async (options: { url?: string; branch?: string }) => {
+  .action(async (options: { url?: string; branch?: string; json?: boolean }) => {
     await runRemoteSet(options);
   });
 
 remoteCommand
   .command('enable')
   .description('Re-enable git sync (uses saved config)')
+  .option('--json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
   Re-enable git sync:
     chiral remote enable
 `)
-  .action(async () => {
-    await runRemoteEnable();
+  .action(async (options: { json?: boolean }) => {
+    await runRemoteEnable(options);
   });
 
 remoteCommand
   .command('disable')
   .description('Pause git sync (keeps config intact)')
+  .option('--json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
   Pause git sync without removing config:
     chiral remote disable
 `)
-  .action(async () => {
-    await runRemoteDisable();
+  .action(async (options: { json?: boolean }) => {
+    await runRemoteDisable(options);
   });
 
 remoteCommand
   .command('remove')
   .description('Remove the git sync configuration entirely')
   .option('--yes', 'Skip type-to-confirm prompt')
+  .option('--json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
   Remove git sync config (will prompt to confirm):
@@ -299,7 +349,10 @@ Examples:
 
   Skip confirmation:
     chiral remote remove --yes
+
+  Headless (for agents/CI):
+    chiral remote remove --yes --json
 `)
-  .action(async (options: { yes?: boolean }) => {
+  .action(async (options: { yes?: boolean; json?: boolean }) => {
     await runRemoteRemove(options);
   });

@@ -224,6 +224,38 @@ export function applyUrlMap(
   return { ...workflow, nodes: remappedNodes };
 }
 
+export function collectUnmappedUrls(workflows: { nodes?: unknown }[], env: string, urlMap: UrlMap): string[] {
+  const mappedOrigins = new Set(
+    Object.values(urlMap.urls)
+      .map((entry) => entry.values[env])
+      .filter(Boolean)
+      .map((u) => { try { return new URL(u).origin; } catch { return null; } })
+      .filter((o): o is string => o !== null),
+  );
+  const unmapped = new Set<string>();
+  function walk(obj: unknown): void {
+    if (typeof obj === 'string') {
+      let parsed: URL;
+      try { parsed = new URL(obj); } catch { return; }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+      if (!mappedOrigins.has(parsed.origin)) unmapped.add(obj);
+      return;
+    }
+    if (Array.isArray(obj)) { for (const item of obj) walk(item); return; }
+    if (typeof obj === 'object' && obj !== null) {
+      for (const val of Object.values(obj as Record<string, unknown>)) walk(val);
+    }
+  }
+  for (const wf of workflows) {
+    const nodes = wf.nodes;
+    if (!Array.isArray(nodes)) continue;
+    for (const node of nodes as Record<string, unknown>[]) {
+      walk(node['parameters']);
+    }
+  }
+  return [...unmapped];
+}
+
 export interface DiscoveredUrl {
   value: string;
   hostname: string;

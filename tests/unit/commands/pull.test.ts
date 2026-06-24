@@ -29,9 +29,15 @@ vi.mock('../../../src/lib/workflow-diff.js', async (importOriginal) => {
   return { ...actual, diffWorkflowNodes: vi.fn(actual.diffWorkflowNodes) };
 });
 
+vi.mock('../../../src/state/url-map.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../src/state/url-map.js')>();
+  return { ...mod, collectUnmappedUrls: vi.fn().mockReturnValue([]) };
+});
+
 import { execSync } from 'node:child_process';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
 import { pageOutput } from '../../../src/lib/pager.js';
+import * as urlMapState from '../../../src/state/url-map.js';
 import { runPull, pullCommand } from '../../../src/commands/pull.js';
 import { writeSnapshot, writeSnapshotMeta } from '../../../src/state/snapshots.js';
 import { upsertFingerprintEntry } from '../../../src/state/fingerprints.js';
@@ -41,6 +47,7 @@ import { PIN_DATA_SIZE_LIMIT_BYTES } from '../../../src/lib/workflow-normalize.j
 const mockPageOutput = vi.mocked(pageOutput);
 const mockUpsertFingerprintEntry = vi.mocked(upsertFingerprintEntry);
 const mockDiffWorkflowNodes = vi.mocked(diffWorkflowNodes);
+const mockCollectUnmappedUrls = vi.mocked(urlMapState.collectUnmappedUrls);
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
@@ -122,6 +129,7 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
+  mockCollectUnmappedUrls.mockReturnValue([]);
   process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
   process.env['CHIRAL_PROJECT'] = 'test-project';
 });
@@ -705,6 +713,88 @@ describe('runPull - --json output', () => {
     // updated is now objects
     expect(result.data.updated).toHaveLength(1);
     expect(result.data.updated[0].name).toBe('Workflow One');
+  });
+});
+
+describe('runPull - --json unmapped_urls', () => {
+  it('no-changes branch includes unmapped_urls in JSON output', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockCollectUnmappedUrls.mockReturnValue(['https://api.example.com/v1']);
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    vi.restoreAllMocks();
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unmapped_urls).toEqual(['https://api.example.com/v1']);
+  });
+
+  it('no-changes branch has empty unmapped_urls when all URLs mapped', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockCollectUnmappedUrls.mockReturnValue([]);
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    vi.restoreAllMocks();
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unmapped_urls).toEqual([]);
+  });
+
+  it('changes branch includes unmapped_urls in JSON output', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+        ),
+      }) as never;
+    });
+    mockCollectUnmappedUrls.mockReturnValue(['https://hook.example.com/trigger']);
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    vi.restoreAllMocks();
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unmapped_urls).toEqual(['https://hook.example.com/trigger']);
+  });
+
+  it('changes branch has empty unmapped_urls when no URLs unmapped', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    const WF1_UPDATED = { ...WF1, versionId: 'v2', nodes: [ADDED_NODE] };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF1_UPDATED, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF1_UPDATED : WF2),
+        ),
+      }) as never;
+    });
+    mockCollectUnmappedUrls.mockReturnValue([]);
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    vi.restoreAllMocks();
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unmapped_urls).toEqual([]);
   });
 });
 
@@ -2151,5 +2241,126 @@ describe('runPull - env-specific name detection', () => {
     // Only one line - the JSON object; no warning line
     expect(logged).toHaveLength(1);
     expect(() => JSON.parse(logged[0])).not.toThrow();
+  });
+});
+
+describe('runPull - URL discovery hints in unchanged-workflows branch', () => {
+  const WF_WITH_URL = {
+    ...WF1,
+    nodes: [{
+      id: 'n1',
+      name: 'HTTP Request',
+      type: 'n8n-nodes-base.httpRequest',
+      parameters: { url: 'https://api.example.com/v1/users' },
+      position: [0, 0],
+    }],
+  };
+
+  it('prints URL hint when no changes but workflows contain unmapped URLs', async () => {
+    setupProject();
+    setupPreviousSnapshot();
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF_WITH_URL, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF_WITH_URL : WF2),
+        ),
+      }) as never;
+    });
+    mockCollectUnmappedUrls.mockReturnValue(['https://api.example.com/v1/users']);
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    const joined = output.join('\n');
+    expect(joined).toContain('chiral url map');
+    expect(joined).toContain('https://api.example.com/v1/users');
+  });
+
+  it('suppresses URL hint when all URLs are already mapped', async () => {
+    setupProject();
+    // previous snapshot must match WF_WITH_URL exactly so delta is zero
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF_WITH_URL);
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF2);
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT, env: 'dev', command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z', workflow_count: 2,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+    vol.writeFileSync(`${PROJECT_DIR}/.chiral/url-map.json`, JSON.stringify({
+      version: 1,
+      urls: { api_example_com: { values: { dev: 'https://api.example.com' } } },
+    }));
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF_WITH_URL, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF_WITH_URL : WF2),
+        ),
+      }) as never;
+    });
+
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runPull({ env: 'dev' });
+
+    expect(output.join('\n')).not.toContain('chiral url map');
+  });
+
+  it('does not print URL hint in --json mode when no changes', async () => {
+    setupProject();
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF_WITH_URL);
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF2);
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT, env: 'dev', command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z', workflow_count: 2,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF_WITH_URL, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF_WITH_URL : WF2),
+        ),
+      }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', json: true });
+
+    expect(logged).toHaveLength(1);
+    expect(() => JSON.parse(logged[0])).not.toThrow();
+    expect(logged[0]).not.toContain('chiral url map');
+  });
+
+  it('does not print URL hint in --name-only mode when no changes', async () => {
+    setupProject();
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF_WITH_URL);
+    writeSnapshot(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, WF2);
+    writeSnapshotMeta(`${PROJECT_DIR}/.chiral`, PREV_DEPLOYMENT, {
+      deployment_id: PREV_DEPLOYMENT, env: 'dev', command: 'pull',
+      timestamp: '2024-01-01T00:00:00.000Z', workflow_count: 2,
+      filters: { tag: null, pattern: null, onlyActive: false, id: null },
+    });
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WF_WITH_URL, WF2]),
+        getWorkflow: vi.fn().mockImplementation((id: string) =>
+          Promise.resolve(id === 'wf-1' ? WF_WITH_URL : WF2),
+        ),
+      }) as never;
+    });
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runPull({ env: 'dev', nameOnly: true });
+
+    expect(logged).toHaveLength(0);
   });
 });
