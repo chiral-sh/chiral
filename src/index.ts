@@ -143,7 +143,7 @@ try {
     if (!alreadyDisplayed) {
       if (isJsonFlagActive()) {
         const code = err.name.replace(/([A-Z])/g, (c, _, i) => (i === 0 ? c.toLowerCase() : '_' + c.toLowerCase()));
-        printJsonError(code, err.message, err.retryable);
+        printJsonError(code, err.message, err.retryable, { category: 'user_error' });
       } else {
         const sep = didPrintOutput ? '' : '\n';
         console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
