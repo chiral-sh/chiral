@@ -251,11 +251,15 @@ export async function runRemoteRemove(options: { yes?: boolean; json?: boolean }
     throw new NotFoundError("No remote configured. Nothing to remove.");
   }
 
-  if (!options.yes && outputMode === 'human') {
-    await input({
-      message: 'Type "remove" to confirm:',
-      validate: (v) => v === 'remove' || 'Type exactly "remove" to confirm',
-    });
+  if (!options.yes) {
+    if (outputMode === 'human') {
+      await input({
+        message: 'Type "remove" to confirm:',
+        validate: (v) => v === 'remove' || 'Type exactly "remove" to confirm',
+      });
+    } else {
+      throw new UserError('--yes is required when using --json to prevent accidental deletion.');
+    }
   }
 
   delete state.gitSync;
