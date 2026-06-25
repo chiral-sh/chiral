@@ -191,14 +191,24 @@ Examples:
   Create a project interactively:
     chiral init
 
-  Create a project with a specific name:
+  Create a project with a specific name (no prompt):
     chiral init my-n8n
+
+  Create non-interactively (CI / agent use):
+    chiral init my-n8n --no-install-completion
+    chiral init my-n8n --json
 
   Create without running git init:
     chiral init my-n8n --no-git
 
-  Create and auto-install completion without prompting (CI / scripts):
+  Create and auto-install completion without prompting:
     chiral init my-n8n --install-completion
+
+Non-interactive behaviour:
+  Passing a project name (positional arg or --project) skips the name prompt.
+  In a non-TTY environment the tab-completion prompt is automatically skipped.
+  --no-install-completion suppresses the completion prompt in TTY environments.
+  --json suppresses all interactive output and implies --no-install-completion.
 `,
   )
   .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean; installCompletion?: boolean; noInstallCompletion?: boolean }) => {

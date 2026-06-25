@@ -28,6 +28,8 @@ export interface CloneOptions {
   dir?: string;
   skipTest?: boolean;
   json?: boolean;
+  url?: string;
+  apiKey?: string;
 }
 
 // ── Output mode ───────────────────────────────────────────────────────────────
@@ -119,6 +121,20 @@ export async function runClone(
   const projectName = example.project;
   currentProjectName = projectName;
 
+  // Validate --url/--api-key flags early
+  if (options.url !== undefined || options.apiKey !== undefined) {
+    if (!options.url || !options.apiKey) {
+      throw new UserError('--url and --api-key must be used together.');
+    }
+    const envCount = Object.keys(example.envs).length;
+    if (envCount > 1) {
+      throw new UserError(
+        `--url and --api-key only work for single-environment projects. ` +
+        `This project has ${envCount} environments. Use CHIRAL_URL_<ENV> and CHIRAL_API_KEY_<ENV> env vars instead.`,
+      );
+    }
+  }
+
   if (projectExists(projectName)) {
     const existingPath = getProjectPath(projectName);
     if (existingPath && existsSync(existingPath)) {
@@ -195,11 +211,13 @@ export async function runClone(
 
   // ── 7.5 JSON mode: validate all env vars before any state is written ────────
   if (outputMode === 'json') {
+    const isSingleEnv = Object.keys(example.envs).length === 1;
     for (const [envName] of Object.entries(example.envs)) {
       const envUpper = envName.toUpperCase();
       const urlVar = `CHIRAL_URL_${envUpper}`;
       const keyVar = `CHIRAL_API_KEY_${envUpper}`;
-      if (!process.env[urlVar] || !process.env[keyVar]) {
+      const coveredByFlags = isSingleEnv && options.url && options.apiKey;
+      if (!coveredByFlags && (!process.env[urlVar] || !process.env[keyVar])) {
         throw new UserError(`--json mode requires ${urlVar} and ${keyVar} to be set.`);
       }
     }
@@ -212,6 +230,7 @@ export async function runClone(
   if (ppid) writeSession(ppid, projectName);
 
   // ── 9. Credential collection and testing ──────────────────────────────────
+  const isSingleEnv = Object.keys(example.envs).length === 1;
   for (const [envName, envExample] of Object.entries(example.envs)) {
     const envUpper = envName.toUpperCase();
     const urlVar = `CHIRAL_URL_${envUpper}`;
@@ -223,11 +242,15 @@ export async function runClone(
     let url = '';
     let apiKey = '';
 
-    if (urlFromEnv && keyFromEnv) {
+    if (isSingleEnv && options.url && options.apiKey) {
+      // --url/--api-key flags take priority for single-environment projects
+      url = options.url;
+      apiKey = options.apiKey;
+    } else if (urlFromEnv && keyFromEnv) {
       url = urlFromEnv;
       apiKey = keyFromEnv;
     } else {
-      // --json mode requires env vars; abort if any are missing
+      // --json mode requires env vars or flags; abort if any are missing
       if (outputMode === 'json') {
         throw new UserError(
           `--json mode requires ${urlVar} and ${keyVar} to be set.`,
@@ -353,18 +376,27 @@ export const cloneCommand = new Command('clone')
   .argument('<repo-url>', 'Git repository URL to clone')
   .option('--dir <path>', 'Clone into this directory instead of the default location')
   .option('--skip-test', 'Skip the n8n connection test after entering credentials')
-  .option('--json', 'Output machine-readable JSON (requires CHIRAL_URL_<ENV> and CHIRAL_API_KEY_<ENV> env vars)')
+  .option('--url <url>', 'n8n URL (single-environment projects; use CHIRAL_URL_<ENV> for multi-environment)')
+  .option('--api-key <key>', 'n8n API key (single-environment projects; use CHIRAL_API_KEY_<ENV> for multi-environment)')
+  .option('--json', 'Output machine-readable JSON (requires credentials via flags or env vars)')
   .addHelpText('after', `
-Examples:
-  Clone a project interactively:
-    chiral clone https://github.com/acme/n8n-workflows
+Headless / CI usage:
+
+  Single-environment project (flags):
+    chiral clone https://github.com/acme/n8n-workflows \\
+      --url https://n8n.example.com --api-key $N8N_KEY
+
+  Single-environment project (flags + JSON output):
+    chiral clone https://github.com/acme/n8n-workflows \\
+      --url https://n8n.example.com --api-key $N8N_KEY --json
+
+  Multi-environment project (env vars):
+    CHIRAL_URL_DEV=https://dev.n8n.io CHIRAL_API_KEY_DEV=$DEV_KEY \\
+    CHIRAL_URL_PROD=https://prod.n8n.io CHIRAL_API_KEY_PROD=$PROD_KEY \\
+      chiral clone https://github.com/acme/n8n-workflows --json
 
   Clone to a specific directory:
     chiral clone https://github.com/acme/n8n-workflows --dir ~/projects/acme
-
-  Clone non-interactively (CI/agent use):
-    CHIRAL_URL_DEV=https://dev.n8n.io CHIRAL_API_KEY_DEV=my-key \\
-      chiral clone https://github.com/acme/n8n-workflows --json
 
 Exit codes:
   0  Success
@@ -374,3 +406,4 @@ Exit codes:
   .action(async (repoUrl: string, options: CloneOptions) => {
     await runClone(repoUrl, options);
   });
+
