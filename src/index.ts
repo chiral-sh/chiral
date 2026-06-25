@@ -163,5 +163,5 @@ try {
       console.error(chalk.dim(err.stack));
     }
   }
-  process.exit(1);
+  process.exit(2);
 }
