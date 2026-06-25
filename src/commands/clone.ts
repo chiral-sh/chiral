@@ -67,6 +67,11 @@ export async function runClone(
     );
   }
 
+  // Pre-clone: validate --url/--api-key must come in pairs (catches orphaned-dir bug before any git I/O)
+  if ((options.url !== undefined) !== (options.apiKey !== undefined)) {
+    throw new ValidationError('--url and --api-key must be used together.');
+  }
+
   let spinner;
   if (outputMode === 'human') {
     console.log();
@@ -113,11 +118,8 @@ export async function runClone(
   const projectName = example.project;
   currentProjectName = projectName;
 
-  // Validate --url/--api-key flags early
-  if (options.url !== undefined || options.apiKey !== undefined) {
-    if (!options.url || !options.apiKey) {
-      throw new ValidationError('--url and --api-key must be used together.');
-    }
+  // Post-clone: validate --url/--api-key not usable for multi-env projects (needs example, so deferred to here)
+  if (options.url && options.apiKey) {
     const envCount = Object.keys(example.envs).length;
     if (envCount > 1) {
       throw new ValidationError(
