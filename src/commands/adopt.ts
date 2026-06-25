@@ -208,6 +208,7 @@ export async function runAdopt(
 
     if (outputMode === 'json') {
       printJson({
+        dry_run: false,
         workflows_fetched: workflows.length,
         credentials_fetched: credentials.length,
         tags: tags.map((t) => t.name),
