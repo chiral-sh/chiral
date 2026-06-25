@@ -3,7 +3,7 @@ import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { readTeam, writeTeam, type Team } from '../state/team.js';
@@ -20,7 +20,7 @@ function getOwnerEmail(team: Team): string {
 export async function runTeamList(options: { json?: boolean }): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
+    throw new NotFoundError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   const team = readTeam(chiralDir);
@@ -62,7 +62,7 @@ export async function runTeamList(options: { json?: boolean }): Promise<void> {
 export async function runTeamWhoami(options: { json?: boolean }): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
+    throw new NotFoundError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   const actor = getGitActor();
@@ -102,22 +102,22 @@ export async function runTeamAdd(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
+    throw new NotFoundError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   if (!z.email().safeParse(email).success) {
-    throw new UserError(`Invalid email address: "${email}"`);
+    throw new ValidationError(`Invalid email address: "${email}"`);
   }
 
   const roleInput = options.role ?? 'member';
   if (roleInput !== 'owner' && roleInput !== 'member') {
-    throw new UserError(`Invalid role "${roleInput}" - must be "owner" or "member"`);
+    throw new ValidationError(`Invalid role "${roleInput}" - must be "owner" or "member"`);
   }
   const role: 'owner' | 'member' = roleInput;
 
   const actor = getGitActor();
   if (!z.email().safeParse(actor).success) {
-    throw new UserError(`git config user.email "${actor}" is not a valid email address. Fix it with: git config user.email you@example.com`);
+    throw new ValidationError(`git config user.email "${actor}" is not a valid email address. Fix it with: git config user.email you@example.com`);
   }
 
   const team = readTeam(chiralDir);
@@ -191,27 +191,27 @@ export async function runTeamRemove(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
+    throw new NotFoundError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   if (!z.email().safeParse(email).success) {
-    throw new UserError(`Invalid email address: "${email}"`);
+    throw new ValidationError(`Invalid email address: "${email}"`);
   }
 
   if (options.yes && options.dryRun) {
-    throw new UserError('--yes and --dry-run cannot be used together');
+    throw new ValidationError('--yes and --dry-run cannot be used together');
   }
 
   const actor = getGitActor();
   const team = readTeam(chiralDir);
 
   if (!(email in team.members)) {
-    throw new UserError(`"${email}" is not in the team roster`);
+    throw new NotFoundError(`"${email}" is not in the team roster`);
   }
 
   const ownerEmail = getOwnerEmail(team);
   if (email === ownerEmail) {
-    throw new UserError(
+    throw new ConflictError(
       `Cannot remove the project owner (${email}). Transfer ownership first: chiral team set-role <new-owner> owner`,
     );
   }
@@ -287,15 +287,15 @@ export async function runTeamSetRole(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
+    throw new NotFoundError("No active project. Run 'chiral use <name>' to select one, or 'chiral init <name>' to create a new project.");
   }
 
   if (!z.email().safeParse(email).success) {
-    throw new UserError(`Invalid email address: "${email}"`);
+    throw new ValidationError(`Invalid email address: "${email}"`);
   }
 
   if (role !== 'owner' && role !== 'member') {
-    throw new UserError(`Invalid role "${role}" - must be "owner" or "member"`);
+    throw new ValidationError(`Invalid role "${role}" - must be "owner" or "member"`);
   }
   const newRole: 'owner' | 'member' = role;
 
@@ -303,13 +303,13 @@ export async function runTeamSetRole(
   const team = readTeam(chiralDir);
 
   if (!(email in team.members)) {
-    throw new UserError(`"${email}" is not in the team roster`);
+    throw new NotFoundError(`"${email}" is not in the team roster`);
   }
 
   const currentOwnerEmail = getOwnerEmail(team);
 
   if (newRole === 'member' && email === currentOwnerEmail) {
-    throw new UserError(
+    throw new ConflictError(
       `Cannot demote the project owner to member. Transfer ownership first: chiral team set-role <new-owner> owner`,
     );
   }

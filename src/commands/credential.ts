@@ -3,7 +3,7 @@ import { input } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError, ValidationError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { padRight, getChiralVersion, normalizedSimilarity, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
@@ -39,12 +39,12 @@ function parseCredentialMapArgs(args: string[]): ParsedCredentialMapArgs {
     if (eqIdx > 0) {
       perEnvNames[arg.slice(0, eqIdx)] = arg.slice(eqIdx + 1);
     } else if (eqIdx === 0) {
-      throw new UserError(`Invalid argument "${arg}" - env=name format requires a non-empty env name before "="`);
+      throw new ValidationError(`Invalid argument "${arg}" - env=name format requires a non-empty env name before "="`);
     } else {
       plainCount++;
       if (plainCount === 1) logicalName = arg;
       else if (plainCount === 2) uniformName = arg;
-      else throw new UserError(`Unexpected argument "${arg}" - did you mean <env>=<name>?`);
+      else throw new ValidationError(`Unexpected argument "${arg}" - did you mean <env>=<name>?`);
     }
   }
 
@@ -184,7 +184,7 @@ export async function runCredentialMap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const credentials = loadCredentials(chiralDir);
@@ -207,7 +207,7 @@ export async function runCredentialMap(
   // ── Non-interactive modes (3 & 4) ─────────────────────────────────────────
   if (isNonInteractive) {
     if (!logicalName) {
-      throw new UserError('Logical name is required in non-interactive mode');
+      throw new ValidationError('Logical name is required in non-interactive mode');
     }
 
     const envList = configResult ? Object.keys(configResult.config.environments) : [];
@@ -221,7 +221,7 @@ export async function runCredentialMap(
     }
 
     if (Object.keys(envMap).length === 0) {
-      throw new UserError(
+      throw new ValidationError(
         'No environments resolved. Specify env=name pairs or ensure config.json is present.',
       );
     }
@@ -300,7 +300,7 @@ export async function runCredentialMap(
 
   // ── Interactive modes (1 & 2) ──────────────────────────────────────────────
   if (!configResult) {
-    throw new UserError(
+    throw new NotFoundError(
       "Interactive mode requires config.json. Run 'chiral environment add <env>' first.",
     );
   }
@@ -571,7 +571,7 @@ export async function runCredentialList(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const credentials = loadCredentials(chiralDir);
@@ -599,7 +599,7 @@ export async function runCredentialList(
   if (options.env) {
     if (configResult && !(options.env in configResult.config.environments)) {
       const available = Object.keys(configResult.config.environments).join(', ');
-      throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
+      throw new NotFoundError(`Unknown environment "${options.env}". Available: ${available}`);
     }
   }
 
@@ -691,7 +691,7 @@ export async function runCredentialUnmap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const credentials = loadCredentials(chiralDir);

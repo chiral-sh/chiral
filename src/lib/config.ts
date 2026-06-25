@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { UserError } from './errors.js';
+import { UserError, NotFoundError, ValidationError } from './errors.js';
 import { resolveActiveProject, type ResolvedProject } from './projects.js';
 
 export interface ConfigWithDir {
@@ -53,7 +53,7 @@ export function loadConfigAndDir(cwdOrResolved?: string | ResolvedProject): Conf
   const configPath = join(chiralDir, 'config.json');
 
   if (!existsSync(configPath)) {
-    throw new UserError("No .chiral/config.json found. Run 'chiral environment add <env>' to set up an environment.");
+    throw new NotFoundError("No .chiral/config.json found. Run 'chiral environment add <env>' to set up an environment.");
   }
 
   let raw: unknown;
@@ -67,7 +67,7 @@ export function loadConfigAndDir(cwdOrResolved?: string | ResolvedProject): Conf
   if (!result.success) {
     const firstError = result.error.issues[0];
     const field = firstError.path.join('.');
-    throw new UserError(
+    throw new ValidationError(
       `Invalid config: ${field ? field + ': ' : ''}${firstError.message}`,
     );
   }
@@ -212,7 +212,7 @@ export function resolveEnv(config: Config, envName: string): Environment {
   const env = config.environments[envName];
   if (!env) {
     const available = Object.keys(config.environments).join(', ');
-    throw new UserError(`Unknown environment "${envName}". Available: ${available}`);
+    throw new NotFoundError(`Unknown environment "${envName}". Available: ${available}`);
   }
   return env;
 }

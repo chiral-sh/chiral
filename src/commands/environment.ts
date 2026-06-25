@@ -14,7 +14,7 @@ import {
 } from '../lib/config.js';
 import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { padRight } from '../lib/cli.js';
 import { loadCredentials, writeCredentials } from '../state/credentials.js';
 import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
@@ -109,7 +109,7 @@ function loadState(): LoadedState {
   try {
     resolved = resolveActiveProject();
   } catch {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
   const { chiralDir } = resolved;
 
@@ -204,7 +204,7 @@ export async function runEnvironmentAdd(
   let name = envName?.trim() ?? '';
   if (!name) {
     if (outputMode === 'json') {
-      throw new UserError('Environment name is required in non-interactive mode. Pass it as an argument: chiral environment add <name> --url <url> --api-key <key>');
+      throw new ValidationError('Environment name is required in non-interactive mode. Pass it as an argument: chiral environment add <name> --url <url> --api-key <key>');
     }
     name = await input({
       message: 'Environment name:',
@@ -215,7 +215,7 @@ export async function runEnvironmentAdd(
   }
 
   if (name in state.environments) {
-    throw new UserError(
+    throw new ConflictError(
       `Environment "${name}" already exists. Run 'chiral environment configure ${name}' to update it.`,
     );
   }
@@ -230,15 +230,15 @@ export async function runEnvironmentAdd(
 
   if (outputMode === 'json') {
     if (!url) {
-      throw new UserError(
+      throw new ValidationError(
         `--url is required in non-interactive mode. Pass --url <url> or set CHIRAL_URL_${envUpper}.`,
       );
     }
     try { new URL(url); } catch {
-      throw new UserError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
+      throw new ValidationError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
     }
     if (!apiKey) {
-      throw new UserError(
+      throw new ValidationError(
         `--api-key is required in non-interactive mode. Pass --api-key <key> or set CHIRAL_API_KEY_${envUpper}.`,
       );
     }
@@ -258,7 +258,7 @@ export async function runEnvironmentAdd(
         ),
       );
       const keyInput = await password({ message: '  API key:', mask: '•' });
-      if (!keyInput) throw new UserError('API key is required');
+      if (!keyInput) throw new ValidationError('API key is required');
       apiKey = keyInput;
     }
   }
@@ -308,7 +308,7 @@ export async function runEnvironmentConfigure(
 
   const existing = state.environments[envName];
   if (!existing) {
-    throw new UserError(
+    throw new NotFoundError(
       `Environment "${envName}" not found. Run 'chiral environment add ${envName}' to create it.`,
     );
   }
@@ -342,11 +342,11 @@ export async function runEnvironmentConfigure(
     apiKey = keyInput || existing.apiKey;
   }
 
-  if (!url) throw new UserError('URL is required.');
+  if (!url) throw new ValidationError('URL is required.');
   try { new URL(url); } catch {
-    throw new UserError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
+    throw new ValidationError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
   }
-  if (!apiKey) throw new UserError('API key is required.');
+  if (!apiKey) throw new ValidationError('API key is required.');
 
   const normalizedUrl = url.replace(/\/+$/, '');
   let connected = false;
@@ -418,12 +418,12 @@ export async function runEnvironmentRename(
   const state = loadState();
 
   if (!(oldName in state.environments)) {
-    throw new UserError(`Environment "${oldName}" not found.`);
+    throw new NotFoundError(`Environment "${oldName}" not found.`);
   }
   if (newName in state.environments) {
-    throw new UserError(`Environment "${newName}" already exists.`);
+    throw new ConflictError(`Environment "${newName}" already exists.`);
   }
-  if (!newName.trim()) throw new UserError('New environment name cannot be empty');
+  if (!newName.trim()) throw new ValidationError('New environment name cannot be empty');
 
   const { chiralDir } = state;
 
@@ -599,7 +599,7 @@ export async function runEnvironmentDelete(
   const state = loadState();
 
   if (!(envName in state.environments)) {
-    throw new UserError(`Environment "${envName}" not found.`);
+    throw new NotFoundError(`Environment "${envName}" not found.`);
   }
 
   if (options.dryRun) {
@@ -649,7 +649,7 @@ export async function runEnvironmentDelete(
 
   if (!options.yes) {
     if (outputMode === 'json') {
-      throw new UserError(`Pass --yes to confirm deletion in non-interactive mode.`);
+      throw new ValidationError(`Pass --yes to confirm deletion in non-interactive mode.`);
     }
     const confirmed = await input({
       message: `Type "${envName}" to confirm deletion:`,

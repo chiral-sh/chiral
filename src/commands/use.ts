@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError } from '../lib/errors.js';
 import {
   listProjects,
   writeSession,
@@ -16,7 +16,7 @@ export async function runUse(projectName?: string, options: { json?: boolean } =
 
   const projects = listProjects();
   if (projects.length === 0) {
-    throw new UserError("No projects found. Run 'chiral init <name>' to create one.");
+    throw new NotFoundError("No projects found. Run 'chiral init <name>' to create one.");
   }
 
   // No argument - show project list with current selection marked
@@ -48,7 +48,7 @@ export async function runUse(projectName?: string, options: { json?: boolean } =
   const match = projects.find((p) => p.name.toLowerCase() === lower);
   if (!match) {
     const available = projects.map((p) => p.name).join(', ');
-    throw new UserError(
+    throw new NotFoundError(
       `Project "${projectName}" not found.\n  Available: ${available}`,
     );
   }
@@ -56,7 +56,7 @@ export async function runUse(projectName?: string, options: { json?: boolean } =
   // Verify the project directory still exists
   const projectPath = getProjectPath(match.name);
   if (!projectPath) {
-    throw new UserError(`Project "${match.name}" is registered but its directory is missing.`);
+    throw new NotFoundError(`Project "${match.name}" is registered but its directory is missing.`);
   }
 
   const ppid = process.ppid;

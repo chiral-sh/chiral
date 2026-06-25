@@ -136,13 +136,14 @@ try {
       const sep = didPrintOutput ? '' : '\n';
       console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
     }
-    process.exit(1);
+    process.exit(2);
   }
   if (err instanceof UserError) {
     const alreadyDisplayed = (err as unknown as Record<string, unknown>).__alreadyDisplayed === true;
     if (!alreadyDisplayed) {
       if (isJsonFlagActive()) {
-        printJsonError('user_error', err.message, false);
+        const code = err.name.replace(/([A-Z])/g, (c, _, i) => (i === 0 ? c.toLowerCase() : '_' + c.toLowerCase()));
+        printJsonError(code, err.message, err.retryable);
       } else {
         const sep = didPrintOutput ? '' : '\n';
         console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
@@ -150,7 +151,7 @@ try {
         console.error();
       }
     }
-    process.exit(1);
+    process.exit(err.exitCode);
   }
   const debug = process.argv.includes('--debug');
   const message = err instanceof Error ? err.message : String(err);
@@ -162,5 +163,5 @@ try {
       console.error(chalk.dim(err.stack));
     }
   }
-  process.exit(2);
+  process.exit(1);
 }

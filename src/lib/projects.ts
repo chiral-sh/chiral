@@ -11,7 +11,7 @@ import {
   renameSync,
 } from 'node:fs';
 import { z } from 'zod';
-import { UserError } from './errors.js';
+import { UserError, NotFoundError, ConflictError } from './errors.js';
 
 // ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -113,7 +113,7 @@ export function registerProject(name: string, path: string): void {
   const index = readIndex();
   const existing = findProjectKey(name, index);
   if (existing && existing !== name) {
-    throw new UserError(
+    throw new ConflictError(
       `A project named "${existing}" already exists. Project names are case-insensitive.`,
     );
   }
@@ -133,11 +133,11 @@ export function renameProjectInIndex(oldName: string, newName: string, newPath: 
   const index = readIndex();
   const oldKey = findProjectKey(oldName, index);
   if (!oldKey) {
-    throw new UserError(`Project "${oldName}" not found.`);
+    throw new NotFoundError(`Project "${oldName}" not found.`);
   }
   const conflictKey = findProjectKey(newName, index);
   if (conflictKey && conflictKey !== oldKey) {
-    throw new UserError(`A project named "${conflictKey}" already exists.`);
+    throw new ConflictError(`A project named "${conflictKey}" already exists.`);
   }
   const entry = index.projects[oldKey];
   delete index.projects[oldKey];
@@ -273,7 +273,7 @@ export function resolveActiveProject(): ResolvedProject {
   if (envProject) {
     const projectPath = getProjectPath(envProject);
     if (!projectPath) {
-      throw new UserError(
+      throw new NotFoundError(
         `Project "${envProject}" not found. Run 'chiral project list' to see available projects.`,
       );
     }
@@ -301,14 +301,14 @@ export function resolveActiveProject(): ResolvedProject {
   // 3. Project count auto-selection
   const projects = listProjects();
   if (projects.length === 0) {
-    throw new UserError("No projects found. Run 'chiral init <name>' to create one.");
+    throw new NotFoundError("No projects found. Run 'chiral init <name>' to create one.");
   }
   if (projects.length === 1) {
     const project = projects[0];
     return { name: project.name, chiralDir: join(project.path, '.chiral'), inactiveReminder: false };
   }
   const names = projects.map((p) => p.name).join(', ');
-  throw new UserError(
+  throw new NotFoundError(
     `Multiple projects found. Run 'chiral use <name>' to select one.\n  Available: ${names}`,
   );
 }

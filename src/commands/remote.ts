@@ -14,7 +14,7 @@ import {
 } from '../lib/config.js';
 import { formatAge } from '../lib/cli.js';
 import { readAuditLog } from '../state/audit.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError } from '../lib/errors.js';
 import { simpleGit } from 'simple-git';
 import { printJson } from '../lib/output.js';
 
@@ -38,7 +38,7 @@ interface RemoteState {
 function loadRemoteState(): RemoteState {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const configPath = join(chiralDir, 'config.json');
@@ -156,7 +156,7 @@ export async function runRemoteSet(options: { url?: string; branch?: string; jso
   }
 
   if (!remote && !isInteractive && !existing?.remote) {
-    throw new UserError(
+    throw new NotFoundError(
       "No remote configured. Pass --url to set one, or run 'chiral remote set' for interactive setup.",
     );
   }
@@ -209,7 +209,7 @@ export async function runRemoteEnable(options: { json?: boolean } = {}): Promise
   const state = loadRemoteState();
 
   if (!state.gitSync) {
-    throw new UserError("No remote configured. Run 'chiral remote set' first.");
+    throw new NotFoundError("No remote configured. Run 'chiral remote set' first.");
   }
 
   state.gitSync = { ...state.gitSync, enabled: true };
@@ -232,7 +232,7 @@ export async function runRemoteDisable(options: { json?: boolean } = {}): Promis
   const state = loadRemoteState();
 
   if (!state.gitSync) {
-    throw new UserError("No remote configured. Nothing to disable.");
+    throw new NotFoundError("No remote configured. Nothing to disable.");
   }
 
   state.gitSync = { ...state.gitSync, enabled: false };
@@ -255,7 +255,7 @@ export async function runRemoteRemove(options: { yes?: boolean; json?: boolean }
   const state = loadRemoteState();
 
   if (!state.gitSync) {
-    throw new UserError("No remote configured. Nothing to remove.");
+    throw new NotFoundError("No remote configured. Nothing to remove.");
   }
 
   if (!options.yes && outputMode === 'human') {

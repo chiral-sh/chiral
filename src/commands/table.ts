@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { UserError, ControlledExit, NotFoundError, ValidationError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { padRight, getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
@@ -29,7 +29,7 @@ import { writeAuditEntry } from '../state/audit.js';
 
 function validateLogicalName(name: string): void {
   if (!/^[a-z0-9-]+$/.test(name)) {
-    throw new UserError(
+    throw new ValidationError(
       `Invalid logical name "${name}" — use lowercase letters, numbers, and hyphens only`,
     );
   }
@@ -50,12 +50,12 @@ function parseTableMapArgs(args: string[]): ParsedTableArgs {
     if (eqIdx >= 0) {
       const env = arg.slice(0, eqIdx);
       const id = arg.slice(eqIdx + 1);
-      if (!id) throw new UserError(`Missing ID for env "${env}" — use: ${env}=<id>`);
+      if (!id) throw new ValidationError(`Missing ID for env "${env}" — use: ${env}=<id>`);
       perEnvIds[env] = id;
     } else {
       plainCount++;
       if (plainCount === 1) logicalName = arg;
-      else throw new UserError(`Unexpected argument "${arg}" — did you mean <env>=<id>?`);
+      else throw new ValidationError(`Unexpected argument "${arg}" — did you mean <env>=<id>?`);
     }
   }
 
@@ -124,7 +124,7 @@ export async function runTableMap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadTableMap(chiralDir);
@@ -140,7 +140,7 @@ export async function runTableMap(
   const isNonInteractive = Object.keys(perEnvIds).length > 0;
 
   if (options.json && !isNonInteractive && !logicalName) {
-    throw new UserError(
+    throw new ValidationError(
       '--json requires env=<id> arguments. Example: chiral table map contacts dev=<id> prod=<id>',
     );
   }
@@ -148,7 +148,7 @@ export async function runTableMap(
   // ── Non-interactive mode (env=id pairs provided) ──────────────────────────
   if (isNonInteractive) {
     if (!logicalName) {
-      throw new UserError('Logical name is required in non-interactive mode');
+      throw new ValidationError('Logical name is required in non-interactive mode');
     }
 
     validateLogicalName(logicalName);
@@ -159,7 +159,7 @@ export async function runTableMap(
     }
 
     if (options.validate && !configResult) {
-      throw new UserError('--validate requires config.json to connect to environments.');
+      throw new ValidationError('--validate requires config.json to connect to environments.');
     }
 
     if (options.validate && configResult) {
@@ -250,13 +250,13 @@ export async function runTableMap(
 
   // ── Interactive mode ───────────────────────────────────────────────────────
   if (!process.stdin.isTTY) {
-    throw new UserError(
+    throw new ValidationError(
       'Provide env=<id> arguments for non-interactive use: chiral table map <name> dev=<id> prod=<id>',
     );
   }
 
   if (!configResult) {
-    throw new UserError(
+    throw new NotFoundError(
       "Interactive mode requires config.json. Run 'chiral environment add <env>' first.",
     );
   }
@@ -404,7 +404,7 @@ function collectUncovered(
   envs: string[],
 ): UncoveredTableId[] {
   if (listDeployments(chiralDir).length === 0) {
-    throw new UserError("No snapshots found. Run 'chiral adopt <env>' first.");
+    throw new NotFoundError("No snapshots found. Run 'chiral adopt <env>' first.");
   }
   const results: UncoveredTableId[] = [];
   for (const env of envs) {
@@ -458,7 +458,7 @@ export async function runTableList(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadTableMap(chiralDir);
@@ -483,7 +483,7 @@ export async function runTableList(
 
   if (options.env && configResult && !configResult.config.environments[options.env]) {
     const available = Object.keys(configResult.config.environments).join(', ');
-    throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
+    throw new NotFoundError(`Unknown environment "${options.env}". Available: ${available}`);
   }
 
   // ── --uncovered mode ──────────────────────────────────────────────────────
@@ -548,7 +548,7 @@ export async function runTableUnmap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadTableMap(chiralDir);
@@ -566,7 +566,7 @@ export async function runTableUnmap(
 
   if (options.env) {
     if (!map.tables[logicalName] || !(options.env in map.tables[logicalName])) {
-      throw new UserError(`No mapping for "${logicalName}" in env "${options.env}"`);
+      throw new NotFoundError(`No mapping for "${logicalName}" in env "${options.env}"`);
     }
     removeTableEnvEntry(map, logicalName, options.env);
     writeTableMap(chiralDir, map);

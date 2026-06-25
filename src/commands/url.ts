@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import { input, confirm } from '@inquirer/prompts';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-sync.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { UserError, ControlledExit, NotFoundError, ValidationError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { padRight, getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
@@ -38,7 +38,7 @@ function parseUrlMapArgs(
       perEnvValues[arg.slice(0, eqIdx)] = arg.slice(eqIdx + 1);
     } else {
       if (logicalName !== undefined) {
-        throw new UserError(`Unexpected argument "${arg}" — did you mean <env>=<url>?`);
+        throw new ValidationError(`Unexpected argument "${arg}" — did you mean <env>=<url>?`);
       }
       logicalName = arg;
     }
@@ -48,13 +48,13 @@ function parseUrlMapArgs(
   const hasFlagMode = flagEnv !== undefined || flagValue !== undefined;
 
   if (hasPositionalPairs && hasFlagMode) {
-    throw new UserError('Cannot mix positional env=value pairs with --env/--value flags');
+    throw new ValidationError('Cannot mix positional env=value pairs with --env/--value flags');
   }
   if (flagValue !== undefined && flagEnv === undefined) {
-    throw new UserError('--value requires --env <name>');
+    throw new ValidationError('--value requires --env <name>');
   }
   if (flagEnv !== undefined && flagValue === undefined) {
-    throw new UserError('--env requires --value <url>');
+    throw new ValidationError('--env requires --value <url>');
   }
   if (flagEnv !== undefined && flagValue !== undefined) {
     perEnvValues[flagEnv] = flagValue;
@@ -65,7 +65,7 @@ function parseUrlMapArgs(
 
 function validateLogicalName(name: string): void {
   if (!/^[a-z0-9-]+$/.test(name)) {
-    throw new UserError(
+    throw new ValidationError(
       `Invalid logical name "${name}" — use lowercase letters, numbers, and hyphens only`,
     );
   }
@@ -80,7 +80,7 @@ export async function runUrlMap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const { logicalName, perEnvValues } = parseUrlMapArgs(args, options.env, options.value);
@@ -88,7 +88,7 @@ export async function runUrlMap(
 
   if (!isNonInteractive) {
     if (!process.stdin.isTTY) {
-      throw new UserError(
+      throw new ValidationError(
         'Interactive mode requires a TTY — pass env=url pairs directly: chiral url map <logical> <env>=<url>',
       );
     }
@@ -97,7 +97,7 @@ export async function runUrlMap(
     try {
       configResult = loadConfigAndDir();
     } catch {
-      throw new UserError(
+      throw new NotFoundError(
         "Interactive mode requires config.json. Run 'chiral environment add <env>' first.",
       );
     }
@@ -291,7 +291,7 @@ export async function runUrlMap(
   }
 
   if (!logicalName) {
-    throw new UserError('Logical name is required: chiral url map <logical> <env>=<url> ...');
+    throw new ValidationError('Logical name is required: chiral url map <logical> <env>=<url> ...');
   }
   validateLogicalName(logicalName);
 
@@ -380,7 +380,7 @@ export async function runUrlMap(
 export async function runUrlList(options: { env?: string; json?: boolean }): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const urlMapData = loadUrlMap(chiralDir);
@@ -408,7 +408,7 @@ export async function runUrlList(options: { env?: string; json?: boolean }): Pro
   if (options.env) {
     if (configResult && !(options.env in configResult.config.environments)) {
       const available = Object.keys(configResult.config.environments).join(', ');
-      throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
+      throw new NotFoundError(`Unknown environment "${options.env}". Available: ${available}`);
     }
   }
 
@@ -454,7 +454,7 @@ export async function runUrlUnmap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const urlMapData = loadUrlMap(chiralDir);
@@ -476,7 +476,7 @@ export async function runUrlUnmap(
 
   if (options.env) {
     if (!(options.env in entry.values)) {
-      throw new UserError(
+      throw new NotFoundError(
         `No mapping for "${logicalName}" in env "${options.env}". Run 'chiral url list' to see registered mappings.`,
       );
     }

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { UserError } from './errors.js';
+import { UserError, AuthError, NetworkError, NotFoundError } from './errors.js';
 import type { Environment } from './config.js';
 
 const EXPIRY_WARN_DAYS = 7;
@@ -95,7 +95,7 @@ export class N8nClient {
   ): Promise<T> {
     const expiry = N8nClient.parseJwtExpiry(this.apiKey);
     if (expiry && expiry <= new Date()) {
-      throw new UserError(
+      throw new AuthError(
         `API key for ${this.envName} expired on ${expiry.toLocaleDateString()}`,
         `  Run: chiral environment configure ${this.envName} to save a new key`,
       );
@@ -115,27 +115,27 @@ export class N8nClient {
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new UserError(`Connection to ${this.envName} timed out after 10 seconds`);
+        throw new NetworkError(`Connection to ${this.envName} timed out after 10 seconds`);
       }
-      throw new UserError(
+      throw new NetworkError(
         `Cannot reach ${this.envName} at ${this.baseUrl.replace('/api/v1', '')} - connection refused`,
       );
     }
 
     if (response.status === 401) {
-      throw new UserError(
+      throw new AuthError(
         `API key for ${this.envName} is invalid or expired`,
         `  Run: chiral environment configure ${this.envName} to save a new key`,
       );
     }
     if (response.status === 404 && options.on404) {
-      throw new UserError(options.on404);
+      throw new NotFoundError(options.on404);
     }
     if (response.status === 403) {
       const scopePart = options.scope
         ? ` - missing scope: ${options.scope}`
         : ' - insufficient permissions';
-      throw new UserError(
+      throw new AuthError(
         `API key for ${this.envName}${scopePart}`,
         this.scopeHint(),
       );

@@ -25,6 +25,7 @@ function resolveOutputMode(options: { json?: boolean }): OutputMode {
 interface AdoptOptions {
   env: string;
   json?: boolean;
+  dryRun?: boolean;
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -84,6 +85,36 @@ export async function runAdopt(
     spinner2.succeed(
       chalk.green(`  Fetched ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`),
     );
+
+    // ── dry-run: report what would be committed, then stop ────────────────────
+    if (options.dryRun) {
+      const unmappedUrlsDry = collectUnmappedUrls(workflows, options.env, loadUrlMap(chiralDir));
+      if (outputMode === 'json') {
+        printJson({
+          dry_run: true,
+          workflows_fetched: workflows.length,
+          credentials_fetched: credentials.length,
+          tags: tags.map((t) => t.name),
+          unmapped_urls: unmappedUrlsDry,
+          workflows: workflows.map((w) => ({ id: w.id, name: w.name, active: w.active })),
+        });
+      } else {
+        console.log(`\n  ${chalk.bold('Dry run')} — would adopt ${chalk.cyan(options.env)}\n`);
+        console.log(`  ${chalk.dim('workflows')}    ${workflows.length}`);
+        console.log(`  ${chalk.dim('credentials')}  ${credentials.length}`);
+        console.log(`  ${chalk.dim('tags')}         ${tags.length}`);
+        if (unmappedUrlsDry.length > 0) {
+          console.log(`  ${chalk.dim('unmapped urls')}  ${unmappedUrlsDry.length}`);
+        }
+        console.log();
+        for (const wf of workflows) {
+          const badge = wf.active ? chalk.green('active') : chalk.dim('inactive');
+          console.log(`  ${chalk.dim('–')} ${wf.name}  ${badge}`);
+        }
+        console.log();
+      }
+      return;
+    }
 
     // ── snapshot + fingerprints ───────────────────────────────────────────────
     const spinner3 = ora({ text: '  Writing snapshot…', color: 'cyan', isSilent: outputMode === 'json' }).start();
@@ -208,6 +239,7 @@ export async function runAdopt(
 export const adoptCommand = new Command('adopt')
   .description('Import an existing n8n instance into chiral state')
   .argument('<env>', 'Environment name from config.json')
+  .option('--dry-run', 'Show what would be fetched without writing any state')
   .option('--json', 'Output as JSON')
   .addHelpText(
     'after',
@@ -216,10 +248,17 @@ Examples:
   Adopt a configured environment:
     chiral adopt dev
 
+  Preview what would be adopted:
+    chiral adopt prod --dry-run
+
   Headless (for agents/CI):
     chiral adopt prod --json
+
+Exit codes:
+  0  Success (or no-op for dry-run)
+  1  Connection or fetch error
 `,
   )
-  .action(async (env: string, options: { json?: boolean }) => {
+  .action(async (env: string, options: { json?: boolean; dryRun?: boolean }) => {
     await runAdopt({ env, ...options });
   });

@@ -10,7 +10,7 @@ import { parseConfigExample } from '../lib/config.js';
 import { writeConfig } from '../lib/config.js';
 import type { Config } from '../lib/config.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { UserError, ControlledExit, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import {
   getProjectsDir,
   registerProject,
@@ -70,7 +70,7 @@ export async function runClone(
 
   // ── 2. Directory collision check ─────────────────────────────────────────
   if (existsSync(targetDir)) {
-    throw new UserError(
+    throw new ConflictError(
       `Directory '${basename(targetDir)}' already exists. Use --dir to specify a different location.`,
     );
   }
@@ -111,7 +111,7 @@ export async function runClone(
     // ── 4. Detect .chiral/ ────────────────────────────────────────────────────
     const chiralDir = join(targetDir, '.chiral');
     if (!existsSync(chiralDir)) {
-      throw new UserError(
+      throw new NotFoundError(
         "This repo doesn't appear to be a chiral project. Run 'chiral init' to set one up.",
       );
     }
@@ -124,11 +124,11 @@ export async function runClone(
   // Validate --url/--api-key flags early
   if (options.url !== undefined || options.apiKey !== undefined) {
     if (!options.url || !options.apiKey) {
-      throw new UserError('--url and --api-key must be used together.');
+      throw new ValidationError('--url and --api-key must be used together.');
     }
     const envCount = Object.keys(example.envs).length;
     if (envCount > 1) {
-      throw new UserError(
+      throw new ValidationError(
         `--url and --api-key only work for single-environment projects. ` +
         `This project has ${envCount} environments. Use CHIRAL_URL_<ENV> and CHIRAL_API_KEY_<ENV> env vars instead.`,
       );
@@ -151,7 +151,7 @@ export async function runClone(
         };
 
         if (normalizeGitUrl(existingRepoUrl) === normalizeGitUrl(repoUrl)) {
-          throw new UserError(
+          throw new ConflictError(
             `You have already cloned this repository. Run 'chiral use ${projectName}' to switch to it.`,
           );
         }
@@ -160,7 +160,7 @@ export async function runClone(
       }
     }
 
-    throw new UserError(
+    throw new ConflictError(
       `A project named "${projectName}" already exists in your registry. Rename it with 'chiral project rename ${projectName} <new-name>' before cloning this repository.`,
     );
   }
@@ -170,7 +170,7 @@ export async function runClone(
     const finalDir = join(projectsDir, projectName);
     if (finalDir !== targetDir) {
       if (existsSync(finalDir)) {
-        throw new UserError(
+        throw new ConflictError(
           `Directory '${projectName}' already exists. Use --dir to specify a different location.`,
         );
       }
@@ -218,7 +218,7 @@ export async function runClone(
       const keyVar = `CHIRAL_API_KEY_${envUpper}`;
       const coveredByFlags = isSingleEnv && options.url && options.apiKey;
       if (!coveredByFlags && (!process.env[urlVar] || !process.env[keyVar])) {
-        throw new UserError(`--json mode requires ${urlVar} and ${keyVar} to be set.`);
+        throw new ValidationError(`--json mode requires ${urlVar} and ${keyVar} to be set.`);
       }
     }
   }

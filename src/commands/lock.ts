@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import { loadConfigAndDir, findChiralDir } from '../lib/config.js';
 import { resolveEnvId, buildEnvIdToNameMap } from '../state/envs.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure } from '../lib/git-sync.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { UserError, ControlledExit, NotFoundError, ValidationError, ConflictError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { getGitActor } from '../lib/git.js';
 import { formatAge, getChiralVersion } from '../lib/cli.js';
@@ -27,12 +27,12 @@ import { loadWorkflowMap } from '../state/workflows.js';
 function parseDuration(s: string): number {
   const match = /^(\d+)(h|m|d)$/.exec(s);
   if (!match) {
-    throw new UserError(
+    throw new ValidationError(
       `Cannot parse duration "${s}". Use a number followed by h, m, or d (e.g. 2h, 30m, 1d).`,
     );
   }
   const n = parseInt(match[1], 10);
-  if (n <= 0) throw new UserError('--stale value must be greater than zero (e.g. --stale 2h)');
+  if (n <= 0) throw new ValidationError('--stale value must be greater than zero (e.g. --stale 2h)');
   const multipliers: Record<string, number> = { h: 3600, m: 60, d: 86400 };
   return n * (multipliers[match[2]] ?? 3600);
 }
@@ -106,10 +106,10 @@ export interface UnlockOptions {
  */
 function validateLockClaimOptions(options: LockClaimOptions): void {
   if (options.env && options.allEnvs) {
-    throw new UserError('--env and --all-envs are mutually exclusive');
+    throw new ValidationError('--env and --all-envs are mutually exclusive');
   }
   if (!options.env && !options.allEnvs) {
-    throw new UserError('Specify --env <env> or --all-envs');
+    throw new ValidationError('Specify --env <env> or --all-envs');
   }
 }
 
@@ -134,13 +134,13 @@ function validateLockClaimOptions(options: LockClaimOptions): void {
  */
 function validateUnlockOptions(options: UnlockOptions): void {
   if (options.env && options.allEnvs) {
-    throw new UserError('--env and --all-envs are mutually exclusive');
+    throw new ValidationError('--env and --all-envs are mutually exclusive');
   }
   if (!options.env && !options.allEnvs) {
-    throw new UserError('Specify --env <env> or --all-envs');
+    throw new ValidationError('Specify --env <env> or --all-envs');
   }
   if (options.yes && !options.force) {
-    throw new UserError('--yes requires --force');
+    throw new ValidationError('--yes requires --force');
   }
 }
 
@@ -164,7 +164,7 @@ export async function runLockClaim(
   const host = osHostname();
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const { config } = loadConfigAndDir(join(chiralDir, '..'));
@@ -176,7 +176,7 @@ export async function runLockClaim(
   } else {
     const envName = options.env!;
     if (!(envName in config.environments)) {
-      throw new UserError(
+      throw new NotFoundError(
         `Unknown environment "${envName}". Available: ${envs.join(', ')}`,
       );
     }
@@ -227,7 +227,7 @@ export async function runLockClaim(
     } else {
       const envName = targetEnvs[0];
       if (!envEntries?.[envName]?.id) {
-        throw new UserError(
+        throw new NotFoundError(
           `"${logicalName}" is not mapped to environment "${envName}". Run 'chiral workflow map' to add it.`,
         );
       }
@@ -461,14 +461,14 @@ export async function runLockList(
 ): Promise<void> {
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   if (options.env) {
     const { config } = loadConfigAndDir(join(chiralDir, '..'));
     if (!(options.env in config.environments)) {
       const available = Object.keys(config.environments).join(', ');
-      throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
+      throw new NotFoundError(`Unknown environment "${options.env}". Available: ${available}`);
     }
   }
 
@@ -539,7 +539,7 @@ export async function runUnlock(
   const actor = getGitActor();
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const { config } = loadConfigAndDir(join(chiralDir, '..'));
@@ -551,7 +551,7 @@ export async function runUnlock(
   } else {
     const envName = options.env!;
     if (!(envName in config.environments)) {
-      throw new UserError(
+      throw new NotFoundError(
         `Unknown environment "${envName}". Available: ${envs.join(', ')}`,
       );
     }
@@ -569,7 +569,7 @@ export async function runUnlock(
 
     if (!lock) {
       if (options.allEnvs) continue; // silently skip
-      throw new UserError(`Workflow "${logicalName}" is not locked in ${env}`);
+      throw new NotFoundError(`Workflow "${logicalName}" is not locked in ${env}`);
     }
 
     if (lock.actor !== actor) {
@@ -578,7 +578,7 @@ export async function runUnlock(
           skippedEnvs.push({ env, reason: `held by ${lock.actor}` });
           continue;
         }
-        throw new UserError(
+        throw new ConflictError(
           `You do not own this lock. Held by ${lock.actor}. Use --force to override.`,
         );
       }

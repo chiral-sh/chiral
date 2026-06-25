@@ -4,7 +4,7 @@ import { Command, Option } from 'commander';
 import { loadConfigAndDir, findChiralDir, resolveEnv, type Config } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { padRight, plural, getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { printJson } from '../lib/output.js';
@@ -42,7 +42,7 @@ function checkNameConflict(
   for (const [existing, entry] of Object.entries(map.workflows)) {
     if (existing === logicalName) continue;
     if (entry[env]?.name === name) {
-      throw new UserError(
+      throw new ConflictError(
         `"${name}" is already the ${env} name for "${existing}". Each workflow name must map to at most one logical entry per env.`,
       );
     }
@@ -71,7 +71,7 @@ function parseWorkflowMapArgs(args: string[]): ParsedArgs {
   for (const arg of args) {
     const eqIdx = arg.indexOf('=');
     if (eqIdx === 0) {
-      throw new UserError(`Invalid argument "${arg}" — environment name cannot be empty before '='`);
+      throw new ValidationError(`Invalid argument "${arg}" — environment name cannot be empty before '='`);
     }
     if (eqIdx > 0) {
       perEnvNames[arg.slice(0, eqIdx)] = arg.slice(eqIdx + 1);
@@ -79,7 +79,7 @@ function parseWorkflowMapArgs(args: string[]): ParsedArgs {
       plainCount++;
       if (plainCount === 1) logicalName = arg;
       else if (plainCount === 2) uniformName = arg;
-      else throw new UserError(`Unexpected argument "${arg}" - did you mean <env>=<name>?`);
+      else throw new ValidationError(`Unexpected argument "${arg}" - did you mean <env>=<name>?`);
     }
   }
 
@@ -161,7 +161,7 @@ export async function runWorkflowMap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
@@ -185,7 +185,7 @@ export async function runWorkflowMap(
   const isInteractive = !isNonInteractive;
 
   if (options.validate && !configResult) {
-    throw new UserError('--validate requires config.json to connect to environments.');
+    throw new ValidationError('--validate requires config.json to connect to environments.');
   }
 
   const envList: string[] = configResult ? Object.keys(configResult.config.environments) : [];
@@ -193,7 +193,7 @@ export async function runWorkflowMap(
   // ── Non-interactive modes ──────────────────────────────────────────────────
   if (isNonInteractive || (logicalName !== undefined && !isInteractive)) {
     if (!logicalName) {
-      throw new UserError('Logical name is required in non-interactive mode');
+      throw new ValidationError('Logical name is required in non-interactive mode');
     }
 
     // Build initial entries (name only - IDs filled in by --validate or future push)
@@ -208,7 +208,7 @@ export async function runWorkflowMap(
     }
 
     if (Object.keys(envNames).length === 0) {
-      throw new UserError(
+      throw new ValidationError(
         'No environments resolved. Provide per-env names (env=name) or run inside a chiral project with config.json.',
       );
     }
@@ -331,7 +331,7 @@ export async function runWorkflowMap(
 
   // ── Interactive modes ──────────────────────────────────────────────────────
   if (!configResult) {
-    throw new UserError(
+    throw new NotFoundError(
       "Interactive mode requires config.json. Run 'chiral environment add <env>' first.",
     );
   }
@@ -630,7 +630,7 @@ function collectUnmapped(
   envs: string[],
 ): UnmappedResult[] {
   if (listDeployments(chiralDir).length === 0) {
-    throw new UserError("No snapshots found. Run 'chiral adopt <env>' first.");
+    throw new NotFoundError("No snapshots found. Run 'chiral adopt <env>' first.");
   }
   const results: UnmappedResult[] = [];
   for (const env of envs) {
@@ -767,7 +767,7 @@ export async function runWorkflowList(
 ): Promise<void> {
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
@@ -793,7 +793,7 @@ export async function runWorkflowList(
   if (options.env) {
     if (configResult && !configResult.config.environments[options.env]) {
       const available = Object.keys(configResult.config.environments).join(', ');
-      throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
+      throw new NotFoundError(`Unknown environment "${options.env}". Available: ${available}`);
     }
   }
 
@@ -850,13 +850,13 @@ export async function runWorkflowUnmap(
   const actor = getGitActor();
   const chiralDir = findChiralDir();
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
 
   if (!(logicalName in map.workflows)) {
-    throw new UserError(
+    throw new NotFoundError(
       `Workflow mapping "${logicalName}" not found in workflows.json`,
     );
   }
@@ -869,7 +869,7 @@ export async function runWorkflowUnmap(
   if (options.env) {
     const entry = map.workflows[logicalName];
     if (!entry || !(options.env in entry)) {
-      throw new UserError(
+      throw new NotFoundError(
         `No mapping for "${logicalName}" in env "${options.env}"`,
       );
     }
@@ -947,18 +947,18 @@ function validateMatchOptions(
   options: WorkflowMatchOptions,
   config: Config,
 ): { from: string; to: string } {
-  if (!options.from) throw new UserError('--from is required');
-  if (!options.to) throw new UserError('--to is required');
+  if (!options.from) throw new ValidationError('--from is required');
+  if (!options.to) throw new ValidationError('--to is required');
   resolveEnv(config, options.from);
   resolveEnv(config, options.to);
   if (options.from === options.to) {
-    throw new UserError('--from and --to must be different environments');
+    throw new ValidationError('--from and --to must be different environments');
   }
   if (options.yes && options.dryRun) {
-    throw new UserError('--yes has no effect with --dry-run');
+    throw new ValidationError('--yes has no effect with --dry-run');
   }
   if (options.previewDiff && !options.dryRun) {
-    throw new UserError('--preview-diff requires --dry-run');
+    throw new ValidationError('--preview-diff requires --dry-run');
   }
   return { from: options.from, to: options.to };
 }
@@ -1011,7 +1011,7 @@ export async function runWorkflowMatch(
   const actor = getGitActor();
   const chiralDir = findChiralDir(cwd);
   if (!chiralDir) {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
 
   const { config } = loadConfigAndDir(cwd);
@@ -1019,10 +1019,10 @@ export async function runWorkflowMatch(
 
   const fingerprints = loadFingerprints(chiralDir);
   if (!fingerprints.envs[from]) {
-    throw new UserError(`No fingerprints found for ${from}. Run: chiral adopt ${from}`);
+    throw new NotFoundError(`No fingerprints found for ${from}. Run: chiral adopt ${from}`);
   }
   if (!fingerprints.envs[to]) {
-    throw new UserError(`No fingerprints found for ${to}. Run: chiral adopt ${to}`);
+    throw new NotFoundError(`No fingerprints found for ${to}. Run: chiral adopt ${to}`);
   }
 
   const map = loadWorkflowMapRequired(chiralDir);
