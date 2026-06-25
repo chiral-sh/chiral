@@ -204,8 +204,8 @@ export async function runClone(
   }
 
   // ── 7.5 JSON mode: validate all env vars before any state is written ────────
+  const isSingleEnv = Object.keys(example.envs).length === 1;
   if (outputMode === 'json') {
-    const isSingleEnv = Object.keys(example.envs).length === 1;
     for (const [envName] of Object.entries(example.envs)) {
       const envUpper = envName.toUpperCase();
       const urlVar = `CHIRAL_URL_${envUpper}`;
@@ -224,7 +224,6 @@ export async function runClone(
   if (ppid) writeSession(ppid, projectName);
 
   // ── 9. Credential collection and testing ──────────────────────────────────
-  const isSingleEnv = Object.keys(example.envs).length === 1;
   for (const [envName, envExample] of Object.entries(example.envs)) {
     const envUpper = envName.toUpperCase();
     const urlVar = `CHIRAL_URL_${envUpper}`;
