@@ -16,14 +16,7 @@ import { formatAge } from '../lib/cli.js';
 import { readAuditLog } from '../state/audit.js';
 import { UserError, NotFoundError } from '../lib/errors.js';
 import { simpleGit } from 'simple-git';
-import { printJson } from '../lib/output.js';
-
-type OutputMode = 'human' | 'json';
-
-function resolveOutputMode(options: { json?: boolean }): OutputMode {
-  if (options.json || !process.stdout.isTTY) return 'json';
-  return 'human';
-}
+import { printJson, resolveOutputMode } from '../lib/output.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 

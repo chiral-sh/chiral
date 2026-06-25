@@ -1,3 +1,10 @@
+export type OutputMode = 'human' | 'json';
+
+export function resolveOutputMode(options: { json?: boolean }): OutputMode {
+  if (options.json || !process.stdout.isTTY) return 'json';
+  return 'human';
+}
+
 export function printJson(data: unknown): void {
   console.log(JSON.stringify({ status: 'ok', data }));
 }

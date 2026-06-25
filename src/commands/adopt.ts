@@ -11,16 +11,7 @@ import { writeAuditEntry } from '../state/audit.js';
 import { computeContentHash, computeStructureHash, loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadWorkflowMap, findLogicalByEnvAndName } from '../state/workflows.js';
 import { loadUrlMap, collectUnmappedUrls, deriveUrlLogicalName } from '../state/url-map.js';
-import { printJson } from '../lib/output.js';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type OutputMode = 'human' | 'json';
-
-function resolveOutputMode(options: { json?: boolean }): OutputMode {
-  if (options.json || !process.stdout.isTTY) return 'json';
-  return 'human';
-}
+import { printJson, resolveOutputMode } from '../lib/output.js';
 
 interface AdoptOptions {
   env: string;

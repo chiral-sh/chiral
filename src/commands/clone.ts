@@ -21,6 +21,7 @@ import {
 } from '../lib/projects.js';
 import { readInitEvent } from '../state/audit.js';
 import { loadWorkflowMap } from '../state/workflows.js';
+import { resolveOutputMode } from '../lib/output.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,15 +31,6 @@ export interface CloneOptions {
   json?: boolean;
   url?: string;
   apiKey?: string;
-}
-
-// ── Output mode ───────────────────────────────────────────────────────────────
-
-type OutputMode = 'human' | 'json';
-
-function resolveOutputMode(options: CloneOptions): OutputMode {
-  if (options.json || !process.stdout.isTTY) return 'json';
-  return 'human';
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -21,15 +21,7 @@ import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
 import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadEnvs, writeEnvs, generateEnvId } from '../state/envs.js';
 import { loadTableMap, writeTableMap } from '../state/tables.js';
-
-// ── Output mode ───────────────────────────────────────────────────────────────
-
-type OutputMode = 'human' | 'json';
-
-function resolveOutputMode(options: { json?: boolean }): OutputMode {
-  if (options.json || !process.stdout.isTTY) return 'json';
-  return 'human';
-}
+import { resolveOutputMode, type OutputMode } from '../lib/output.js';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
