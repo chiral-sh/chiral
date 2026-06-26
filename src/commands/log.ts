@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { watch as fsWatch } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfigAndDir } from '../lib/config.js';
-import { UserError, NotFoundError, ValidationError } from '../lib/errors.js';
+import { NotFoundError, ValidationError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { visibleLen, padRight } from '../lib/cli.js';
 import { readAuditLog, AuditActionSchema, type AuditEntry } from '../state/audit.js';
@@ -426,6 +426,14 @@ Examples:
 
   Watch mode (re-renders on changes):
     chiral log --all --watch
+
+Exit codes:
+  0  Success
+  4  Environment not in config (--env) or no status sentinel (--since last-status)
+  7  Invalid --action, --result, or --limit value
+
+JSON output (--json):
+  { entries[], total_shown, has_more }
 `,
   )
   .action(async (opts: Record<string, unknown>) => {

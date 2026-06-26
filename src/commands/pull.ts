@@ -784,6 +784,19 @@ Examples:
 
   Exit 1 if changes detected (for CI scripts):
     chiral pull dev --exit-code
+
+  Pull a single workflow by ID:
+    chiral pull dev --id abc123
+
+Exit codes:
+  0  Success (snapshot written; no changes if already up to date)
+  1  Changes detected (only when --exit-code is set)
+  3  API key invalid or expired (AuthError)
+  4  Environment not found in config (NotFoundError)
+  5  n8n instance unreachable (NetworkError)
+
+JSON output (--json):
+  { env, deployment_id, pulled, active, inactive, new[], updated[], deleted[], unchanged, unmapped_urls[] }
 `,
   )
   .action(async (env: string, options: Omit<PullOptions, 'noPager' | 'noPinData' | 'env'> & { pager?: boolean; pinData?: boolean }) => {

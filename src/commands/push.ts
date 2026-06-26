@@ -1269,6 +1269,21 @@ Examples:
 
   Non-interactive push for CI:
     chiral push --from dev --to prod --yes
+
+  Push only workflows tagged "release":
+    chiral push --from dev --to prod --tag release --yes
+
+Exit codes:
+  0  Success (all changes applied, or no changes needed)
+  1  Partial failure (some workflows failed) or credential mapping error
+  3  API key invalid or expired (AuthError)
+  4  Environment not found in config (NotFoundError)
+  5  n8n instance unreachable (NetworkError)
+
+JSON output (--json):
+  { from, to, dry_run, deployment_id, created[], updated[], skipped[], failed[],
+    credential_map[], tag_warnings[], credential_errors[], table_warnings[],
+    url_substitutions[], url_warnings[], target_drifted[] }
 `,
   )
   .action(async (options: PushOptions) => {

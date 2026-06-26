@@ -248,7 +248,11 @@ Examples:
 
 Exit codes:
   0  Success (or no-op for dry-run)
-  1  Connection or fetch error
+  3  API key invalid or expired (AuthError)
+  5  n8n instance unreachable (NetworkError)
+
+JSON output (--json):
+  { dry_run, workflows_fetched, credentials_fetched, tags[], unmapped_urls[] }
 `,
   )
   .action(async (env: string, options: { json?: boolean; dryRun?: boolean }) => {

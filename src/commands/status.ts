@@ -635,6 +635,15 @@ Examples:
 
   Show only active locks:
     chiral status --locks-only
+
+Exit codes:
+  0  Success (all envs synced, or stale without --stale-after/--compact/--summary)
+  3  One or more envs stale (with --stale-after, --compact, or --summary)
+  4  Environment not found (--env <unknown>)
+  7  Invalid flag value (e.g. --stale-after 0, unknown --fields column)
+
+JSON output (--json):
+  { project, environments[{ name, last_pull, last_push, workflow_count, stale, drift, unmapped_tables }], locks[] }
 `,
   )
   .action(async (opts: Record<string, unknown>) => {

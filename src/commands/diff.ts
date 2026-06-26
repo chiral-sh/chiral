@@ -587,6 +587,19 @@ Examples:
 
   Exit 1 if differences found (for CI):
     chiral diff --from dev --to prod --exit-code
+
+  Machine-readable diff output:
+    chiral diff --from dev --to prod --json
+
+Exit codes:
+  0  Environments are identical (or differ but --exit-code not set)
+  1  Differences found (only when --exit-code is set)
+  3  API key invalid or expired (AuthError)
+  4  Environment not found in config (NotFoundError)
+  5  n8n instance unreachable (NetworkError)
+
+JSON output (--json):
+  { from, to, added[], removed[], modified[], unchanged[], url_diffs[] }
 `,
   )
   .action(async (options: Omit<DiffOptions, 'noPager'> & { pager?: boolean }) => {
