@@ -393,8 +393,10 @@ Headless / CI usage:
 
 Exit codes:
   0  Success
-  1  General error (bad config, directory exists, git failure)
-  2  Usage error (invalid flags)
+  2  Commander usage error (unknown flags, missing arguments)
+  4  No .chiral/ found in cloned repo (NotFoundError)
+  6  Project already cloned / directory conflict (ConflictError)
+  7  Invalid flag combination (ValidationError)
   `)
   .action(async (repoUrl: string, options: CloneOptions) => {
     await runClone(repoUrl, options);
