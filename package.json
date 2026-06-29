@@ -37,7 +37,7 @@
     "fast-json-stable-stringify": "^2.1.0",
     "ora": "^9.4.0",
     "simple-git": "^3.36.0",
-    "zod": "^3.22.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
