@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { join } from 'node:path';
 import { readFileSync, existsSync, watch as fsWatch } from 'node:fs';
 import { loadConfigAndDir } from '../lib/config.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { UserError, ControlledExit, NotFoundError, ValidationError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { visibleLen, padRight, levenshtein } from '../lib/cli.js';
 import { renderLockTable, type LockListEntry } from '../lib/lock-render.js';
@@ -224,16 +224,16 @@ function toLockListEntries(locks: LockRow[]): LockListEntry[] {
 export async function runStatus(options: StatusOptions): Promise<void> {
   // Fast-fail mutual exclusion before any data loading or loop setup
   if (options.compact && options.json) {
-    throw new UserError('--compact cannot be combined with --json');
+    throw new ValidationError('--compact cannot be combined with --json');
   }
   if (options.summary && options.json) {
-    throw new UserError('--summary cannot be combined with --json');
+    throw new ValidationError('--summary cannot be combined with --json');
   }
   if (options.locksOnly && options.compact) {
-    throw new UserError('--locks-only and --compact are mutually exclusive');
+    throw new ValidationError('--locks-only and --compact are mutually exclusive');
   }
   if (options.locksOnly && options.summary) {
-    throw new UserError('--locks-only and --summary are mutually exclusive');
+    throw new ValidationError('--locks-only and --summary are mutually exclusive');
   }
 
   function doOnce(): void {
@@ -242,7 +242,7 @@ export async function runStatus(options: StatusOptions): Promise<void> {
   const allEnvNames = Object.keys(config.environments);
   // Zod schema already enforces ≥1 env, but guard for belt-and-suspenders
   if (allEnvNames.length === 0) {
-    throw new UserError("No environments configured. Run 'chiral environment add' to add one.");
+    throw new NotFoundError("No environments configured. Run 'chiral environment add' to add one.");
   }
 
   let envFilter = allEnvNames;
@@ -251,18 +251,18 @@ export async function runStatus(options: StatusOptions): Promise<void> {
       const nearest = findNearestEnv(options.env, allEnvNames);
       const available = allEnvNames.join(', ');
       if (nearest) {
-        throw new UserError(`Unknown environment '${options.env}'. Did you mean '${nearest}'? Available: ${available}`);
+        throw new NotFoundError(`Unknown environment '${options.env}'. Did you mean '${nearest}'? Available: ${available}`);
       }
-      throw new UserError(`Unknown environment '${options.env}'. Available: ${available}`);
+      throw new NotFoundError(`Unknown environment '${options.env}'. Available: ${available}`);
     }
     envFilter = [options.env];
   }
 
   if (options.staleAfter !== undefined && (isNaN(options.staleAfter) || options.staleAfter < 1 || !Number.isInteger(options.staleAfter))) {
-    throw new UserError('--stale-after must be a positive integer (e.g. --stale-after 7)');
+    throw new ValidationError('--stale-after must be a positive integer (e.g. --stale-after 7)');
   }
   if (options.staleLockAfter !== undefined && (isNaN(options.staleLockAfter) || options.staleLockAfter < 1 || !Number.isInteger(options.staleLockAfter))) {
-    throw new UserError('--stale-lock-after must be a positive integer (e.g. --stale-lock-after 24)');
+    throw new ValidationError('--stale-lock-after must be a positive integer (e.g. --stale-lock-after 24)');
   }
 
   // Validate and parse --fields
@@ -635,6 +635,15 @@ Examples:
 
   Show only active locks:
     chiral status --locks-only
+
+Exit codes:
+  0  Success (all envs synced, or stale without --stale-after/--compact/--summary)
+  3  One or more envs stale (with --stale-after, --compact, or --summary)
+  4  Environment not found (--env <unknown>)
+  7  Invalid flag value (e.g. --stale-after 0, unknown --fields column)
+
+JSON output (--json):
+  { project, environments[{ name, last_pull, last_push, workflow_count, stale, drift, unmapped_tables }], locks[] }
 `,
   )
   .action(async (opts: Record<string, unknown>) => {

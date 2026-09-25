@@ -100,10 +100,16 @@ describe('writeCredentials', () => {
     expect(result.credentials).toEqual({});
   });
 
-  it('throws UserError when directory does not exist', () => {
+  it('throws Error (not UserError) when directory does not exist', () => {
     vol.fromJSON({});
-    expect(() => writeCredentials('/nonexistent/.chiral', EMPTY_CREDENTIALS)).toThrow(
-      UserError,
-    );
+    const err = (() => {
+      try {
+        writeCredentials('/nonexistent/.chiral', EMPTY_CREDENTIALS);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(UserError);
   });
 });

@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { UserError } from './errors.js';
+import { UserError, NotFoundError, ValidationError } from './errors.js';
 import { resolveActiveProject, type ResolvedProject } from './projects.js';
 
 export interface ConfigWithDir {
@@ -53,7 +53,7 @@ export function loadConfigAndDir(cwdOrResolved?: string | ResolvedProject): Conf
   const configPath = join(chiralDir, 'config.json');
 
   if (!existsSync(configPath)) {
-    throw new UserError("No .chiral/config.json found. Run 'chiral environment add <env>' to set up an environment.");
+    throw new NotFoundError("No .chiral/config.json found. Run 'chiral environment add <env>' to set up an environment.");
   }
 
   let raw: unknown;
@@ -67,7 +67,7 @@ export function loadConfigAndDir(cwdOrResolved?: string | ResolvedProject): Conf
   if (!result.success) {
     const firstError = result.error.issues[0];
     const field = firstError.path.join('.');
-    throw new UserError(
+    throw new ValidationError(
       `Invalid config: ${field ? field + ': ' : ''}${firstError.message}`,
     );
   }
@@ -190,11 +190,29 @@ export function readProjectNameFromExample(chiralDir: string): string {
   }
 }
 
+export function updateExampleGitSync(chiralDir: string, gitSync: GitSync | undefined): void {
+  const examplePath = join(chiralDir, 'config.example.json');
+  if (!existsSync(examplePath)) return;
+  try {
+    const raw = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
+    if (gitSync) {
+      raw['gitSync'] = gitSync;
+    } else {
+      delete raw['gitSync'];
+    }
+    const tmp = examplePath + '.tmp';
+    writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+    renameSync(tmp, examplePath);
+  } catch {
+    // best-effort
+  }
+}
+
 export function resolveEnv(config: Config, envName: string): Environment {
   const env = config.environments[envName];
   if (!env) {
     const available = Object.keys(config.environments).join(', ');
-    throw new UserError(`Unknown environment "${envName}". Available: ${available}`);
+    throw new NotFoundError(`Unknown environment "${envName}". Available: ${available}`);
   }
   return env;
 }

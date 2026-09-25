@@ -245,6 +245,10 @@ export function writeFingerprints(chiralDir: string, data: Fingerprints): void {
   writeJsonAtomic(filePath, data);
 }
 
+/**
+ * Do not call inside a per-workflow loop — use `loadFingerprints` / `writeFingerprints`
+ * directly for batch updates to avoid O(N) I/O.
+ */
 export function upsertFingerprintEntry(
   chiralDir: string,
   env: string,

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { padRight } from '../lib/cli.js';
 import {
   listProjects,
@@ -71,7 +71,7 @@ export async function runProjectCurrent(options: { json?: boolean } = {}): Promi
 
   const projects = listProjects();
   if (projects.length === 0) {
-    throw new UserError("No projects. Run 'chiral init <name>' to create one.");
+    throw new NotFoundError("No projects. Run 'chiral init <name>' to create one.");
   }
 
   const ppid = process.ppid;
@@ -95,7 +95,7 @@ export async function runProjectCurrent(options: { json?: boolean } = {}): Promi
     console.log(`\n  ${chalk.bold(p.name)} ${chalk.dim('(only project)')}\n`);
     return;
   }
-  throw new UserError(
+  throw new NotFoundError(
     `No active project. Run 'chiral use <name>' to select one.\n  Available: ${projects.map((p) => p.name).join(', ')}`,
   );
 }
@@ -105,15 +105,15 @@ export async function runProjectCurrent(options: { json?: boolean } = {}): Promi
 export async function runProjectRename(oldName: string, newName: string, options: { json?: boolean } = {}): Promise<void> {
   const oldPath = getProjectPath(oldName);
   if (!oldPath) {
-    throw new UserError(`Project "${oldName}" not found. Run 'chiral project list' to see projects.`);
+    throw new NotFoundError(`Project "${oldName}" not found. Run 'chiral project list' to see projects.`);
   }
 
-  if (!newName.trim()) throw new UserError('New project name cannot be empty');
-  if (/[/\\:*?"<>|]/.test(newName)) throw new UserError(`Invalid project name: "${newName}"`);
+  if (!newName.trim()) throw new ValidationError('New project name cannot be empty');
+  if (/[/\\:*?"<>|]/.test(newName)) throw new ValidationError(`Invalid project name: "${newName}"`);
 
   const newPath = join(getProjectsDir(), newName);
   if (existsSync(newPath) && newPath !== oldPath) {
-    throw new UserError(`A project named "${newName}" already exists. Choose a different name.`);
+    throw new ConflictError(`A project named "${newName}" already exists. Choose a different name.`);
   }
 
   // Rename directory on disk
@@ -143,10 +143,21 @@ export async function runProjectRename(oldName: string, newName: string, options
 
 // ── project delete ─────────────────────────────────────────────────────────────
 
-export async function runProjectDelete(name: string, options: { yes?: boolean; json?: boolean }): Promise<void> {
+export async function runProjectDelete(name: string, options: { yes?: boolean; dryRun?: boolean; json?: boolean }): Promise<void> {
   const projectPath = getProjectPath(name);
   if (!projectPath) {
-    throw new UserError(`Project "${name}" not found. Run 'chiral project list' to see projects.`);
+    throw new NotFoundError(`Project "${name}" not found. Run 'chiral project list' to see projects.`);
+  }
+
+  if (options.dryRun) {
+    if (options.json) {
+      console.log(JSON.stringify({ status: 'ok', data: { name, path: projectPath, would_delete: true, dry_run: true } }));
+    } else {
+      console.log(`\n  ${chalk.bold('Dry run')} — would delete project ${chalk.cyan(name)}\n`);
+      console.log(`  ${chalk.dim('path')}  ${projectPath}`);
+      console.log(`  ${chalk.dim('Would remove directory and unregister from project index.')}\n`);
+    }
+    return;
   }
 
   if (!options.yes) {
@@ -239,7 +250,8 @@ projectCommand
   .command('delete <name>')
   .description('Delete a project (removes all files - irreversible)')
   .option('--yes', 'Skip type-to-confirm prompt')
-  .option('--json', 'Output result as JSON (requires --yes)')
+  .option('--dry-run', 'Show what would be deleted without making changes')
+  .option('--json', 'Output result as JSON (requires --yes or --dry-run)')
   .addHelpText('after', `
 Examples:
   Delete a project (will prompt to type name to confirm):
@@ -248,9 +260,17 @@ Examples:
   Skip type-to-confirm:
     chiral project delete my-n8n --yes
 
+  Preview what would be deleted:
+    chiral project delete my-n8n --dry-run
+
   Non-interactive (agent use):
     chiral project delete my-n8n --yes --json
+
+Exit codes:
+  0  Success (or no-op for dry-run)
+  1  Project not found or other error
+  2  Deletion requires --yes in non-interactive mode
 `)
-  .action(async (name: string, options: { yes?: boolean; json?: boolean }) => {
+  .action(async (name: string, options: { yes?: boolean; dryRun?: boolean; json?: boolean }) => {
     await runProjectDelete(name, options);
   });

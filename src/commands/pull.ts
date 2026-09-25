@@ -29,7 +29,7 @@ import type { Config } from '../lib/config.js';
 import { loadWorkflowMap, writeWorkflowMap, findEntryByEnvId, upsertEnvEntry, findLogicalByEnvAndName } from '../state/workflows.js';
 import { loadTableMap, writeTableMap, collectDataTableRefs } from '../state/tables.js';
 import { loadCredentials, type Credentials } from '../state/credentials.js';
-import { loadUrlMap, deriveUrlLogicalName, type UrlMap } from '../state/url-map.js';
+import { loadUrlMap, deriveUrlLogicalName, collectUnmappedUrls } from '../state/url-map.js';
 import { diffWorkflowNodes, type WorkflowDiffResult } from '../lib/workflow-diff.js';
 import type { PinDataMode } from '../lib/workflow-normalize.js';
 import { renderStatRows, renderStatTable, renderNodeGroups, type StatRow } from '../lib/node-diff-render.js';
@@ -249,36 +249,6 @@ function collectUnmappedCredentials(workflows: WorkflowFull[], env: string, cred
         const name = (cv as Record<string, unknown>)['name'];
         if (typeof name === 'string' && !mappedNames.has(name)) unmapped.add(name);
       }
-    }
-  }
-  return [...unmapped];
-}
-
-function collectUnmappedUrls(workflows: WorkflowFull[], env: string, urlMap: UrlMap): string[] {
-  const mappedOrigins = new Set(
-    Object.values(urlMap.urls)
-      .map((entry) => entry.values[env])
-      .filter(Boolean)
-      .map((u) => { try { return new URL(u).origin; } catch { return null; } })
-      .filter((o): o is string => o !== null),
-  );
-  const unmapped = new Set<string>();
-  function walk(obj: unknown): void {
-    if (typeof obj === 'string') {
-      let parsed: URL;
-      try { parsed = new URL(obj); } catch { return; }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-      if (!mappedOrigins.has(parsed.origin)) unmapped.add(obj);
-      return;
-    }
-    if (Array.isArray(obj)) { for (const item of obj) walk(item); return; }
-    if (typeof obj === 'object' && obj !== null) {
-      for (const val of Object.values(obj as Record<string, unknown>)) walk(val);
-    }
-  }
-  for (const wf of workflows) {
-    for (const node of ((wf as Record<string, unknown>).nodes as Record<string, unknown>[] ?? [])) {
-      walk(node['parameters']);
     }
   }
   return [...unmapped];
@@ -530,6 +500,7 @@ export async function runPull(
       ? delta.added.length + delta.updated.length + delta.deleted.length
       : 0;
     const hasChanges = !isFirstPull && totalChanges > 0;
+    const unmappedUrls = collectUnmappedUrls(workflows, options.env, loadUrlMap(chiralDir));
 
     // ── write snapshot ────────────────────────────────────────────────────────
     const deploymentId = generateDeploymentId();
@@ -571,6 +542,7 @@ export async function runPull(
           updated: [],
           deleted: [],
           unchanged: workflows.length,
+          unmapped_urls: unmappedUrls,
         });
       } else {
         if (workflows.length === 0) {
@@ -585,6 +557,7 @@ export async function runPull(
             `\n  ${chalk.green('✓')} All ${plural(workflows.length, 'workflow')} up to date - no changes since last pull`,
           );
           printPinDataWarnings(strippedNames);
+          printDiscoveryHints(workflows, options.env, chiralDir);
           if (options.verbose) printWorkflowList(workflows);
           warnIfEnvSpecificNames(workflows, chiralDir, options.env, config);
           const hint = buildNextHint(config, options.env, false, false, {});
@@ -629,6 +602,7 @@ export async function runPull(
             : [],
           deleted: delta?.deleted.map((w) => w.name) ?? [],
           unchanged: delta?.unchanged ?? 0,
+          unmapped_urls: unmappedUrls,
         });
       } else {
         if (isFirstPull && workflows.length === 0) {
@@ -810,6 +784,19 @@ Examples:
 
   Exit 1 if changes detected (for CI scripts):
     chiral pull dev --exit-code
+
+  Pull a single workflow by ID:
+    chiral pull dev --id abc123
+
+Exit codes:
+  0  Success (snapshot written; no changes if already up to date)
+  1  Changes detected (only when --exit-code is set)
+  3  API key invalid or expired (AuthError)
+  4  Environment not found in config (NotFoundError)
+  5  n8n instance unreachable (NetworkError)
+
+JSON output (--json):
+  { env, deployment_id, pulled, active, inactive, new[], updated[], deleted[], unchanged, unmapped_urls[] }
 `,
   )
   .action(async (env: string, options: Omit<PullOptions, 'noPager' | 'noPinData' | 'env'> & { pager?: boolean; pinData?: boolean }) => {

@@ -1,6 +1,5 @@
 import { writeFileSync, renameSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { UserError } from '../lib/errors.js';
 
 // Writes JSON to a unique `${filePath}.<pid>.<random>.tmp` then renames over
 // `filePath`, so a crash mid-write cannot leave a truncated target file and
@@ -16,6 +15,6 @@ export function writeJsonAtomic(filePath: string, data: unknown): void {
     } catch {
       // best-effort cleanup
     }
-    throw new UserError(`Could not write to ${filePath}`);
+    throw new Error(`Could not write to ${filePath}`);
   }
 }

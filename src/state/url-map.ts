@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { UserError } from '../lib/errors.js';
+import { UserError, ValidationError } from '../lib/errors.js';
 import { writeJsonAtomic } from './atomic.js';
 import {
   findLatestDeploymentForEnv,
@@ -35,7 +35,7 @@ export function loadUrlMap(chiralDir: string): UrlMap {
   const result = UrlMapSchema.safeParse(raw);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  • ${i.path.join('.')}: ${i.message}`).join('\n');
-    throw new UserError(
+    throw new ValidationError(
       `url-map.json has an invalid structure:\n${issues}\n\nMake sure url-map.json is valid JSON with the correct format.`,
     );
   }
@@ -52,13 +52,13 @@ export function validateUrlValue(value: string): void {
   try {
     parsed = new URL(value);
   } catch {
-    throw new UserError(`Invalid URL: "${value}" — must be a valid http:// or https:// URL`);
+    throw new ValidationError(`Invalid URL: "${value}" — must be a valid http:// or https:// URL`);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new UserError(`Invalid URL scheme: "${value}" — only http:// and https:// are allowed`);
+    throw new ValidationError(`Invalid URL scheme: "${value}" — only http:// and https:// are allowed`);
   }
   if (parsed.username !== '' || parsed.password !== '') {
-    throw new UserError(
+    throw new ValidationError(
       `URL contains credentials: "${value}" — userinfo in URLs (user:pass@host) would commit secrets to git. Use environment variables or a credential manager instead.`,
     );
   }
@@ -222,6 +222,38 @@ export function applyUrlMap(
     return { ...nodeObj, parameters: deepRewriteParameters(parameters, substitutions) };
   });
   return { ...workflow, nodes: remappedNodes };
+}
+
+export function collectUnmappedUrls(workflows: { nodes?: unknown }[], env: string, urlMap: UrlMap): string[] {
+  const mappedOrigins = new Set(
+    Object.values(urlMap.urls)
+      .map((entry) => entry.values[env])
+      .filter(Boolean)
+      .map((u) => { try { return new URL(u).origin; } catch { return null; } })
+      .filter((o): o is string => o !== null),
+  );
+  const unmapped = new Set<string>();
+  function walk(obj: unknown): void {
+    if (typeof obj === 'string') {
+      let parsed: URL;
+      try { parsed = new URL(obj); } catch { return; }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+      if (!mappedOrigins.has(parsed.origin)) unmapped.add(obj);
+      return;
+    }
+    if (Array.isArray(obj)) { for (const item of obj) walk(item); return; }
+    if (typeof obj === 'object' && obj !== null) {
+      for (const val of Object.values(obj as Record<string, unknown>)) walk(val);
+    }
+  }
+  for (const wf of workflows) {
+    const nodes = wf.nodes;
+    if (!Array.isArray(nodes)) continue;
+    for (const node of nodes as Record<string, unknown>[]) {
+      walk(node['parameters']);
+    }
+  }
+  return [...unmapped];
 }
 
 export interface DiscoveredUrl {

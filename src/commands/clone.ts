@@ -10,7 +10,7 @@ import { parseConfigExample } from '../lib/config.js';
 import { writeConfig } from '../lib/config.js';
 import type { Config } from '../lib/config.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { UserError, ControlledExit, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import {
   getProjectsDir,
   registerProject,
@@ -21,6 +21,7 @@ import {
 } from '../lib/projects.js';
 import { readInitEvent } from '../state/audit.js';
 import { loadWorkflowMap } from '../state/workflows.js';
+import { resolveOutputMode } from '../lib/output.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -28,15 +29,8 @@ export interface CloneOptions {
   dir?: string;
   skipTest?: boolean;
   json?: boolean;
-}
-
-// ── Output mode ───────────────────────────────────────────────────────────────
-
-type OutputMode = 'human' | 'json';
-
-function resolveOutputMode(options: CloneOptions): OutputMode {
-  if (options.json || !process.stdout.isTTY) return 'json';
-  return 'human';
+  url?: string;
+  apiKey?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -68,9 +62,14 @@ export async function runClone(
 
   // ── 2. Directory collision check ─────────────────────────────────────────
   if (existsSync(targetDir)) {
-    throw new UserError(
+    throw new ConflictError(
       `Directory '${basename(targetDir)}' already exists. Use --dir to specify a different location.`,
     );
+  }
+
+  // Pre-clone: validate --url/--api-key must come in pairs (catches orphaned-dir bug before any git I/O)
+  if ((options.url !== undefined) !== (options.apiKey !== undefined)) {
+    throw new ValidationError('--url and --api-key must be used together.');
   }
 
   let spinner;
@@ -109,7 +108,7 @@ export async function runClone(
     // ── 4. Detect .chiral/ ────────────────────────────────────────────────────
     const chiralDir = join(targetDir, '.chiral');
     if (!existsSync(chiralDir)) {
-      throw new UserError(
+      throw new NotFoundError(
         "This repo doesn't appear to be a chiral project. Run 'chiral init' to set one up.",
       );
     }
@@ -118,6 +117,17 @@ export async function runClone(
   example = parseConfigExample(chiralDir);
   const projectName = example.project;
   currentProjectName = projectName;
+
+  // Post-clone: validate --url/--api-key not usable for multi-env projects (needs example, so deferred to here)
+  if (options.url && options.apiKey) {
+    const envCount = Object.keys(example.envs).length;
+    if (envCount > 1) {
+      throw new ValidationError(
+        `--url and --api-key only work for single-environment projects. ` +
+        `This project has ${envCount} environments. Use CHIRAL_URL_<ENV> and CHIRAL_API_KEY_<ENV> env vars instead.`,
+      );
+    }
+  }
 
   if (projectExists(projectName)) {
     const existingPath = getProjectPath(projectName);
@@ -135,7 +145,7 @@ export async function runClone(
         };
 
         if (normalizeGitUrl(existingRepoUrl) === normalizeGitUrl(repoUrl)) {
-          throw new UserError(
+          throw new ConflictError(
             `You have already cloned this repository. Run 'chiral use ${projectName}' to switch to it.`,
           );
         }
@@ -144,7 +154,7 @@ export async function runClone(
       }
     }
 
-    throw new UserError(
+    throw new ConflictError(
       `A project named "${projectName}" already exists in your registry. Rename it with 'chiral project rename ${projectName} <new-name>' before cloning this repository.`,
     );
   }
@@ -154,7 +164,7 @@ export async function runClone(
     const finalDir = join(projectsDir, projectName);
     if (finalDir !== targetDir) {
       if (existsSync(finalDir)) {
-        throw new UserError(
+        throw new ConflictError(
           `Directory '${projectName}' already exists. Use --dir to specify a different location.`,
         );
       }
@@ -194,13 +204,15 @@ export async function runClone(
   }
 
   // ── 7.5 JSON mode: validate all env vars before any state is written ────────
+  const isSingleEnv = Object.keys(example.envs).length === 1;
   if (outputMode === 'json') {
     for (const [envName] of Object.entries(example.envs)) {
       const envUpper = envName.toUpperCase();
       const urlVar = `CHIRAL_URL_${envUpper}`;
       const keyVar = `CHIRAL_API_KEY_${envUpper}`;
-      if (!process.env[urlVar] || !process.env[keyVar]) {
-        throw new UserError(`--json mode requires ${urlVar} and ${keyVar} to be set.`);
+      const coveredByFlags = isSingleEnv && options.url && options.apiKey;
+      if (!coveredByFlags && (!process.env[urlVar] || !process.env[keyVar])) {
+        throw new ValidationError(`--json mode requires ${urlVar} and ${keyVar} to be set.`);
       }
     }
   }
@@ -223,11 +235,15 @@ export async function runClone(
     let url = '';
     let apiKey = '';
 
-    if (urlFromEnv && keyFromEnv) {
+    if (isSingleEnv && options.url && options.apiKey) {
+      // --url/--api-key flags take priority for single-environment projects
+      url = options.url;
+      apiKey = options.apiKey;
+    } else if (urlFromEnv && keyFromEnv) {
       url = urlFromEnv;
       apiKey = keyFromEnv;
     } else {
-      // --json mode requires env vars; abort if any are missing
+      // --json mode requires env vars or flags; abort if any are missing
       if (outputMode === 'json') {
         throw new UserError(
           `--json mode requires ${urlVar} and ${keyVar} to be set.`,
@@ -353,24 +369,36 @@ export const cloneCommand = new Command('clone')
   .argument('<repo-url>', 'Git repository URL to clone')
   .option('--dir <path>', 'Clone into this directory instead of the default location')
   .option('--skip-test', 'Skip the n8n connection test after entering credentials')
-  .option('--json', 'Output machine-readable JSON (requires CHIRAL_URL_<ENV> and CHIRAL_API_KEY_<ENV> env vars)')
+  .option('--url <url>', 'n8n URL (single-environment projects; use CHIRAL_URL_<ENV> for multi-environment)')
+  .option('--api-key <key>', 'n8n API key (single-environment projects; use CHIRAL_API_KEY_<ENV> for multi-environment)')
+  .option('--json', 'Output machine-readable JSON (requires credentials via flags or env vars)')
   .addHelpText('after', `
-Examples:
-  Clone a project interactively:
-    chiral clone https://github.com/acme/n8n-workflows
+Headless / CI usage:
+
+  Single-environment project (flags):
+    chiral clone https://github.com/acme/n8n-workflows \\
+      --url https://n8n.example.com --api-key $N8N_KEY
+
+  Single-environment project (flags + JSON output):
+    chiral clone https://github.com/acme/n8n-workflows \\
+      --url https://n8n.example.com --api-key $N8N_KEY --json
+
+  Multi-environment project (env vars):
+    CHIRAL_URL_DEV=https://dev.n8n.io CHIRAL_API_KEY_DEV=$DEV_KEY \\
+    CHIRAL_URL_PROD=https://prod.n8n.io CHIRAL_API_KEY_PROD=$PROD_KEY \\
+      chiral clone https://github.com/acme/n8n-workflows --json
 
   Clone to a specific directory:
     chiral clone https://github.com/acme/n8n-workflows --dir ~/projects/acme
 
-  Clone non-interactively (CI/agent use):
-    CHIRAL_URL_DEV=https://dev.n8n.io CHIRAL_API_KEY_DEV=my-key \\
-      chiral clone https://github.com/acme/n8n-workflows --json
-
 Exit codes:
   0  Success
-  1  General error (bad config, directory exists, git failure)
-  2  Usage error (invalid flags)
+  2  Commander usage error (unknown flags, missing arguments)
+  4  No .chiral/ found in cloned repo (NotFoundError)
+  6  Project already cloned / directory conflict (ConflictError)
+  7  Invalid flag combination (ValidationError)
   `)
   .action(async (repoUrl: string, options: CloneOptions) => {
     await runClone(repoUrl, options);
   });
+

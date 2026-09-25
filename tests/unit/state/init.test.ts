@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { vol } from 'memfs';
+import * as fs from 'node:fs';
 import { createChiralDirectory } from '../../../src/state/init.js';
+import { loadCredentials } from '../../../src/state/credentials.js';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
@@ -75,6 +77,51 @@ describe('createChiralDirectory', () => {
     const raw = vol.readFileSync('/project/.chiral/url-map.json', 'utf-8') as string;
     const parsed = JSON.parse(raw);
     expect(parsed.urls).toHaveProperty('api_base');
+  });
+
+  it('does not leave credentials.json at final path when renameSync throws during its write', () => {
+    // first renameSync call inside writeJsonAtomic is for credentials.json
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    expect(() => createChiralDirectory('/project/.chiral', 'test')).toThrow();
+    expect(vol.existsSync('/project/.chiral/credentials.json')).toBe(false);
+    renameSpy.mockRestore();
+  });
+
+  it('does not leave workflows.json at final path when renameSync throws during its write', () => {
+    const originalRename = fs.renameSync;
+    let callCount = 0;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((...args) => {
+      callCount++;
+      if (callCount === 2) throw new Error('disk full');
+      return originalRename(...(args as Parameters<typeof fs.renameSync>));
+    });
+    expect(() => createChiralDirectory('/project/.chiral', 'test')).toThrow();
+    expect(vol.existsSync('/project/.chiral/workflows.json')).toBe(false);
+    renameSpy.mockRestore();
+  });
+
+  it('B9: loadCredentials throws "not found" (not "invalid JSON") after failed init — file is absent, not truncated', () => {
+    // Before the fix, writeFileSync wrote directly to credentials.json, so a
+    // failed write left a truncated file. writeJsonAtomic writes to a tmp then
+    // renames, so the final path is either absent or complete — never truncated.
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    expect(() => createChiralDirectory('/project/.chiral', 'test')).toThrow();
+    renameSpy.mockRestore();
+
+    // File must be absent (not truncated) — loadCredentials should surface
+    // "credentials.json" (file not found), NOT "valid JSON" (invalid content).
+    let thrown: unknown;
+    try {
+      loadCredentials('/project/.chiral');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as Error).message).toContain('credentials.json');
+    expect((thrown as Error).message).not.toContain('valid JSON');
   });
 
   it('does not mutate CONFIG_EXAMPLE_TEMPLATE across calls', () => {

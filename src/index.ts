@@ -29,6 +29,7 @@ import { completionCommand, internalCompleteEnvsCommand, internalCompleteWorkflo
 import { lockCommand, unlockCommand } from './commands/lock.js';
 import { logCommand } from './commands/log.js';
 import { doctorCommand } from './commands/doctor.js';
+import { pruneCommand } from './commands/prune.js';
 
 // Track whether any stdout output was written before an error fires.
 // The error handler uses this to add a leading blank line only when needed:
@@ -74,6 +75,7 @@ program.addCommand(credentialCommand);
 program.addCommand(tableCommand);
 program.addCommand(urlCommand);
 program.addCommand(teamCommand);
+program.addCommand(pruneCommand);
 program.addCommand(completionCommand);
 program.addCommand(internalCompleteEnvsCommand);
 program.addCommand(internalCompleteWorkflowsCommand);
@@ -136,13 +138,14 @@ try {
       const sep = didPrintOutput ? '' : '\n';
       console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(message)}\n`);
     }
-    process.exit(1);
+    process.exit(2);
   }
   if (err instanceof UserError) {
     const alreadyDisplayed = (err as unknown as Record<string, unknown>).__alreadyDisplayed === true;
     if (!alreadyDisplayed) {
       if (isJsonFlagActive()) {
-        printJsonError('user_error', err.message, false);
+        const code = err.name.replace(/([A-Z])/g, (c, _, i) => (i === 0 ? c.toLowerCase() : '_' + c.toLowerCase()));
+        printJsonError(code, err.message, err.retryable, { category: 'user_error' });
       } else {
         const sep = didPrintOutput ? '' : '\n';
         console.error(`${sep}  ${chalk.red('✗')}  ${indentContinuation(err.message)}`);
@@ -150,7 +153,7 @@ try {
         console.error();
       }
     }
-    process.exit(1);
+    process.exit(err.exitCode);
   }
   const debug = process.argv.includes('--debug');
   const message = err instanceof Error ? err.message : String(err);

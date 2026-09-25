@@ -8,6 +8,7 @@ import {
   applyUrlMap,
   deriveUrlLogicalName,
   extractUrlsFromSnapshots,
+  collectUnmappedUrls,
   UrlMap,
   UrlSubstitution,
 } from '../../../src/state/url-map.js';
@@ -358,6 +359,85 @@ describe('validateUrlValue', () => {
 
   it('rejects URL with username only', () => {
     expect(() => validateUrlValue('https://token@host.example.com')).toThrow(UserError);
+  });
+});
+
+describe('collectUnmappedUrls', () => {
+  const makeWorkflows = (urls: string[]) => [
+    {
+      nodes: urls.map((url, i) => ({
+        name: `Node ${i}`,
+        parameters: { url },
+      })),
+    },
+  ];
+
+  const mappedMap: UrlMap = {
+    version: 1,
+    urls: {
+      api_base: {
+        values: { dev: 'https://api.dev.example.com/v1' },
+      },
+    },
+  };
+
+  it('returns unmapped URLs from workflows', () => {
+    const result = collectUnmappedUrls(
+      makeWorkflows(['https://unmapped.example.com/path']),
+      'dev',
+      { version: 1, urls: {} },
+    );
+    expect(result).toEqual(['https://unmapped.example.com/path']);
+  });
+
+  it('returns empty array when all URLs already mapped by origin', () => {
+    const result = collectUnmappedUrls(
+      makeWorkflows(['https://api.dev.example.com/different-path']),
+      'dev',
+      mappedMap,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array for workflows with no HTTP URL parameters', () => {
+    const result = collectUnmappedUrls(
+      [{ nodes: [{ name: 'Node 0', parameters: { description: 'just text', count: 5 } }] }],
+      'dev',
+      { version: 1, urls: {} },
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('two URLs on same host (different paths) both appear; mapped origin suppresses both', () => {
+    const workflows = [
+      {
+        nodes: [
+          { name: 'Node 0', parameters: { url: 'https://api.dev.example.com/v1' } },
+          { name: 'Node 1', parameters: { url: 'https://api.dev.example.com/v2' } },
+        ],
+      },
+    ];
+    const unmapped = collectUnmappedUrls(workflows, 'dev', { version: 1, urls: {} });
+    expect(unmapped).toHaveLength(2);
+    expect(unmapped).toContain('https://api.dev.example.com/v1');
+    expect(unmapped).toContain('https://api.dev.example.com/v2');
+
+    const mapped = collectUnmappedUrls(workflows, 'dev', mappedMap);
+    expect(mapped).toHaveLength(0);
+  });
+
+  it('returns empty array when urlMap has no entry for this env', () => {
+    const result = collectUnmappedUrls(
+      makeWorkflows(['https://api.prod.example.com/v1']),
+      'staging',
+      mappedMap,
+    );
+    expect(result).toEqual(['https://api.prod.example.com/v1']);
+  });
+
+  it('handles workflows with no nodes gracefully', () => {
+    const result = collectUnmappedUrls([{ nodes: undefined }], 'dev', { version: 1, urls: {} });
+    expect(result).toEqual([]);
   });
 });
 

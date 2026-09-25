@@ -5,8 +5,9 @@ import {
   existsSync,
   unlinkSync,
   readdirSync,
-  renameSync,
+  linkSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { UserError } from '../lib/errors.js';
@@ -28,14 +29,14 @@ function lockPath(chiralDir: string, envId: string, workflowId: string): string 
   return join(chiralDir, 'locks', envId, `${workflowId}.lock`);
 }
 
-export function readLock(chiralDir: string, envId: string, workflowId: string): LockFile | null {
-  const filePath = lockPath(chiralDir, envId, workflowId);
-  if (!existsSync(filePath)) return null;
-
+// Shared read/parse/expiry logic. Callers must guard with existsSync before calling.
+// Returns null only when the file was expired and deleted; throws UserError for corrupt/invalid.
+function readLockFile(filePath: string): LockFile | null {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(filePath, 'utf-8'));
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw err;
     throw new UserError(`Lock file is corrupted: ${filePath}`);
   }
   const result = LockFileSchema.safeParse(raw);
@@ -52,6 +53,12 @@ export function readLock(chiralDir: string, envId: string, workflowId: string): 
   return result.data;
 }
 
+export function readLock(chiralDir: string, envId: string, workflowId: string): LockFile | null {
+  const filePath = lockPath(chiralDir, envId, workflowId);
+  if (!existsSync(filePath)) return null;
+  return readLockFile(filePath);
+}
+
 export function readLockWithExpiry(
   chiralDir: string,
   envId: string,
@@ -60,23 +67,10 @@ export function readLockWithExpiry(
   const filePath = lockPath(chiralDir, envId, workflowId);
   if (!existsSync(filePath)) return { data: null, wasExpired: false };
 
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(filePath, 'utf-8'));
-  } catch {
-    throw new UserError(`Lock file is corrupted: ${filePath}`);
-  }
-  const result = LockFileSchema.safeParse(raw);
-  if (!result.success) {
-    throw new UserError(`Lock file has invalid structure: ${filePath}`);
-  }
-
-  if (result.data.expiresAt && new Date(result.data.expiresAt).getTime() < Date.now()) {
-    try { unlinkSync(filePath); } catch { /* already gone */ }
-    return { data: null, wasExpired: true };
-  }
-
-  return { data: result.data, wasExpired: false };
+  const data = readLockFile(filePath);
+  // readLockFile returns null only when it deleted the file due to expiry
+  if (data === null) return { data: null, wasExpired: true };
+  return { data, wasExpired: false };
 }
 
 export interface WriteLockOptions {
@@ -114,15 +108,26 @@ export function writeLock(
   };
 
   const finalPath = lockPath(chiralDir, envId, workflowId);
-  const tmpPath = `${finalPath}.tmp`;
+  const tmpPath = `${finalPath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
 
+  mkdirSync(locksEnvDir, { recursive: true });
+  writeFileSync(tmpPath, JSON.stringify(lock, null, 2), 'utf-8');
   try {
-    mkdirSync(locksEnvDir, { recursive: true });
-    writeFileSync(tmpPath, JSON.stringify(lock, null, 2), 'utf-8');
-    renameSync(tmpPath, finalPath);
+    linkSync(tmpPath, finalPath);
   } catch (err) {
-    if (err instanceof UserError) throw err;
-    throw new UserError(`Could not write lock file for workflow "${workflowId}"`);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') {
+      const holder = readLock(chiralDir, envId, workflowId);
+      if (holder) {
+        throw new UserError(
+          `Workflow "${workflowId}" is locked by ${holder.actor} since ${holder.timestamp}`,
+        );
+      }
+      throw new UserError(`Workflow "${workflowId}" is locked (holder information unavailable)`);
+    }
+    throw new Error(`Could not write lock file for workflow "${workflowId}": ${String(err)}`, { cause: err });
+  } finally {
+    try { unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
   }
 }
 
@@ -133,8 +138,8 @@ export function releaseLock(chiralDir: string, envId: string, workflowId: string
   }
   try {
     unlinkSync(filePath);
-  } catch {
-    throw new UserError(`Could not release lock for workflow "${workflowId}"`);
+  } catch (err) {
+    throw new Error(`Could not release lock for workflow "${workflowId}": ${String(err)}`, { cause: err });
   }
 }
 
@@ -149,8 +154,13 @@ export function listLocksByEnv(
     .filter((f) => f.endsWith('.lock'))
     .map((f) => {
       const workflowId = f.replace(/\.lock$/, '');
-      const lock = readLock(chiralDir, envId, workflowId);
-      return lock ? { workflowId, lock } : null;
+      try {
+        const lock = readLockFile(join(locksEnvDir, f));
+        return lock ? { workflowId, lock } : null;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw err;
+      }
     })
     .filter((entry): entry is { workflowId: string; lock: LockFile } => entry !== null);
 }

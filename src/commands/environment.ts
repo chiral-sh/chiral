@@ -1,7 +1,7 @@
 import { input, password, confirm } from '@inquirer/prompts';
 import ora from 'ora';
 import chalk from 'chalk';
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
@@ -14,21 +14,14 @@ import {
 } from '../lib/config.js';
 import { resolveActiveProject } from '../lib/projects.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError } from '../lib/errors.js';
+import { UserError, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { padRight } from '../lib/cli.js';
 import { loadCredentials, writeCredentials } from '../state/credentials.js';
 import { loadWorkflowMap, writeWorkflowMap } from '../state/workflows.js';
 import { loadFingerprints, writeFingerprints } from '../state/fingerprints.js';
 import { loadEnvs, writeEnvs, generateEnvId } from '../state/envs.js';
-
-// ── Output mode ───────────────────────────────────────────────────────────────
-
-type OutputMode = 'human' | 'json';
-
-function resolveOutputMode(options: { json?: boolean }): OutputMode {
-  if (options.json || !process.stdout.isTTY) return 'json';
-  return 'human';
-}
+import { loadTableMap, writeTableMap } from '../state/tables.js';
+import { resolveOutputMode, type OutputMode } from '../lib/output.js';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -108,7 +101,7 @@ function loadState(): LoadedState {
   try {
     resolved = resolveActiveProject();
   } catch {
-    throw new UserError("No active project found. Run 'chiral init <name>' first.");
+    throw new NotFoundError("No active project found. Run 'chiral init <name>' first.");
   }
   const { chiralDir } = resolved;
 
@@ -145,6 +138,51 @@ function saveState(state: LoadedState): void {
   writeConfig(state.chiralDir, config);
 }
 
+// ── Shared connection test ─────────────────────────────────────────────────────
+
+type TestConnectionResult =
+  | { aborted: true }
+  | { aborted: false; connected: boolean; workflowCount: number | undefined; status: EnvResult['status'] };
+
+async function runConnectionTest(
+  normalizedUrl: string,
+  apiKey: string,
+  envName: string,
+  outputMode: OutputMode,
+  cancelMessage: string,
+): Promise<TestConnectionResult> {
+  if (outputMode === 'json') {
+    try {
+      const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
+      const { workflowCount } = await client.testConnection();
+      return { aborted: false, connected: true, workflowCount, status: 'connected' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new UserError(`Connection test failed: ${msg}`);
+    }
+  }
+
+  const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
+  try {
+    const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
+    const { workflowCount } = await client.testConnection();
+    spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
+    return { aborted: false, connected: true, workflowCount, status: 'connected' };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    spinner.fail(chalk.red(`  ${msg}`));
+    if (err instanceof UserError && (err as UserError & { hint?: string }).hint) {
+      console.error('\n' + (err as UserError & { hint?: string }).hint + '\n');
+    }
+    const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
+    if (!saveAnyway) {
+      console.log(chalk.dim(`\n  ${cancelMessage}\n`));
+      return { aborted: true };
+    }
+    return { aborted: false, connected: false, workflowCount: undefined, status: 'unreachable' };
+  }
+}
+
 // ── environment add ────────────────────────────────────────────────────────────
 
 export async function runEnvironmentAdd(
@@ -158,7 +196,7 @@ export async function runEnvironmentAdd(
   let name = envName?.trim() ?? '';
   if (!name) {
     if (outputMode === 'json') {
-      throw new UserError('Environment name is required in non-interactive mode. Pass it as an argument: chiral environment add <name> --url <url> --api-key <key>');
+      throw new ValidationError('Environment name is required in non-interactive mode. Pass it as an argument: chiral environment add <name> --url <url> --api-key <key>');
     }
     name = await input({
       message: 'Environment name:',
@@ -169,7 +207,7 @@ export async function runEnvironmentAdd(
   }
 
   if (name in state.environments) {
-    throw new UserError(
+    throw new ConflictError(
       `Environment "${name}" already exists. Run 'chiral environment configure ${name}' to update it.`,
     );
   }
@@ -184,15 +222,15 @@ export async function runEnvironmentAdd(
 
   if (outputMode === 'json') {
     if (!url) {
-      throw new UserError(
+      throw new ValidationError(
         `--url is required in non-interactive mode. Pass --url <url> or set CHIRAL_URL_${envUpper}.`,
       );
     }
     try { new URL(url); } catch {
-      throw new UserError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
+      throw new ValidationError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
     }
     if (!apiKey) {
-      throw new UserError(
+      throw new ValidationError(
         `--api-key is required in non-interactive mode. Pass --api-key <key> or set CHIRAL_API_KEY_${envUpper}.`,
       );
     }
@@ -212,7 +250,7 @@ export async function runEnvironmentAdd(
         ),
       );
       const keyInput = await password({ message: '  API key:', mask: '•' });
-      if (!keyInput) throw new UserError('API key is required');
+      if (!keyInput) throw new ValidationError('API key is required');
       apiKey = keyInput;
     }
   }
@@ -223,36 +261,9 @@ export async function runEnvironmentAdd(
   let status: EnvResult['status'] = 'skipped';
 
   if (!options.skipTest) {
-    if (outputMode === 'json') {
-      try {
-        const client = new N8nClient({ url: normalizedUrl, apiKey }, name);
-        ({ workflowCount } = await client.testConnection());
-        connected = true;
-        status = 'connected';
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new UserError(`Connection test failed: ${msg}`);
-      }
-    } else {
-      const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
-      try {
-        const client = new N8nClient({ url: normalizedUrl, apiKey }, name);
-        ({ workflowCount } = await client.testConnection());
-        spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
-        connected = true;
-        status = 'connected';
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        spinner.fail(chalk.red(`  ${msg}`));
-        if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
-        const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
-        if (!saveAnyway) {
-          console.log(chalk.dim('\n  Environment not saved.\n'));
-          return;
-        }
-        status = 'unreachable';
-      }
-    }
+    const result = await runConnectionTest(normalizedUrl, apiKey, name, outputMode, 'Environment not saved.');
+    if (result.aborted) return;
+    ({ connected, workflowCount, status } = result);
   }
 
   state.environments[name] = { url: normalizedUrl, apiKey };
@@ -289,7 +300,7 @@ export async function runEnvironmentConfigure(
 
   const existing = state.environments[envName];
   if (!existing) {
-    throw new UserError(
+    throw new NotFoundError(
       `Environment "${envName}" not found. Run 'chiral environment add ${envName}' to create it.`,
     );
   }
@@ -323,11 +334,11 @@ export async function runEnvironmentConfigure(
     apiKey = keyInput || existing.apiKey;
   }
 
-  if (!url) throw new UserError('URL is required.');
+  if (!url) throw new ValidationError('URL is required.');
   try { new URL(url); } catch {
-    throw new UserError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
+    throw new ValidationError(`Invalid URL: "${url}". Must be a valid URL (e.g. https://n8n.example.com).`);
   }
-  if (!apiKey) throw new UserError('API key is required.');
+  if (!apiKey) throw new ValidationError('API key is required.');
 
   const normalizedUrl = url.replace(/\/+$/, '');
   let connected = false;
@@ -335,36 +346,9 @@ export async function runEnvironmentConfigure(
   let status: EnvResult['status'] = 'skipped';
 
   if (!options.skipTest) {
-    if (outputMode === 'json') {
-      try {
-        const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
-        ({ workflowCount } = await client.testConnection());
-        connected = true;
-        status = 'connected';
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new UserError(`Connection test failed: ${msg}`);
-      }
-    } else {
-      const spinner = ora({ text: '  Testing connection…', color: 'cyan' }).start();
-      try {
-        const client = new N8nClient({ url: normalizedUrl, apiKey }, envName);
-        ({ workflowCount } = await client.testConnection());
-        spinner.succeed(chalk.green('  Connected') + chalk.dim(` - ${workflowCount} workflow${workflowCount === 1 ? '' : 's'} found`));
-        connected = true;
-        status = 'connected';
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        spinner.fail(chalk.red(`  ${msg}`));
-        if (err instanceof UserError && err.hint) console.error('\n' + err.hint + '\n');
-        const saveAnyway = await confirm({ message: '  Save anyway?', default: false });
-        if (!saveAnyway) {
-          console.log(chalk.dim('\n  No changes saved.\n'));
-          return;
-        }
-        status = 'unreachable';
-      }
-    }
+    const result = await runConnectionTest(normalizedUrl, apiKey, envName, outputMode, 'No changes saved.');
+    if (result.aborted) return;
+    ({ connected, workflowCount, status } = result);
   }
 
   state.environments[envName] = { url: normalizedUrl, apiKey };
@@ -426,38 +410,62 @@ export async function runEnvironmentRename(
   const state = loadState();
 
   if (!(oldName in state.environments)) {
-    throw new UserError(`Environment "${oldName}" not found.`);
+    throw new NotFoundError(`Environment "${oldName}" not found.`);
   }
   if (newName in state.environments) {
-    throw new UserError(`Environment "${newName}" already exists.`);
+    throw new ConflictError(`Environment "${newName}" already exists.`);
   }
-  if (!newName.trim()) throw new UserError('New environment name cannot be empty');
-
-  const renameInFile = (filePath: string): void => {
-    if (!existsSync(filePath)) return;
-    try {
-      const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
-      if (typeof raw !== 'object' || raw === null) return;
-      // Rename top-level key if present (for credentials.json / workflows.json per-env keys)
-      const inner = raw['credentials'] ?? raw['workflows'] ?? raw['envs'];
-      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
-        const obj = inner as Record<string, unknown>;
-        if (oldName in obj) {
-          obj[newName] = obj[oldName];
-          delete obj[oldName];
-        }
-      }
-      writeFileSync(filePath + '.tmp', JSON.stringify(raw, null, 2) + '\n', 'utf-8');
-      renameSync(filePath + '.tmp', filePath);
-    } catch {
-      // best-effort - leave the file unchanged if we can't parse it
-    }
-  };
+  if (!newName.trim()) throw new ValidationError('New environment name cannot be empty');
 
   const { chiralDir } = state;
-  renameInFile(join(chiralDir, 'credentials.json'));
-  renameInFile(join(chiralDir, 'workflows.json'));
-  renameInFile(join(chiralDir, 'fingerprints.json'));
+
+  try {
+    const creds = loadCredentials(chiralDir);
+    let changed = false;
+    for (const envMap of Object.values(creds.credentials)) {
+      if (oldName in envMap) {
+        envMap[newName] = envMap[oldName];
+        delete envMap[oldName];
+        changed = true;
+      }
+    }
+    if (changed) writeCredentials(chiralDir, creds);
+  } catch { /* best-effort */ }
+
+  try {
+    const wfMap = loadWorkflowMap(chiralDir);
+    let changed = false;
+    for (const envMap of Object.values(wfMap.workflows)) {
+      if (oldName in envMap) {
+        envMap[newName] = envMap[oldName];
+        delete envMap[oldName];
+        changed = true;
+      }
+    }
+    if (changed) writeWorkflowMap(chiralDir, wfMap);
+  } catch { /* best-effort */ }
+
+  try {
+    const fp = loadFingerprints(chiralDir);
+    if (oldName in fp.envs) {
+      fp.envs[newName] = fp.envs[oldName];
+      delete fp.envs[oldName];
+      writeFingerprints(chiralDir, fp);
+    }
+  } catch { /* best-effort */ }
+
+  try {
+    const tableMap = loadTableMap(chiralDir);
+    let changed = false;
+    for (const envMap of Object.values(tableMap.tables)) {
+      if (oldName in envMap) {
+        envMap[newName] = envMap[oldName];
+        delete envMap[oldName];
+        changed = true;
+      }
+    }
+    if (changed) writeTableMap(chiralDir, tableMap);
+  } catch { /* best-effort */ }
 
   // Migrate envs.json: keep the same ID so lock paths are unaffected
   const envsRegistry = loadEnvs(chiralDir);
@@ -494,6 +502,7 @@ export async function runEnvironmentRename(
 interface DeleteImpact {
   credentialLogicals: string[];
   workflowLogicals: string[];
+  tableLogicals: string[];
   fingerprintCount: number;
 }
 
@@ -514,13 +523,21 @@ function collectDeleteImpact(chiralDir: string, envName: string): DeleteImpact {
     }
   } catch { /* file may not exist yet */ }
 
+  const tableLogicals: string[] = [];
+  try {
+    const tableMap = loadTableMap(chiralDir);
+    for (const [logicalName, envMap] of Object.entries(tableMap.tables)) {
+      if (envName in envMap) tableLogicals.push(logicalName);
+    }
+  } catch { /* file may not exist yet */ }
+
   let fingerprintCount = 0;
   try {
     const fp = loadFingerprints(chiralDir);
     fingerprintCount = Object.keys(fp.envs[envName] ?? {}).length;
   } catch { /* file may not exist yet */ }
 
-  return { credentialLogicals, workflowLogicals, fingerprintCount };
+  return { credentialLogicals, workflowLogicals, tableLogicals, fingerprintCount };
 }
 
 function purgeEnvFromStateFiles(chiralDir: string, envName: string): void {
@@ -552,6 +569,16 @@ function purgeEnvFromStateFiles(chiralDir: string, envName: string): void {
       writeFingerprints(chiralDir, fp);
     }
   } catch { /* best-effort */ }
+
+  // tables.json — remove env key from each logical table's inner map
+  try {
+    const tableMap = loadTableMap(chiralDir);
+    let changed = false;
+    for (const envMap of Object.values(tableMap.tables)) {
+      if (envName in envMap) { delete envMap[envName]; changed = true; }
+    }
+    if (changed) writeTableMap(chiralDir, tableMap);
+  } catch { /* best-effort */ }
 }
 
 // ── environment delete ─────────────────────────────────────────────────────────
@@ -564,7 +591,7 @@ export async function runEnvironmentDelete(
   const state = loadState();
 
   if (!(envName in state.environments)) {
-    throw new UserError(`Environment "${envName}" not found.`);
+    throw new NotFoundError(`Environment "${envName}" not found.`);
   }
 
   if (options.dryRun) {
@@ -577,6 +604,7 @@ export async function runEnvironmentDelete(
           would_delete: true,
           credential_mappings: impact.credentialLogicals,
           workflow_entries: impact.workflowLogicals,
+          table_mappings: impact.tableLogicals,
           fingerprints: impact.fingerprintCount,
         },
       }));
@@ -595,6 +623,12 @@ export async function runEnvironmentDelete(
       } else {
         console.log(`  ${chalk.dim('workflows.json')}      no entries for this env`);
       }
+      if (impact.tableLogicals.length > 0) {
+        const names = impact.tableLogicals.join(', ');
+        console.log(`  ${chalk.dim('tables.json')}         ${impact.tableLogicals.length} mapping${impact.tableLogicals.length === 1 ? '' : 's'}  ${chalk.dim('→')}  ${chalk.dim(names)}`);
+      } else {
+        console.log(`  ${chalk.dim('tables.json')}         no mappings for this env`);
+      }
       if (impact.fingerprintCount > 0) {
         console.log(`  ${chalk.dim('fingerprints.json')}   ${impact.fingerprintCount} fingerprint${impact.fingerprintCount === 1 ? '' : 's'}`);
       } else {
@@ -607,7 +641,7 @@ export async function runEnvironmentDelete(
 
   if (!options.yes) {
     if (outputMode === 'json') {
-      throw new UserError(`Pass --yes to confirm deletion in non-interactive mode.`);
+      throw new ValidationError(`Pass --yes to confirm deletion in non-interactive mode.`);
     }
     const confirmed = await input({
       message: `Type "${envName}" to confirm deletion:`,

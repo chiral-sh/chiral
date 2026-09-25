@@ -4,6 +4,7 @@ import {
   existsSync,
   readdirSync,
   rmSync,
+  statSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -129,12 +130,8 @@ export function writeSnapshotMeta(
 ): void {
   const dir = join(chiralDir, 'snapshots', deploymentId);
   const fullMeta: SnapshotMeta = { ...meta, normalizationVersion: NORMALIZATION_VERSION };
-  try {
-    mkdirSync(dir, { recursive: true });
-    writeJsonAtomic(join(dir, 'meta.json'), fullMeta);
-  } catch {
-    // best-effort - don't block the command if meta write fails
-  }
+  mkdirSync(dir, { recursive: true });
+  writeJsonAtomic(join(dir, 'meta.json'), fullMeta);
 }
 
 export function readSnapshotMeta(
@@ -196,11 +193,64 @@ export function readAllWorkflowsInDeployment(
   return { workflows, corruptCount };
 }
 
-export function pruneSnapshots(chiralDir: string, keep: number): number {
+export interface PruneSnapshotsResult {
+  removed: string[];
+  freedBytes: number;
+  keptCount: number;
+}
+
+function sumDirectoryBytes(dirPath: string): number {
+  let total = 0;
+  for (const file of readdirSync(dirPath)) {
+    try {
+      total += statSync(join(dirPath, file)).size;
+    } catch {
+      // ignore unreadable entries
+    }
+  }
+  return total;
+}
+
+export function deleteSnapshots(
+  chiralDir: string,
+  ids: string[],
+): { freedBytes: number } {
+  if (ids.length === 0) return { freedBytes: 0 };
+  const snapshotsDir = join(chiralDir, 'snapshots');
+  let freedBytes = 0;
+  for (const id of ids) {
+    const dirPath = join(snapshotsDir, id);
+    if (existsSync(dirPath)) {
+      freedBytes += sumDirectoryBytes(dirPath);
+    }
+    rmSync(dirPath, { recursive: true, force: true });
+  }
+  return { freedBytes };
+}
+
+export function pruneSnapshots(
+  chiralDir: string,
+  keep: number,
+  opts?: { dryRun?: boolean },
+): PruneSnapshotsResult {
+  const snapshotsDir = join(chiralDir, 'snapshots');
+  if (!existsSync(snapshotsDir)) {
+    return { removed: [], freedBytes: 0, keptCount: 0 };
+  }
   const deployments = listDeployments(chiralDir);
   const toRemove = deployments.slice(keep);
-  for (const id of toRemove) {
-    rmSync(join(chiralDir, 'snapshots', id), { recursive: true });
+  const freedBytes = toRemove.reduce(
+    (sum, id) => sum + sumDirectoryBytes(join(snapshotsDir, id)),
+    0,
+  );
+  if (!opts?.dryRun) {
+    for (const id of toRemove) {
+      rmSync(join(snapshotsDir, id), { recursive: true });
+    }
   }
-  return toRemove.length;
+  return {
+    removed: toRemove,
+    freedBytes,
+    keptCount: deployments.length - toRemove.length,
+  };
 }

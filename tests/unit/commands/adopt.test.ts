@@ -15,28 +15,28 @@ vi.mock('../../../src/lib/n8n-client.js', () => ({
   N8nClient: vi.fn(),
 }));
 
-vi.mock('@inquirer/prompts', () => ({
-  confirm: vi.fn().mockResolvedValue(false),
-}));
-
 vi.mock('../../../src/state/url-map.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../../src/state/url-map.js')>();
   return {
     ...mod,
-    extractUrlsFromSnapshots: vi.fn().mockReturnValue([]),
+    collectUnmappedUrls: vi.fn().mockReturnValue([]),
   };
 });
 
+vi.mock('../../../src/state/fingerprints.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../src/state/fingerprints.js')>();
+  return { ...mod };
+});
+
 import { execSync } from 'node:child_process';
-import { confirm } from '@inquirer/prompts';
 import { N8nClient } from '../../../src/lib/n8n-client.js';
 import * as urlMapState from '../../../src/state/url-map.js';
+import * as fingerprintsState from '../../../src/state/fingerprints.js';
 import { runAdopt } from '../../../src/commands/adopt.js';
 
 const mockExecSync = vi.mocked(execSync);
 const MockN8nClient = vi.mocked(N8nClient);
-const mockConfirm = vi.mocked(confirm);
-const mockExtractUrls = vi.mocked(urlMapState.extractUrlsFromSnapshots);
+const mockCollectUnmappedUrls = vi.mocked(urlMapState.collectUnmappedUrls);
 
 const GLOBAL_DIR = '/mock-global';
 const PROJECT_DIR = '/project';
@@ -89,8 +89,7 @@ beforeEach(() => {
   vol.reset();
   vi.clearAllMocks();
   mockExecSync.mockReturnValue('actor@example.com\n' as never);
-  mockConfirm.mockResolvedValue(false);
-  mockExtractUrls.mockReturnValue([]);
+  mockCollectUnmappedUrls.mockReturnValue([]);
   process.env['CHIRAL_PROJECTS_DIR'] = GLOBAL_DIR;
   process.env['CHIRAL_PROJECT'] = 'test-project';
 });
@@ -181,7 +180,7 @@ describe('runAdopt', () => {
     expect(entry.result).toBe('success');
     expect(entry.target_env).toBe('dev');
     expect(entry.source_env).toBeNull();
-    expect(entry.workflow_ids).toEqual(['wf-1']);
+    expect(entry.workflow_ids).toEqual([]);
     expect(entry.actor).toBe('actor@example.com');
     expect(entry.project).toBe('test-project');
   });
@@ -217,11 +216,15 @@ describe('runAdopt', () => {
       }) as never;
     });
 
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
     const output: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
     await runAdopt({ env: 'dev' });
     spy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
 
     expect(output.join('\n')).toContain('My Workflow');
     expect(output.join('\n')).toContain('active');
@@ -321,7 +324,7 @@ describe('runAdopt', () => {
 });
 
 describe('runAdopt - audit workflow_ids', () => {
-  it('records adopted workflow IDs in the audit entry', async () => {
+  it('records empty workflow_ids array in audit entry (per STATE_SPEC line 328)', async () => {
     setupChiralDir();
     const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
     const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
@@ -338,9 +341,7 @@ describe('runAdopt - audit workflow_ids', () => {
 
     const auditContent = vol.readFileSync('/project/.chiral/audit.jsonl', 'utf-8') as string;
     const entry = JSON.parse(auditContent.trim());
-    expect(entry.workflow_ids).toContain('wf-1');
-    expect(entry.workflow_ids).toContain('wf-2');
-    expect(entry.workflow_ids).toHaveLength(2);
+    expect(entry.workflow_ids).toEqual([]);
   });
 
   it('records empty array when no workflows are adopted', async () => {
@@ -364,12 +365,17 @@ describe('runAdopt - fingerprints summary output', () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
 
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
     await runAdopt({ env: 'dev' });
 
     vi.restoreAllMocks();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+
     expect(output.join('\n')).toContain('Fingerprints saved');
     expect(output.join('\n')).toContain('fingerprints.json');
     expect(output.join('\n')).toContain('1 workflow');
@@ -397,12 +403,17 @@ describe('runAdopt - env-specific name detection', () => {
       }) as never;
     });
 
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
     const output: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
     await runAdopt({ env: 'dev' });
 
     vi.restoreAllMocks();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+
     expect(output.join('\n')).toContain('environment-specific');
     expect(output.join('\n')).toContain('Order Processor [DEV]');
     expect(output.join('\n')).toContain('workflow match');
@@ -449,86 +460,119 @@ describe('runAdopt - env-specific name detection', () => {
 });
 
 describe('runAdopt - URL discovery hint', () => {
-  const DISCOVERED_URLS = [
-    { value: 'https://api.example.com/v1', hostname: 'api.example.com', env: 'dev', workflowNames: ['My Workflow'] },
-    { value: 'https://hooks.example.com/notify', hostname: 'hooks.example.com', env: 'dev', workflowNames: ['My Workflow'] },
-  ];
-
-  it('prints unique-domain count and prompts in interactive mode', async () => {
+  it('prints each unmapped URL as a copy-pasteable chiral url map command', async () => {
     setupChiralDir();
     MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
-    mockExtractUrls.mockReturnValue(DISCOVERED_URLS);
-    mockConfirm.mockResolvedValue(false);
-
-    const origIsTTY = process.stdout.isTTY;
-    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
-
-    const output: string[] = [];
-    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
-
-    await runAdopt({ env: 'dev' });
-
-    spy.mockRestore();
-    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
-
-    expect(mockConfirm).toHaveBeenCalled();
-    expect(output.join('\n')).toContain('2 unique domains');
-  });
-
-  it('prints suggested run command when user confirms registration', async () => {
-    setupChiralDir();
-    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
-    mockExtractUrls.mockReturnValue(DISCOVERED_URLS);
-    mockConfirm.mockResolvedValue(true);
-
-    const origIsTTY = process.stdout.isTTY;
-    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
-
-    const output: string[] = [];
-    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
-
-    await runAdopt({ env: 'dev' });
-
-    spy.mockRestore();
-    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
-
-    expect(output.join('\n')).toContain('chiral url map');
-  });
-
-  it('excludes userinfo URLs from the registration suggestion', async () => {
-    setupChiralDir();
-    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
-    mockExtractUrls.mockReturnValue([
-      { value: 'https://token:secret@api.example.com', hostname: 'api.example.com', env: 'dev', workflowNames: ['My Workflow'] },
+    mockCollectUnmappedUrls.mockReturnValue([
+      'https://api.example.com/v1',
+      'https://hooks.example.com/notify',
     ]);
 
     const origIsTTY = process.stdout.isTTY;
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
 
-    await runAdopt({ env: 'dev' });
-
-    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
-
-    expect(mockConfirm).not.toHaveBeenCalled();
-  });
-
-  it('does not prompt in non-interactive mode but prints count', async () => {
-    setupChiralDir();
-    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
-    mockExtractUrls.mockReturnValue([
-      { value: 'https://api.example.com/v1', hostname: 'api.example.com', env: 'dev', workflowNames: ['My Workflow'] },
-    ]);
-
-    // process.stdout.isTTY is already falsy in test environment
     const output: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
 
     await runAdopt({ env: 'dev' });
 
     spy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
 
-    expect(mockConfirm).not.toHaveBeenCalled();
-    expect(output.join('\n')).toContain('1 unique domain');
-    expect(output.join('\n')).toContain('chiral url map');
+    const joined = output.join('\n');
+    expect(joined).toContain('URL(s) found in workflows but not mapped');
+    expect(joined).toContain('chiral url map api-example-com dev=https://api.example.com/v1');
+    expect(joined).toContain('chiral url map hooks-example-com dev=https://hooks.example.com/notify');
+  });
+
+  it('prints no URL hint when all URLs are already mapped', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockCollectUnmappedUrls.mockReturnValue([]);
+
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+
+    const output: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    await runAdopt({ env: 'dev' });
+
+    spy.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+
+    expect(output.join('\n')).not.toContain('not mapped');
+    expect(output.join('\n')).not.toContain('chiral url map');
+  });
+
+  it('does not print URL hint in JSON output mode', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockCollectUnmappedUrls.mockReturnValue(['https://api.example.com/v1']);
+
+    const output: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args) => output.push(args.join(' ')));
+
+    // process.stdout.isTTY is falsy in test env → JSON mode → no URL hint on stdout
+    await runAdopt({ env: 'dev' });
+
+    spy.mockRestore();
+
+    expect(output.join('\n')).not.toContain('not mapped');
+  });
+});
+
+describe('runAdopt - --json unmapped_urls', () => {
+  it('includes unmapped_urls in JSON output when URLs are found', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockCollectUnmappedUrls.mockReturnValue(['https://api.example.com/v1']);
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runAdopt({ env: 'dev', json: true });
+
+    vi.restoreAllMocks();
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unmapped_urls).toEqual(['https://api.example.com/v1']);
+  });
+
+  it('includes unmapped_urls as empty array when all URLs are mapped', async () => {
+    setupChiralDir();
+    MockN8nClient.mockImplementation(function() { return makeClientMock() as never; });
+    mockCollectUnmappedUrls.mockReturnValue([]);
+
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line) => logged.push(line));
+
+    await runAdopt({ env: 'dev', json: true });
+
+    vi.restoreAllMocks();
+    const result = JSON.parse(logged[0]);
+    expect(result.data.unmapped_urls).toEqual([]);
+  });
+});
+
+describe('runAdopt - fingerprint batch write', () => {
+  it('calls writeFingerprints exactly once for a multi-workflow adopt', async () => {
+    setupChiralDir();
+    const wf2Summary = { ...WORKFLOW_SUMMARY, id: 'wf-2', name: 'Second Workflow' };
+    const wf2Full = { ...WORKFLOW_FULL, id: 'wf-2', name: 'Second Workflow' };
+    MockN8nClient.mockImplementation(function() {
+      return makeClientMock({
+        listWorkflows: vi.fn().mockResolvedValue([WORKFLOW_SUMMARY, wf2Summary]),
+        getWorkflow: vi.fn()
+          .mockResolvedValueOnce(WORKFLOW_FULL)
+          .mockResolvedValueOnce(wf2Full),
+      }) as never;
+    });
+
+    const spy = vi.spyOn(fingerprintsState, 'writeFingerprints');
+
+    await runAdopt({ env: 'dev' });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });

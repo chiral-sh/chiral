@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { watch as fsWatch } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfigAndDir } from '../lib/config.js';
-import { UserError } from '../lib/errors.js';
+import { NotFoundError, ValidationError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 import { visibleLen, padRight } from '../lib/cli.js';
 import { readAuditLog, AuditActionSchema, type AuditEntry } from '../state/audit.js';
@@ -32,21 +32,21 @@ const VALID_RESULTS = ['success', 'failure', 'aborted'] as const;
 
 function validateLogOptions(options: LogOptions): void {
   if (options.json && options.watch) {
-    throw new UserError('--json and --watch are mutually exclusive');
+    throw new ValidationError('--json and --watch are mutually exclusive');
   }
   if (options.action !== undefined && !(VALID_ACTIONS as readonly string[]).includes(options.action)) {
-    throw new UserError(
+    throw new ValidationError(
       `Unknown action "${options.action}". Valid actions: ${VALID_ACTIONS.join(', ')}`,
     );
   }
   if (options.result !== undefined && !(VALID_RESULTS as readonly string[]).includes(options.result)) {
-    throw new UserError(
+    throw new ValidationError(
       `Unknown result "${options.result}". Valid results: ${VALID_RESULTS.join(', ')}`,
     );
   }
   if (options.limit !== undefined) {
     if (!Number.isInteger(options.limit) || options.limit < 1) {
-      throw new UserError('--limit must be a positive integer');
+      throw new ValidationError('--limit must be a positive integer');
     }
   }
 }
@@ -57,14 +57,14 @@ function parseSinceDuration(value: string, chiralDir: string): Date {
   if (value === 'last-status') {
     const sentinel = readStatusSentinel(chiralDir);
     if (!sentinel) {
-      throw new UserError("No status sentinel found. Run 'chiral status' first.");
+      throw new NotFoundError("No status sentinel found. Run 'chiral status' first.");
     }
     return new Date(sentinel.last_status_at);
   }
 
   const match = /^(\d+)(m|h|d|w)$/.exec(value);
   if (!match) {
-    throw new UserError(
+    throw new ValidationError(
       `Unrecognized --since value "${value}". Use a duration like 7d, 2h, 30m, or "last-status".`,
     );
   }
@@ -269,7 +269,7 @@ export async function runLog(options: LogOptions, _cwd = process.cwd()): Promise
 
     // Validate --env against config
     if (options.env && !config.environments[options.env]) {
-      throw new UserError(
+      throw new NotFoundError(
         `Environment "${options.env}" not found in config. Run 'chiral environment list' to see available environments.`,
       );
     }
@@ -426,6 +426,14 @@ Examples:
 
   Watch mode (re-renders on changes):
     chiral log --all --watch
+
+Exit codes:
+  0  Success
+  4  Environment not in config (--env) or no status sentinel (--since last-status)
+  7  Invalid --action, --result, or --limit value
+
+JSON output (--json):
+  { entries[], total_shown, has_more }
 `,
   )
   .action(async (opts: Record<string, unknown>) => {

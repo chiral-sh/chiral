@@ -5,7 +5,7 @@ import ora from 'ora';
 import { loadConfigAndDir } from '../lib/config.js';
 import { getGitActor } from '../lib/git.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError, ControlledExit } from '../lib/errors.js';
+import { ControlledExit, NotFoundError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ export async function runDoctor(options: DoctorOptions, cwd?: string): Promise<v
   if (options.env && configResult) {
     if (!configResult.config.environments[options.env]) {
       const available = Object.keys(configResult.config.environments).join(', ');
-      throw new UserError(`Unknown environment "${options.env}". Available: ${available}`);
+      throw new NotFoundError(`Unknown environment "${options.env}". Available: ${available}`);
     }
   }
 

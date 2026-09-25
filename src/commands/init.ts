@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { UserError } from '../lib/errors.js';
+import { ValidationError, ConflictError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import {
   getProjectsDir,
@@ -62,9 +62,9 @@ export async function runInit(options: InitOptions): Promise<void> {
     });
     projectName = projectName.trim();
   }
-  if (!projectName) throw new UserError('Project name is required');
+  if (!projectName) throw new ValidationError('Project name is required');
   if (/[/\\:*?"<>|]/.test(projectName)) {
-    throw new UserError(`Invalid project name: "${projectName}"`);
+    throw new ValidationError(`Invalid project name: "${projectName}"`);
   }
 
   const ownerEmail = getGitActor();
@@ -81,7 +81,7 @@ export async function runInit(options: InitOptions): Promise<void> {
 
   // Case-insensitive collision check
   if (projectExists(projectName)) {
-    throw new UserError(
+    throw new ConflictError(
       `A project named "${projectName}" already exists. Run 'chiral project list' to see your projects.`,
     );
   }
@@ -90,7 +90,7 @@ export async function runInit(options: InitOptions): Promise<void> {
   const projectsDir = getProjectsDir();
   const projectDir = join(projectsDir, projectName);
   if (existsSync(projectDir)) {
-    throw new UserError(
+    throw new ConflictError(
       `Directory "${projectDir}" already exists. Choose a different project name or remove the directory.`,
     );
   }
@@ -191,14 +191,24 @@ Examples:
   Create a project interactively:
     chiral init
 
-  Create a project with a specific name:
+  Create a project with a specific name (no prompt):
     chiral init my-n8n
+
+  Create non-interactively (CI / agent use):
+    chiral init my-n8n --no-install-completion
+    chiral init my-n8n --json
 
   Create without running git init:
     chiral init my-n8n --no-git
 
-  Create and auto-install completion without prompting (CI / scripts):
+  Create and auto-install completion without prompting:
     chiral init my-n8n --install-completion
+
+Non-interactive behaviour:
+  Passing a project name (positional arg or --project) skips the name prompt.
+  In a non-TTY environment the tab-completion prompt is automatically skipped.
+  --no-install-completion suppresses the completion prompt in TTY environments.
+  --json suppresses all interactive output and implies --no-install-completion.
 `,
   )
   .action(async (nameArg: string | undefined, options: { project?: string; noGit?: boolean; json?: boolean; installCompletion?: boolean; noInstallCompletion?: boolean }) => {
