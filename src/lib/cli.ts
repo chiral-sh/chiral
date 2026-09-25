@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type ora from 'ora';
+import { isJsonFlagActive } from './output.js';
 
 let _chiralVersion = '0.0.0';
 
@@ -12,12 +13,14 @@ export function getChiralVersion(): string {
 }
 
 export function failSpinner(spinner: ReturnType<typeof ora>, err: unknown): never {
-  const msg = err instanceof Error ? err.message : String(err);
   spinner.stop();
-  console.error(`  ${chalk.red('✗')}  ${msg}`);
-  console.error();
-  if (err instanceof Error) {
-    (err as unknown as Record<string, unknown>).__alreadyDisplayed = true;
+  if (!isJsonFlagActive()) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ${chalk.red('✗')}  ${msg}`);
+    console.error();
+    if (err instanceof Error) {
+      (err as unknown as Record<string, unknown>).__alreadyDisplayed = true;
+    }
   }
   throw err;
 }
