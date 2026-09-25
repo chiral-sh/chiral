@@ -7,12 +7,13 @@ import {
   listDeployments,
   listSnapshotWorkflows,
   pruneSnapshots,
+  deleteSnapshots,
   writeSnapshotMeta,
   readSnapshotMeta,
   findLatestDeploymentForEnv,
   readAllWorkflowsInDeployment,
   computeSnapshotContentHash,
-  SnapshotWorkflow,
+  type SnapshotWorkflow,
 } from '../../../src/state/snapshots.js';
 import { UserError } from '../../../src/lib/errors.js';
 
@@ -187,15 +188,19 @@ describe('pruneSnapshots', () => {
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
     writeSnapshot('/fd', DEPLOYMENT_B, WORKFLOW);
     writeSnapshot('/fd', DEPLOYMENT_C, WORKFLOW);
-    const removed = pruneSnapshots('/fd', 2);
-    expect(removed).toBe(1);
+    const result = pruneSnapshots('/fd', 2);
+    expect(result.removed).toEqual([DEPLOYMENT_A]);
+    expect(result.keptCount).toBe(2);
     expect(listDeployments('/fd')).toEqual([DEPLOYMENT_C, DEPLOYMENT_B]);
   });
 
   it('removes nothing when keep >= total deployments', () => {
     vol.fromJSON({ '/fd/': null });
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
-    expect(pruneSnapshots('/fd', 10)).toBe(0);
+    const result = pruneSnapshots('/fd', 10);
+    expect(result.removed).toEqual([]);
+    expect(result.freedBytes).toBe(0);
+    expect(result.keptCount).toBe(1);
     expect(listDeployments('/fd')).toHaveLength(1);
   });
 
@@ -203,8 +208,36 @@ describe('pruneSnapshots', () => {
     vol.fromJSON({ '/fd/': null });
     writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
     writeSnapshot('/fd', DEPLOYMENT_B, WORKFLOW);
-    expect(pruneSnapshots('/fd', 0)).toBe(2);
+    const result = pruneSnapshots('/fd', 0);
+    expect(result.removed).toEqual([DEPLOYMENT_B, DEPLOYMENT_A]);
+    expect(result.keptCount).toBe(0);
     expect(listDeployments('/fd')).toHaveLength(0);
+  });
+
+  it('returns empty result without throwing when snapshots/ dir does not exist', () => {
+    vol.fromJSON({ '/fd/': null });
+    expect(pruneSnapshots('/fd', 5)).toEqual({ removed: [], freedBytes: 0, keptCount: 0 });
+  });
+
+  it('dryRun: true computes removed and freedBytes without deleting files', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_B, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_C, WORKFLOW);
+    const result = pruneSnapshots('/fd', 2, { dryRun: true });
+    expect(result.removed).toEqual([DEPLOYMENT_A]);
+    expect(result.freedBytes).toBeGreaterThan(0);
+    expect(result.keptCount).toBe(2);
+    // files must still exist
+    expect(listDeployments('/fd')).toHaveLength(3);
+  });
+
+  it('freedBytes reflects the size of removed deployment files', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_B, WORKFLOW);
+    const liveResult = pruneSnapshots('/fd', 1);
+    expect(liveResult.freedBytes).toBeGreaterThan(0);
   });
 });
 
@@ -338,6 +371,55 @@ describe('readAllWorkflowsInDeployment', () => {
     expect(workflows).toHaveLength(1);
     expect(workflows[0].id).toBe('wf-good');
     expect(corruptCount).toBe(1);
+  });
+});
+
+describe('deleteSnapshots', () => {
+  it('removes exactly the specified IDs and no others', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_B, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_C, WORKFLOW);
+    deleteSnapshots('/fd', [DEPLOYMENT_A]);
+    expect(listDeployments('/fd')).toEqual([DEPLOYMENT_C, DEPLOYMENT_B]);
+  });
+
+  it('freedBytes equals the sum of deleted directories sizes', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    const snapshotsDir = `/fd/snapshots`;
+    // measure size before deletion
+    const files = vol.readdirSync(`${snapshotsDir}/${DEPLOYMENT_A}`) as string[];
+    let expectedBytes = 0;
+    for (const f of files) {
+      const content = vol.readFileSync(`${snapshotsDir}/${DEPLOYMENT_A}/${f}`) as Buffer;
+      expectedBytes += content.length;
+    }
+    const result = deleteSnapshots('/fd', [DEPLOYMENT_A]);
+    expect(result.freedBytes).toBe(expectedBytes);
+  });
+
+  it('returns { freedBytes: 0 } for empty array without touching disk', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    const result = deleteSnapshots('/fd', []);
+    expect(result).toEqual({ freedBytes: 0 });
+    expect(listDeployments('/fd')).toHaveLength(1);
+  });
+
+  it('does not throw when an ID no longer exists on disk', () => {
+    vol.fromJSON({ '/fd/': null });
+    expect(() => deleteSnapshots('/fd', [DEPLOYMENT_A])).not.toThrow();
+  });
+
+  it('deletes multiple IDs in one call', () => {
+    vol.fromJSON({ '/fd/': null });
+    writeSnapshot('/fd', DEPLOYMENT_A, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_B, WORKFLOW);
+    writeSnapshot('/fd', DEPLOYMENT_C, WORKFLOW);
+    const result = deleteSnapshots('/fd', [DEPLOYMENT_A, DEPLOYMENT_B]);
+    expect(listDeployments('/fd')).toEqual([DEPLOYMENT_C]);
+    expect(result.freedBytes).toBeGreaterThan(0);
   });
 });
 

@@ -29,6 +29,7 @@ import { completionCommand, internalCompleteEnvsCommand, internalCompleteWorkflo
 import { lockCommand, unlockCommand } from './commands/lock.js';
 import { logCommand } from './commands/log.js';
 import { doctorCommand } from './commands/doctor.js';
+import { pruneCommand } from './commands/prune.js';
 
 // Track whether any stdout output was written before an error fires.
 // The error handler uses this to add a leading blank line only when needed:
@@ -74,6 +75,7 @@ program.addCommand(credentialCommand);
 program.addCommand(tableCommand);
 program.addCommand(urlCommand);
 program.addCommand(teamCommand);
+program.addCommand(pruneCommand);
 program.addCommand(completionCommand);
 program.addCommand(internalCompleteEnvsCommand);
 program.addCommand(internalCompleteWorkflowsCommand);
