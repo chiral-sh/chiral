@@ -11,7 +11,7 @@ import {
   renameSync,
 } from 'node:fs';
 import { z } from 'zod';
-import { UserError, NotFoundError, ConflictError } from './errors.js';
+import { NotFoundError, ConflictError } from './errors.js';
 
 // ── Schemas ────────────────────────────────────────────────────────────────────
 

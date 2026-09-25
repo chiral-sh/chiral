@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { UserError, ValidationError, ConflictError } from '../lib/errors.js';
+import { ValidationError, ConflictError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import {
   getProjectsDir,

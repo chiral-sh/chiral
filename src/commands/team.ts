@@ -3,7 +3,7 @@ import { confirm } from '@inquirer/prompts';
 import { Command } from 'commander';
 import { findChiralDir, loadConfigAndDir } from '../lib/config.js';
 import { syncToRemote, formatSyncSuccess, formatSyncFailure} from '../lib/git-sync.js';
-import { UserError, NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
+import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { getGitActor } from '../lib/git.js';
 import { getChiralVersion, renderBoxTable } from '../lib/cli.js';
 import { readTeam, writeTeam, type Team } from '../state/team.js';

@@ -5,7 +5,7 @@ import ora from 'ora';
 import { loadConfigAndDir } from '../lib/config.js';
 import { getGitActor } from '../lib/git.js';
 import { N8nClient } from '../lib/n8n-client.js';
-import { UserError, ControlledExit, NotFoundError } from '../lib/errors.js';
+import { ControlledExit, NotFoundError } from '../lib/errors.js';
 import { printJson } from '../lib/output.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
